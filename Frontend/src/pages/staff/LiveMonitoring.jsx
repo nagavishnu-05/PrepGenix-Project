@@ -63,6 +63,19 @@ export default function LiveMonitoring() {
         }
     };
 
+    const resetViolations = async (attemptId) => {
+        if (!confirm("Reset this student's violation log and allow them to continue?")) return;
+        setBusy((b) => ({ ...b, [attemptId]: true }));
+        try {
+            await api.proctoring.resetAttempt(attemptId);
+            await load();
+        } catch (e) {
+            alert(e.message);
+        } finally {
+            setBusy((b) => ({ ...b, [attemptId]: false }));
+        }
+    };
+
     const activeCount = rows.filter((r) => r.status === "in_progress").length;
 
     return (
@@ -147,6 +160,9 @@ export default function LiveMonitoring() {
                                         <div className="ml-auto flex gap-2">
                                             <Button size="sm" variant="outline" onClick={() => toggleDetail(r.id)}>
                                                 {open ? "Hide" : "Violations"}
+                                            </Button>
+                                            <Button size="sm" variant="outline" onClick={() => resetViolations(r.id)} disabled={busy[r.id]}>
+                                                <RefreshCw className="h-4 w-4" /> Reset
                                             </Button>
                                             <Button size="sm" variant="destructive" onClick={() => forceSubmit(r.id)} disabled={busy[r.id]}>
                                                 <StopCircle className="h-4 w-4" /> {busy[r.id] ? "Submitting..." : "Force submit"}

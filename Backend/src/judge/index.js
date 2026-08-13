@@ -1,17 +1,16 @@
 "use strict";
 
-const { spawn } = require("child_process");
+const { spawn, spawnSync } = require("child_process");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
 
 const SUPPORTED = {
-  javascript: { ext: "js", cmd: () => process.execPath, label: "JavaScript" },
-  javascriptreact: { ext: "js", cmd: () => process.execPath, label: "JavaScript" },
-  js: { ext: "js", cmd: () => process.execPath, label: "JavaScript" },
-  node: { ext: "js", cmd: () => process.execPath, label: "JavaScript" },
-  python: { ext: "py", cmd: () => "python", label: "Python" },
-  py: { ext: "py", cmd: () => "python", label: "Python" },
+  python: { ext: "py", cmd: "python", label: "Python", isCompiled: false },
+  py: { ext: "py", cmd: "python", label: "Python", isCompiled: false },
+  c: { ext: "c", label: "C", isCompiled: true },
+  cpp: { ext: "cpp", label: "C++", isCompiled: true },
+  java: { ext: "java", label: "Java", isCompiled: true }
 };
 
 function normalizeOutput(output) {
@@ -26,17 +25,68 @@ function normalizeOutput(output) {
 
 function runCode({ language, code, stdin, timeoutMs = 5000, maxOutput = 2 * 1024 * 1024 }) {
   return new Promise((resolve) => {
-    const runner = SUPPORTED[String(language || "").toLowerCase()];
+    const langKey = String(language || "").toLowerCase().trim();
+    const runner = SUPPORTED[langKey];
     if (!runner) {
       return resolve({ ok: false, stdout: "", stderr: `Unsupported language: ${language}`, exitCode: -1, timedOut: false, error: "unsupported_language" });
     }
     let tmpDir = null;
     try {
       tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "codeassess-"));
-      const file = path.join(tmpDir, `main.${runner.ext}`);
-      fs.writeFileSync(file, code || "");
-      const cmd = runner.cmd();
-      const child = spawn(cmd, [file], { cwd: tmpDir, windowsHide: true });
+      
+      let executablePath = "";
+      let runCmd = "";
+      let runArgs = [];
+      
+      if (runner.isCompiled) {
+        if (langKey === "c") {
+          const srcFile = path.join(tmpDir, "main.c");
+          fs.writeFileSync(srcFile, code || "");
+          const exeName = os.platform() === "win32" ? "main.exe" : "main";
+          executablePath = path.join(tmpDir, exeName);
+          
+          const compile = spawnSync("gcc", ["main.c", "-o", exeName], { cwd: tmpDir, timeout: 5000, windowsHide: true });
+          if (compile.status !== 0) {
+            const compileError = (compile.stderr || compile.stdout || "Compilation failed").toString();
+            return resolve({ ok: false, stdout: "", stderr: compileError, exitCode: -1, timedOut: false, error: "compilation_error" });
+          }
+          runCmd = executablePath;
+          runArgs = [];
+        } else if (langKey === "cpp") {
+          const srcFile = path.join(tmpDir, "main.cpp");
+          fs.writeFileSync(srcFile, code || "");
+          const exeName = os.platform() === "win32" ? "main.exe" : "main";
+          executablePath = path.join(tmpDir, exeName);
+          
+          const compile = spawnSync("g++", ["main.cpp", "-o", exeName], { cwd: tmpDir, timeout: 5000, windowsHide: true });
+          if (compile.status !== 0) {
+            const compileError = (compile.stderr || compile.stdout || "Compilation failed").toString();
+            return resolve({ ok: false, stdout: "", stderr: compileError, exitCode: -1, timedOut: false, error: "compilation_error" });
+          }
+          runCmd = executablePath;
+          runArgs = [];
+        } else if (langKey === "java") {
+          const classMatch = (code || "").match(/public\s+class\s+(\w+)/);
+          const className = classMatch ? classMatch[1] : "Solution";
+          const srcFile = path.join(tmpDir, `${className}.java`);
+          fs.writeFileSync(srcFile, code || "");
+          
+          const compile = spawnSync("javac", [`${className}.java`], { cwd: tmpDir, timeout: 5000, windowsHide: true });
+          if (compile.status !== 0) {
+            const compileError = (compile.stderr || compile.stdout || "Compilation failed").toString();
+            return resolve({ ok: false, stdout: "", stderr: compileError, exitCode: -1, timedOut: false, error: "compilation_error" });
+          }
+          runCmd = "java";
+          runArgs = [className];
+        }
+      } else {
+        const srcFile = path.join(tmpDir, `main.${runner.ext}`);
+        fs.writeFileSync(srcFile, code || "");
+        runCmd = runner.cmd;
+        runArgs = [srcFile];
+      }
+
+      const child = spawn(runCmd, runArgs, { cwd: tmpDir, windowsHide: true });
       let stdout = "";
       let stderr = "";
       let timedOut = false;

@@ -29,6 +29,7 @@ export default function StaffTests() {
     const [questions, setQuestions] = useState([]);
     const [batches, setBatches] = useState([]);
     const [busy, setBusy] = useState(false);
+    const [selectedFile, setSelectedFile] = useState(null);
 
     const [f, setF] = useState(() => emptyForm());
     const [assignF, setAssignF] = useState({ batch: "", all: false, regNos: "" });
@@ -47,13 +48,33 @@ export default function StaffTests() {
     const set = (patch) => setF((x) => ({ ...x, ...patch }));
 
     const create = async () => {
-        if (!f.title.trim() || !f.type) return;
+        if (!f.title.trim()) return;
+        
+        const testType = f.testTypeSelection === "coding_test" ? "coding" : "aptitude";
         setBusy(true);
         try {
+            let fixedQuestionIds = [];
+            
+            if (f.mode === "fixed") {
+                if (!selectedFile) {
+                    alert("Please upload the questions Excel file.");
+                    setBusy(false);
+                    return;
+                }
+                
+                const importRes = await api.tests.importQuestions(selectedFile, {
+                    testType,
+                    manualType: testType === "aptitude" ? f.manualType : undefined,
+                    questionLimit: Number(f.questionLimit) || 0
+                });
+                
+                fixedQuestionIds = importRes.questionIds;
+            }
+
             const payload = {
                 title: f.title,
                 description: f.description,
-                type: f.type,
+                type: testType,
                 mode: f.mode,
                 durationMin: Number(f.durationMin) || 30,
                 passingScore: Number(f.passingScore) || 50,
@@ -64,15 +85,17 @@ export default function StaffTests() {
                     snapshotIntervalSec: Number(f.proctoringInterval) || 20,
                 },
                 adaptive: f.mode === "adaptive" ? { totalQuestions: Number(f.adaptiveCount) || 10, questionFilter: null } : undefined,
-                fixedQuestionIds: f.mode === "fixed" ? (f.autoPick ? [] : f.selectedIds) : [],
-                autoPick: f.mode === "fixed" && f.autoPick ? { type: f.type, difficulty: f.autoDifficulty || undefined, count: Number(f.autoCount) || 10 } : null,
+                fixedQuestionIds,
+                allowedLanguages: testType === "coding" ? ["c", "cpp", "java", "python"] : undefined,
                 assignedToAll: f.assignedToAll,
                 assignedBatch: f.assignedToAll ? null : f.assignedBatch || null,
-                assignedStudents: f.assignedToAll ? [] : f.assignedRegNos,
+                assignedStudents: f.assignedToAll ? [] : f.assignedRegNos.split(/[,;]/).map((s) => s.trim()).filter(Boolean),
             };
+            
             await api.tests.create(payload);
             setCreateOpen(false);
             setF(emptyForm());
+            setSelectedFile(null);
             load();
         } catch (e) {
             alert(e.message);
@@ -110,14 +133,6 @@ export default function StaffTests() {
         if (!confirm(`Delete test "${t.title}" and all its attempts?`)) return;
         await api.tests.remove(t.id).catch((e) => alert(e.message));
         load();
-    };
-
-    const qFiltered = f.mode === "fixed"
-        ? questions.filter((q) => q.type === f.type && (!f.autoPick || !f.autoDifficulty || q.difficulty === f.autoDifficulty))
-        : [];
-
-    const toggleQuestion = (id) => {
-        set({ selectedIds: f.selectedIds.includes(id) ? f.selectedIds.filter((x) => x !== id) : [...f.selectedIds, id] });
     };
 
     return (
@@ -187,11 +202,17 @@ export default function StaffTests() {
             </Card>
 
             {/* Create Test dialog */}
-            <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+            <Dialog open={createOpen} onOpenChange={(open) => {
+                setCreateOpen(open);
+                if (!open) {
+                    setF(emptyForm());
+                    setSelectedFile(null);
+                }
+            }}>
                 <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
                     <DialogHeader>
                         <DialogTitle>Create Test</DialogTitle>
-                        <DialogDescription>Configure the test and assign it to students or batches.</DialogDescription>
+                        <DialogDescription>Configure the test and import questions.</DialogDescription>
                     </DialogHeader>
                     <div className="space-y-4">
                         <div className="grid grid-cols-2 gap-4">
@@ -203,26 +224,29 @@ export default function StaffTests() {
                                 <Label className="text-xs text-zinc-400">Description</Label>
                                 <Textarea rows={2} value={f.description} onChange={(e) => set({ description: e.target.value })} placeholder="What does this test cover?" />
                             </div>
+                            
                             <div className="space-y-1.5">
-                                <Label className="text-xs text-zinc-400">Type</Label>
-                                <Select value={f.type} onValueChange={(v) => set({ type: v, selectedIds: [] })}>
+                                <Label className="text-xs text-zinc-400">What test is it?</Label>
+                                <Select value={f.testTypeSelection} onValueChange={(v) => set({ testTypeSelection: v, mode: "fixed" })}>
                                     <SelectTrigger><SelectValue /></SelectTrigger>
                                     <SelectContent>
-                                        <SelectItem value="aptitude">Aptitude</SelectItem>
-                                        <SelectItem value="coding">Coding</SelectItem>
+                                        <SelectItem value="mcq_test">Aptitude / Coding MCQ</SelectItem>
+                                        <SelectItem value="coding_test">Coding Test</SelectItem>
                                     </SelectContent>
                                 </Select>
                             </div>
+
                             <div className="space-y-1.5">
                                 <Label className="text-xs text-zinc-400">Mode</Label>
                                 <Select value={f.mode} onValueChange={(v) => set({ mode: v })}>
                                     <SelectTrigger><SelectValue /></SelectTrigger>
                                     <SelectContent>
-                                        <SelectItem value="fixed">Fixed question set</SelectItem>
+                                        <SelectItem value="fixed">Manual (Upload Excel)</SelectItem>
                                         <SelectItem value="adaptive">Adaptive</SelectItem>
                                     </SelectContent>
                                 </Select>
                             </div>
+
                             <div className="space-y-1.5">
                                 <Label className="text-xs text-zinc-400">Duration (minutes)</Label>
                                 <Input type="number" value={f.durationMin} onChange={(e) => set({ durationMin: e.target.value })} />
@@ -234,55 +258,61 @@ export default function StaffTests() {
                         </div>
 
                         {f.mode === "fixed" ? (
-                            <>
-                                <div className="flex items-center gap-3 rounded-lg border border-zinc-800 bg-zinc-950/40 p-3">
-                                    <Checkbox checked={f.autoPick} onCheckedChange={(v) => set({ autoPick: !!v })} />
-                                    <div className="flex-1">
-                                        <p className="text-sm text-zinc-200">Auto-pick questions</p>
-                                        <p className="text-xs text-zinc-500">Randomly select from the question bank.</p>
-                                    </div>
-                                    {f.autoPick && (
-                                        <div className="flex items-center gap-2">
-                                            <Select value={f.autoDifficulty} onValueChange={(v) => set({ autoDifficulty: v })}>
-                                                <SelectTrigger className="w-32"><SelectValue placeholder="Difficulty" /></SelectTrigger>
-                                                <SelectContent>
-                                                    <SelectItem value="">Any</SelectItem>
-                                                    <SelectItem value="easy">Easy</SelectItem>
-                                                    <SelectItem value="medium">Medium</SelectItem>
-                                                    <SelectItem value="hard">Hard</SelectItem>
-                                                </SelectContent>
-                                            </Select>
-                                            <Input
-                                                type="number"
-                                                className="w-24"
-                                                placeholder="Count"
-                                                value={f.autoCount}
-                                                onChange={(e) => set({ autoCount: e.target.value })}
-                                            />
-                                        </div>
-                                    )}
-                                </div>
-                                {!f.autoPick && (
-                                    <div className="rounded-lg border border-zinc-800 bg-zinc-950/40 p-3">
-                                        <p className="mb-2 text-sm font-medium text-zinc-200">Select questions ({f.selectedIds.length} chosen)</p>
-                                        <div className="max-h-48 space-y-1 overflow-y-auto">
-                                            {qFiltered.length === 0 && <p className="text-xs text-zinc-500">No {f.type} questions in the bank yet.</p>}
-                                            {qFiltered.map((q) => (
-                                                <label key={q.id} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 hover:bg-zinc-800/50">
-                                                    <Checkbox checked={f.selectedIds.includes(q.id)} onCheckedChange={() => toggleQuestion(q.id)} />
-                                                    <span className="flex-1 truncate text-sm text-zinc-300">{q.title}</span>
-                                                    <span className="text-xs text-zinc-500 capitalize">{q.difficulty}</span>
-                                                </label>
-                                            ))}
-                                        </div>
+                            <div className="space-y-4 rounded-lg border border-zinc-800 bg-zinc-950/40 p-4">
+                                <p className="text-sm font-medium text-zinc-200">Manual Setup (Excel Upload)</p>
+                                
+                                {f.testTypeSelection === "mcq_test" && (
+                                    <div className="space-y-1.5">
+                                        <Label className="text-xs text-zinc-400">Question Format</Label>
+                                        <Select value={f.manualType} onValueChange={(v) => set({ manualType: v })}>
+                                            <SelectTrigger><SelectValue /></SelectTrigger>
+                                            <SelectContent>
+                                                <SelectItem value="mcq">MCQ</SelectItem>
+                                                <SelectItem value="fillup">Fill up</SelectItem>
+                                            </SelectContent>
+                                        </Select>
                                     </div>
                                 )}
-                            </>
+
+                                <div className="space-y-1.5">
+                                    <Label className="text-xs text-zinc-400">Questions Excel File (.xlsx, .xls, .csv)</Label>
+                                    <Input type="file" accept=".xlsx, .xls, .csv" onChange={(e) => setSelectedFile(e.target.files[0])} className="text-zinc-200 border-zinc-700 bg-zinc-800" />
+                                    <p className="text-[11px] text-zinc-500 leading-normal">
+                                        <strong>Required columns:</strong><br />
+                                        {f.testTypeSelection === "coding_test" ? (
+                                            <code>Ques | Description | Input Format | Output Format | Constraints | Test Case 1 | Test Case 2 | Test Case 3 | Test Case 4 | Test Case 5 | Edge Case 1 | Edge Case 2 | Tags</code>
+                                        ) : f.manualType === "fillup" ? (
+                                            <code>Ques | Corr Ans</code>
+                                        ) : (
+                                            <code>Ques | Opt A | Opt B | Opt C | Opt D | Corr Ans</code>
+                                        )}
+                                    </p>
+                                </div>
+
+                                <div className="space-y-1.5">
+                                    <Label className="text-xs text-zinc-400">Number of questions to select</Label>
+                                    <Input type="number" min={1} value={f.questionLimit} onChange={(e) => set({ questionLimit: Number(e.target.value) || 0 })} />
+                                    <p className="text-[11px] text-zinc-500">If Excel has more lines, only the first N questions will be imported & evaluated.</p>
+                                </div>
+                            </div>
                         ) : (
-                            <div className="space-y-1.5">
-                                <Label className="text-xs text-zinc-400">Adaptive question count</Label>
-                                <Input type="number" value={f.adaptiveCount} onChange={(e) => set({ adaptiveCount: e.target.value })} />
-                                <p className="text-xs text-zinc-500">Question difficulty adapts to the student's answers.</p>
+                            <div className="space-y-4 rounded-lg border border-zinc-800 bg-zinc-950/40 p-4">
+                                <p className="text-sm font-medium text-zinc-200">Adaptive Setup</p>
+                                
+                                {f.testTypeSelection === "coding_test" ? (
+                                    <p className="text-xs text-amber-400">
+                                        💡 Questions will be automatically synced and loaded from the <code>AIML</code> folder.
+                                    </p>
+                                ) : (
+                                    <p className="text-xs text-zinc-400">
+                                        Question difficulty adapts dynamically based on candidate performance.
+                                    </p>
+                                )}
+
+                                <div className="space-y-1.5">
+                                    <Label className="text-xs text-zinc-400">Adaptive question count</Label>
+                                    <Input type="number" value={f.adaptiveCount} onChange={(e) => set({ adaptiveCount: e.target.value })} />
+                                </div>
                             </div>
                         )}
 
@@ -395,15 +425,12 @@ function emptyForm() {
     return {
         title: "",
         description: "",
-        type: "aptitude",
+        testTypeSelection: "mcq_test",
         mode: "fixed",
+        manualType: "mcq",
+        questionLimit: 50,
         durationMin: 30,
         passingScore: 50,
-        autoPick: true,
-        autoDifficulty: "",
-        autoCount: 10,
-        adaptiveCount: 10,
-        selectedIds: [],
         assignedToAll: true,
         assignedBatch: "",
         assignedRegNos: "",
@@ -411,5 +438,6 @@ function emptyForm() {
         proctoringMax: 5,
         proctoringAuto: true,
         proctoringInterval: 20,
+        adaptiveCount: 10,
     };
 }

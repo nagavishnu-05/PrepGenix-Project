@@ -36,7 +36,7 @@ router.get("/:id", authenticate, async (req, res) => {
 router.post("/", authenticate, async (req, res) => {
   try {
     if (req.user.role !== "placement") return res.status(403).json({ error: "Placement Coordinator only" });
-    const { regNo, type, scheduledAt, interviewer } = req.body;
+    const { regNo, type, scheduledAt, interviewer, mode, proctoring } = req.body;
     if (!regNo || !scheduledAt) return res.status(400).json({ error: "regNo and scheduledAt are required" });
     const student = await col("students").findOne({ regNo });
     if (!student) return res.status(404).json({ error: "Student not found" });
@@ -44,8 +44,20 @@ router.post("/", authenticate, async (req, res) => {
       regNo,
       studentName: student.name,
       type: type || "Technical",
+      mode: mode || "online-proctored",
       interviewer: interviewer || req.user.username,
       scheduledAt: new Date(scheduledAt),
+      proctoring: {
+        enabled: proctoring?.enabled !== false,
+        camera: proctoring?.camera !== false,
+        microphone: proctoring?.microphone !== false,
+        speechToText: proctoring?.speechToText !== false,
+        backgroundCheck: proctoring?.backgroundCheck !== false,
+        faceVerification: proctoring?.faceVerification !== false,
+        fullscreenRequired: proctoring?.fullscreenRequired !== false,
+      },
+      transcript: [],
+      analysis: { face: null, speech: null, background: null },
       status: "scheduled",
       createdBy: req.user.userId,
       createdAt: new Date(),
@@ -55,6 +67,42 @@ router.post("/", authenticate, async (req, res) => {
     res.status(201).json(toId(doc));
   } catch {
     res.status(500).json({ error: "Failed to schedule interview" });
+  }
+});
+
+// POST /api/interviews/:id/analysis  (student or placement) store live AI analysis
+router.post("/:id/analysis", authenticate, async (req, res) => {
+  try {
+    const interview = await col("interviews").findOne({ _id: id(req.params.id) });
+    if (!interview) return res.status(404).json({ error: "Interview not found" });
+    if (req.user.role === "student" && interview.regNo !== req.user.username) {
+      return res.status(403).json({ error: "Access denied" });
+    }
+
+    const { transcript, faceSummary, speechSummary, backgroundStatus, cameraStatus, micStatus, notes } = req.body || {};
+    const set = {
+      updatedAt: new Date(),
+      analysis: {
+        face: faceSummary || interview.analysis?.face || null,
+        speech: speechSummary || interview.analysis?.speech || null,
+        background: backgroundStatus || interview.analysis?.background || null,
+        camera: cameraStatus || interview.analysis?.camera || null,
+        mic: micStatus || interview.analysis?.mic || null,
+      },
+    };
+
+    if (Array.isArray(transcript)) set.transcript = transcript;
+    if (notes) set.notes = notes;
+    if (req.body?.status) set.status = req.body.status;
+
+    const updated = await col("interviews").findOneAndUpdate(
+      { _id: id(req.params.id) },
+      { $set: set },
+      { returnDocument: "after" }
+    );
+    res.json(toId(updated));
+  } catch {
+    res.status(500).json({ error: "Failed to save interview analysis" });
   }
 });
 

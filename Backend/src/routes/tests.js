@@ -1,13 +1,26 @@
 "use strict";
 
 const express = require("express");
+const fs = require("fs");
+const path = require("path");
+const multer = require("multer");
 const { col, toId, id } = require("../db");
 const { authenticate } = require("../middleware/auth");
 const { initialState, advanceState, classifyResult, pickAdaptiveQuestion } = require("../adaptive");
 const { gradeSubmission } = require("../judge");
 const { pushAptitude, pushCoding } = require("../perf");
+const {
+  rowsFromBuffer,
+  rowsFromFile,
+  parseCodingQuestions,
+  parseJsonQuestions,
+  parseAptitudeMcqManual,
+  parseAptitudeFillupManual,
+  parseCodingManual
+} = require("../excel-parse");
 
 const router = express.Router();
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
 const DIFFICULTIES = ["easy", "medium", "hard"];
 
@@ -135,6 +148,128 @@ router.get("/:id", authenticate, async (req, res) => {
   }
 });
 
+async function syncAimlQuestions() {
+  const aimlDirs = [
+    path.join(__dirname, "..", "..", "..", "AIML"),
+    path.join(__dirname, "..", "..", "..", "AIML", "data")
+  ];
+
+  const questionsToInsert = [];
+
+  for (const dir of aimlDirs) {
+    if (!fs.existsSync(dir)) continue;
+
+    let files = [];
+    try {
+      files = fs.readdirSync(dir).filter(f => /\.(xlsx|xls|csv|json)$/i.test(f));
+    } catch (e) {
+      console.error(`Failed to read AIML dir ${dir}:`, e.message);
+      continue;
+    }
+
+    for (const file of files) {
+      if (file === "skills.json") continue;
+      
+      const filePath = path.join(dir, file);
+      try {
+        let parsed = [];
+        if (file.endsWith(".json")) {
+          parsed = parseJsonQuestions(filePath);
+        } else {
+          const rows = rowsFromFile(filePath);
+          parsed = parseCodingManual(rows);
+          if (!parsed.length || !parsed[0].testCases || parsed[0].testCases.length === 0) {
+            parsed = parseCodingQuestions(rows);
+          }
+        }
+
+        for (const q of parsed) {
+          if (q.type === "coding") {
+            q.source = "aiml";
+            q.sourceFile = file;
+            questionsToInsert.push(q);
+          }
+        }
+      } catch (e) {
+        console.error(`Failed to parse AIML file ${file}:`, e.message);
+      }
+    }
+  }
+
+  if (questionsToInsert.length > 0) {
+    const now = new Date();
+    for (const q of questionsToInsert) {
+      await col("questions").updateOne(
+        { title: q.title, type: "coding", source: "aiml" },
+        { 
+          $set: { 
+            ...q, 
+            updatedAt: now 
+          },
+          $setOnInsert: {
+            createdAt: now
+          }
+        },
+        { upsert: true }
+      );
+    }
+    console.log(`Synced ${questionsToInsert.length} coding questions from AIML folder`);
+  }
+}
+
+// POST /api/tests/import-questions (staff)
+router.post("/import-questions", authenticate, upload.single("file"), async (req, res) => {
+  try {
+    if (req.user.role !== "staff") return res.status(403).json({ error: "Staff Coordinator only" });
+    if (!req.file) return res.status(400).json({ error: "No file uploaded" });
+
+    const testType = req.body.testType; // "aptitude" or "coding"
+    const manualType = req.body.manualType; // "mcq" or "fillup" (only if aptitude)
+    const questionLimit = Number(req.body.questionLimit) || 0;
+
+    const rows = rowsFromBuffer(req.file.buffer);
+    let parsed = [];
+
+    if (testType === "coding") {
+      parsed = parseCodingManual(rows);
+    } else {
+      if (manualType === "fillup") {
+        parsed = parseAptitudeFillupManual(rows);
+      } else {
+        parsed = parseAptitudeMcqManual(rows);
+      }
+    }
+
+    if (!parsed.length) {
+      return res.status(400).json({ error: "No valid questions found in file" });
+    }
+
+    // Slice to limit
+    if (questionLimit > 0 && parsed.length > questionLimit) {
+      parsed = parsed.slice(0, questionLimit);
+    }
+
+    const now = new Date();
+    const withMeta = parsed.map((q) => ({
+      ...q,
+      createdBy: req.user.userId,
+      createdAt: now,
+      updatedAt: now,
+    }));
+
+    const result = await col("questions").insertMany(withMeta);
+    const ids = Object.values(result.insertedIds).map((id) => id.toString());
+
+    res.status(201).json({
+      message: "Questions imported successfully",
+      count: ids.length,
+      questionIds: ids,
+    });
+  } catch (err) {
+    res.status(500).json({ error: `Question import failed: ${err.message}` });
+  }
+});
+
 // POST /api/tests  (staff)
 router.post("/", authenticate, async (req, res) => {
   try {
@@ -229,6 +364,11 @@ router.post("/:id/start", authenticate, async (req, res) => {
     if (!test) return res.status(404).json({ error: "Test not found" });
     const student = await getStudent(req);
     if (!isAssigned(test, student)) return res.status(403).json({ error: "Test not assigned to you" });
+
+    // Sync AIML questions if test is adaptive coding
+    if (test.type === "coding" && test.mode === "adaptive") {
+      await syncAimlQuestions().catch(e => console.error("AIML sync failed at start:", e));
+    }
 
     const existing = await col("attempts").findOne(
       { testId: test._id.toString(), studentRegNo: student.regNo },

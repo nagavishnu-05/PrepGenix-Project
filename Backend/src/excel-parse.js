@@ -80,26 +80,73 @@ function mapFormat(v) {
   return FORMAT_MAP[key] || null;
 }
 
+function extractLooseQuestionValues(row) {
+  const entries = Object.entries(row || {})
+    .sort(([a], [b]) => {
+      const na = Number(String(a).match(/(\d+)$/)?.[1] || "0");
+      const nb = Number(String(b).match(/(\d+)$/)?.[1] || "0");
+      return na - nb;
+    })
+    .map(([, v]) => cellValue(v))
+    .filter((v) => v !== "");
+  return entries;
+}
+
+function parseLooseAptitudeRow(row, i) {
+  const values = extractLooseQuestionValues(row);
+  if (values.length < 2) return null;
+
+  const questionText = String(values[0]).trim();
+  if (!questionText) return null;
+
+  const optionValues = values.slice(1).map((v) => String(v).trim()).filter(Boolean);
+  if (!optionValues.length) return null;
+
+  const cleanOptions = Array.from(new Set(optionValues)).slice(0, 4);
+  if (!cleanOptions.length) return null;
+
+  return {
+    type: "aptitude",
+    format: "mcq",
+    subject: "quantitative",
+    title: questionText,
+    description: questionText,
+    codeSnippet: "",
+    options: cleanOptions,
+    correctOption: 0,
+    answer: null,
+    difficulty: "easy",
+    points: 1,
+    tags: [],
+    source: "excel-fallback",
+    rowIndex: i,
+  };
+}
+
 function parseAptitudeQuestions(rows) {
   const questions = [];
   rows.forEach((r, i) => {
-    const title = r.title || r.questionname || r.question;
-    if (!title) return;
+    const title = r.title || r.questionname || r.question || r.ques || r.q || r.questiontext || r.questiontext1;
+    if (!title) {
+      const fallback = parseLooseAptitudeRow(r, i);
+      if (fallback) questions.push(fallback);
+      return;
+    }
     const format = mapFormat(r.format || r.type || "mcq") || "mcq";
-    const options = ["a", "b", "c", "d"].map((k) => r[`option${k}`] || "").filter((v) => v);
+    const options = ["a", "b", "c", "d", "e"].map((k) => r[`option${k}`] || r[`opt${k}`] || "").filter((v) => v);
     let correctOption = null;
     let answer = null;
     if (format === "mcq") {
-      const raw = String(r.correctoption || r.answer || r.correctanswer || "").trim();
-      if (/^[a-d]$/i.test(raw)) {
+      const raw = String(r.correctoption || r.answer || r.correctanswer || r.corrans || "").trim();
+      if (/^[a-e]$/i.test(raw)) {
         correctOption = raw.toLowerCase().charCodeAt(0) - 97;
       } else if (raw) {
         const idx = options.findIndex((o) => o.toLowerCase() === raw.toLowerCase());
         correctOption = idx >= 0 ? idx : null;
       }
-      if (correctOption == null) correctOption = 0;
+      if (correctOption == null && options.length) correctOption = 0;
     } else {
-      answer = cellValue(r.answer || r.correctanswer || r.correctoption);
+      answer = cellValue(r.answer || r.correctanswer || r.correctoption || r.corrans);
     }
     const diff = String(r.difficulty || "easy").toLowerCase();
     questions.push({
@@ -107,7 +154,7 @@ function parseAptitudeQuestions(rows) {
       format,
       subject: r.subject || r.category || "quantitative",
       title: String(title).trim(),
-      description: cellValue(r.description || r.questiontext || r.question),
+      description: cellValue(r.description || r.questiontext || r.question || title),
       codeSnippet: cellValue(r.codesnippet || r.snippet || r.code),
       options,
       correctOption,
@@ -230,6 +277,209 @@ function parseJsonQuestions(filePath) {
   });
 }
 
+function cellValuePreserveIndent(v) {
+  if (v == null) return "";
+  if (typeof v === "number") return String(v);
+  return String(v).replace(/\r\n/g, "\n").trimEnd();
+}
+
+function parseTestCaseCellValue(value) {
+  if (!value) return null;
+  const str = String(value).trim();
+  if (!str) return null;
+
+  // Case 1: Labeled Input/Output (e.g. Input: 5\nOutput: 15)
+  const inputMatch = str.match(/input:\s*([\s\S]*?)(?=output:|$)/i);
+  const outputMatch = str.match(/output:\s*([\s\S]*)$/i);
+  if (inputMatch && outputMatch) {
+    return {
+      input: inputMatch[1].trim(),
+      expectedOutput: outputMatch[1].trim()
+    };
+  }
+
+  // Case 2: Explicit delimiters like => or ->
+  if (str.includes("=>")) {
+    const parts = str.split("=>");
+    return { input: parts[0].trim(), expectedOutput: parts[1].trim() };
+  }
+  if (str.includes("->")) {
+    const parts = str.split("->");
+    return { input: parts[0].trim(), expectedOutput: parts[1].trim() };
+  }
+
+  // Case 3: Labeled output only or split by last line
+  if (str.includes("\n")) {
+    const lines = str.split(/\r?\n/).map(l => l.trim()).filter(l => l);
+    if (lines.length >= 2) {
+      const expectedOutput = lines.pop();
+      const input = lines.join("\n");
+      return { input, expectedOutput };
+    }
+  }
+
+  // Case 4: Labeled or simple split by space/pipe if it's a single line
+  if (str.includes("|")) {
+    const parts = str.split("|");
+    return { input: parts[0].trim(), expectedOutput: parts[1].trim() };
+  }
+
+  // Default fallback: entire string is input, expected output is empty
+  return { input: str, expectedOutput: "" };
+}
+
+function parseAptitudeMcqManual(rows) {
+  const questions = [];
+  rows.forEach((r, i) => {
+    const title = cellValuePreserveIndent(r.ques || r.question || r.q || r.title || "");
+    if (!title) {
+      const fallback = parseLooseAptitudeRow(r, i);
+      if (fallback) questions.push(fallback);
+      return;
+    }
+
+    const options = [
+      cellValuePreserveIndent(r.opta || r.optiona || ""),
+      cellValuePreserveIndent(r.optb || r.optionb || ""),
+      cellValuePreserveIndent(r.optc || r.optionc || ""),
+      cellValuePreserveIndent(r.optd || r.optiond || ""),
+      cellValuePreserveIndent(r.opte || r.optione || ""),
+    ].filter(v => v !== "");
+
+    let correctOption = null;
+    const rawAns = String(r.corrans || r.correctanswer || r.correctoption || r.answer || "").trim().toLowerCase();
+    
+    if (/^[a-e]$/i.test(rawAns)) {
+      correctOption = rawAns.charCodeAt(0) - 97;
+    } else if (rawAns) {
+      const idx = options.findIndex((o) => o.toLowerCase().trim() === rawAns);
+      correctOption = idx >= 0 ? idx : 0;
+    }
+    if (correctOption == null && options.length) correctOption = 0;
+
+    questions.push({
+      type: "aptitude",
+      format: "mcq",
+      subject: r.subject || r.category || "quantitative",
+      title: title,
+      description: title,
+      codeSnippet: "",
+      options,
+      correctOption,
+      answer: null,
+      difficulty: "easy",
+      points: 1,
+      tags: r.tags ? String(r.tags).split(",").map(t => t.trim()) : ["mcq"],
+      source: "excel-manual",
+      rowIndex: i,
+    });
+  });
+  return questions;
+}
+
+function parseAptitudeFillupManual(rows) {
+  const questions = [];
+  rows.forEach((r, i) => {
+    const title = cellValuePreserveIndent(r.ques || r.question || r.q || r.title || "");
+    if (!title) return;
+
+    const answer = String(r.corrans || r.correctanswer || r.correctoption || r.answer || "").trim();
+
+    questions.push({
+      type: "aptitude",
+      format: "fillup",
+      subject: r.subject || r.category || "verbal",
+      title: title,
+      description: title,
+      codeSnippet: "",
+      options: [],
+      correctOption: null,
+      answer: answer,
+      difficulty: "easy",
+      points: 1,
+      tags: r.tags ? String(r.tags).split(",").map(t => t.trim()) : ["fillup"],
+      source: "excel-manual",
+      rowIndex: i,
+    });
+  });
+  return questions;
+}
+
+function parseCodingManual(rows) {
+  const questions = [];
+  rows.forEach((r, i) => {
+    const title = cellValuePreserveIndent(r.ques || r.question || r.q || r.title || "");
+    if (!title) return;
+
+    const description = cellValuePreserveIndent(r.description || "");
+    const inputFormat = cellValuePreserveIndent(r.inputformat || "");
+    const outputFormat = cellValuePreserveIndent(r.outputformat || "");
+    
+    const constraintsVal = cellValuePreserveIndent(r.constraints || "");
+    const constraints = constraintsVal.split("\n").map(s => s.trimEnd()).filter(Boolean);
+
+    const testCases = [];
+    
+    // Parse Test Cases 1-5
+    for (let num = 1; num <= 5; num++) {
+      const cellVal = r[`testcase${num}`];
+      if (cellVal) {
+        const tc = parseTestCaseCellValue(cellVal);
+        if (tc) {
+          testCases.push({
+            orderIndex: testCases.length,
+            input: tc.input,
+            expectedOutput: tc.expectedOutput,
+            isHard: false
+          });
+        }
+      }
+    }
+
+    // Parse Edge Cases 1-2
+    for (let num = 1; num <= 2; num++) {
+      const cellVal = r[`edgecase${num}`] || r[`edgecases${num}`];
+      if (cellVal) {
+        const tc = parseTestCaseCellValue(cellVal);
+        if (tc) {
+          testCases.push({
+            orderIndex: testCases.length,
+            input: tc.input,
+            expectedOutput: tc.expectedOutput,
+            isHard: true
+          });
+        }
+      }
+    }
+
+    const tagsVal = String(r.tags || "").trim();
+    const tags = tagsVal ? tagsVal.split(/[,;]/).map(t => t.trim()).filter(Boolean) : ["coding"];
+
+    questions.push({
+      type: "coding",
+      format: "programming",
+      title: title,
+      description: description,
+      inputFormat: inputFormat,
+      outputFormat: outputFormat,
+      constraints: constraints,
+      examples: testCases.slice(0, 2).map(tc => ({
+        input: tc.input,
+        output: tc.expectedOutput,
+        explanation: ""
+      })),
+      testCases: testCases,
+      tags: tags,
+      difficulty: "medium", // default
+      points: 10, // default
+      starterCode: {}, // will use our fallbacks in store
+      source: "excel-manual",
+      rowIndex: i,
+    });
+  });
+  return questions;
+}
+
 module.exports = {
   rowsFromBuffer,
   rowsFromFile,
@@ -238,4 +488,7 @@ module.exports = {
   parseCodingQuestions,
   parseJsonQuestions,
   normalizeHeader,
+  parseAptitudeMcqManual,
+  parseAptitudeFillupManual,
+  parseCodingManual,
 };

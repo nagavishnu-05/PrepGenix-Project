@@ -222,6 +222,26 @@ router.get("/test/:testId", authenticate, async (req, res) => {
   }
 });
 
+// POST /api/proctoring/attempt/:attemptId/reset  (staff) -> clear violation record for a student's attempt
+router.post("/attempt/:attemptId/reset", authenticate, async (req, res) => {
+  try {
+    if (req.user.role !== "staff") return res.status(403).json({ error: "Staff Coordinator only" });
+    const attempt = await col("attempts").findOne({ _id: id(req.params.attemptId) });
+    if (!attempt) return res.status(404).json({ error: "Attempt not found" });
+
+    await col("violations").deleteMany({ attemptId: attempt._id.toString() });
+    const resetAttempt = await col("attempts").findOneAndUpdate(
+      { _id: attempt._id },
+      { $set: { violations: 0, latestAnalysis: null, latestFrame: null, lastSeenAt: new Date(), status: attempt.status === "completed" ? "completed" : "in_progress" } },
+      { returnDocument: "after" }
+    );
+
+    res.json({ message: "Attempt violations reset", violationCount: 0, attempt: toId(resetAttempt) });
+  } catch {
+    res.status(500).json({ error: "Failed to reset attempt violations" });
+  }
+});
+
 // GET /api/proctoring/live  (staff) -> in-progress attempts with latest frames + violations
 router.get("/live", authenticate, async (req, res) => {
   try {

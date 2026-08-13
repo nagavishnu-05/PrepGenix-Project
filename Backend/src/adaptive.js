@@ -95,6 +95,15 @@ function classifyResult(state) {
 async function pickAdaptiveQuestion(state, test, askedIds) {
   const type = test.type === "coding" ? "coding" : "aptitude";
   const filter = { type, difficulty: state.level };
+
+  if (type === "coding") {
+    const { col } = require("./db");
+    const aimlCount = await col("questions").countDocuments({ type: "coding", source: "aiml" });
+    if (aimlCount > 0) {
+      filter.source = "aiml";
+    }
+  }
+
   if (test.questionFilter) {
     const { tags, subject, formats } = test.questionFilter;
     if (tags && tags.length) filter.tags = { $in: tags };
