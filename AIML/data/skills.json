@@ -1,0 +1,54 @@
+{
+  "categories": {
+    "Full Stack Developer": {
+      "keywords": ["react", "reactjs", "node", "nodejs", "express", "mongodb", "postgresql", "mysql", "mongo", "rest api", "restful", "graphql", "full stack", "full-stack", "javascript", "typescript", "html", "css", "tailwind", "bootstrap", "redux", "next.js", "spring boot", "django", "flask", "php", "laravel", "sql", "jquery", "redux toolkit"]
+    },
+    "Frontend Developer": {
+      "keywords": ["html", "css", "javascript", "react", "reactjs", "vue", "vue.js", "angular", "typescript", "tailwind", "bootstrap", "redux", "webpack", "sass", "scss", "ui", "dom", "responsive", "frontend", "front-end", "figma"]
+    },
+    "Backend Developer": {
+      "keywords": ["node", "nodejs", "express", "spring boot", "django", "flask", "java", "python", "php", "laravel", "rest api", "graphql", "mysql", "postgresql", "mongodb", "sql", "microservices", "backend", "back-end", "redis", "kafka", "aws", "docker", "golang", "go lang", "fastapi"]
+    },
+    "Mobile Developer": {
+      "keywords": ["android", "ios", "flutter", "react native", "reactnative", "kotlin", "swift", "java android", "xamarin", "mobile", "android studio", "firebase", "dart", "objective-c", "app development"]
+    },
+    "Data Scientist": {
+      "keywords": ["machine learning", "deep learning", "python", "pandas", "numpy", "scikit-learn", "tensorflow", "keras", "pytorch", "data science", "nlp", "computer vision", "opencv", "matplotlib", "seaborn", "statistics", "regression", "classification", "clustering", "neural network", "llm", "genai", "generative ai"]
+    },
+    "Data Analyst": {
+      "keywords": ["sql", "excel", "power bi", "tableau", "pandas", "numpy", "data analysis", "analytics", "data visualization", "python", "r", "statistics", "looker", "google sheets", "etl"]
+    },
+    "DevOps Engineer": {
+      "keywords": ["docker", "kubernetes", "jenkins", "ci/cd", "aws", "azure", "gcp", "terraform", "ansible", "linux", "git", "cloud", "devops", "nginx", "grafana", "prometheus", "shell scripting"]
+    },
+    "QA Engineer": {
+      "keywords": ["selenium", "testing", "test cases", "manual testing", "automation testing", "junit", "pytest", "postman", "cypress", "quality assurance", "qa", "bug", "rest api testing", "soapui", "appium"]
+    },
+    "Machine Learning Engineer": {
+      "keywords": ["machine learning", "deep learning", "mlops", "tensorflow", "pytorch", "pipeline", "model deployment", "onnx", "feature engineering", "opencv", "nlp", "computer vision", "genai", "llm", "langchain", "vector database", "embedding"]
+    },
+    "UI/UX Designer": {
+      "keywords": ["figma", "ui", "ux", "wireframe", "prototype", "design thinking", "user research", "user experience", "user interface", "photoshop", "illustrator", "sketch", "adobe xd"]
+    }
+  },
+  "skills": [
+    "react", "reactjs", "react native", "nodejs", "node", "express", "expressjs", "mongodb", "mysql", "postgresql", "sql",
+    "javascript", "typescript", "html", "css", "tailwind css", "bootstrap", "redux", "redux toolkit", "next.js", "vue.js",
+    "angular", "django", "flask", "fastapi", "spring boot", "java", "python", "kotlin", "swift", "dart", "flutter",
+    "android", "ios", "android studio", "firebase", "graphql", "rest api", "microservices", "docker", "kubernetes", "jenkins",
+    "aws", "azure", "gcp", "terraform", "ansible", "linux", "git", "github", "gitlab", "redis", "kafka", "rabbitmq",
+    "machine learning", "deep learning", "tensorflow", "keras", "pytorch", "scikit-learn", "pandas", "numpy", "matplotlib",
+    "seaborn", "opencv", "nlp", "natural language processing", "computer vision", "statistics", "data science", "data analysis",
+    "data visualization", "power bi", "tableau", "excel", "selenium", "cypress", "junit", "pytest", "postman", "testing",
+    "manual testing", "automation testing", "quality assurance", "figma", "ui/ux", "wireframe", "prototype", "photoshop",
+    "webpack", "sass", "scss", "jquery", "php", "laravel", "golang", "go", "c#", ".net", "c++", "c programming", "asp.net",
+    "wordpress", "shopify", "d3.js", "recharts", "socket.io", "webrtc", "redux thunk", "react query", "tailwind",
+    "docker compose", "ci/cd", "devops", "mlops", "llm", "genai", "generative ai", "langchain", "vector database",
+    "agile", "scrum", "kanban", "unit testing", "integration testing", "api testing", "rabbitmq", "grpc", "elasticsearch",
+    "sql server", "oracle", "mariadb", "sqlite", "firebase", "heroku", "netlify", "vercel", "nginx", "apache"
+  ],
+  "strengthKeywords": {
+    "full stack": ["react", "node", "express", "mongodb", "mysql", "sql", "rest api", "full stack", "full-stack", "javascript", "typescript", "graphql", "spring boot", "django"],
+    "mobile": ["android", "ios", "flutter", "react native", "kotlin", "swift", "dart", "mobile", "android studio", "xamarin", "app development"]
+  }
+}

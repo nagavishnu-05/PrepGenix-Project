@@ -1,0 +1,110 @@
+@import "tailwindcss";
+
+@variant dark (&:where(.dark, .dark *));
+
+:root {
+  --bg-main: #f8fafc;
+  --fg-main: #0f172a;
+  --card-bg: #ffffff;
+  --card-border: #e2e8f0;
+  --header-bg: rgba(255, 255, 255, 0.85);
+  --sidebar-bg: #ffffff;
+  --text-muted: #64748b;
+  --text-sub: #334155;
+  --input-bg: #ffffff;
+}
+
+html.dark {
+  --bg-main: #09090b;
+  --fg-main: #fafafa;
+  --card-bg: rgba(24, 24, 27, 0.6);
+  --card-border: #27272a;
+  --header-bg: rgba(9, 9, 11, 0.65);
+  --sidebar-bg: #09090b;
+  --text-muted: #a1a1aa;
+  --text-sub: #e4e4e7;
+  --input-bg: #09090b;
+}
+
+@theme {
+  --color-background: var(--bg-main);
+  --color-foreground: var(--fg-main);
+  --font-sans: "Inter", system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", "Fira Code", monospace;
+  --animate-accordion-down: accordion-down 0.2s ease-out;
+  --animate-accordion-up: accordion-up 0.2s ease-out;
+  --animate-in: fadeIn 0.2s ease-out;
+  --animate-out: fadeOut 0.2s ease-out;
+}
+
+@keyframes accordion-down {
+  from { height: 0; }
+  to { height: var(--radix-accordion-content-height); }
+}
+
+@keyframes accordion-up {
+  from { height: var(--radix-accordion-content-height); }
+  to { height: 0; }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fadeOut {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+@layer base {
+  * {
+    border-color: var(--card-border);
+  }
+  body {
+    background-color: var(--bg-main);
+    color: var(--fg-main);
+    @apply antialiased transition-colors duration-200;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    @apply bg-transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply bg-zinc-400 dark:bg-zinc-700 rounded-full;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-zinc-500 dark:bg-zinc-600;
+  }
+}
+
+.card-theme {
+  background-color: var(--card-bg);
+  border-color: var(--card-border);
+}
+
+.header-theme {
+  background-color: var(--header-bg);
+  border-color: var(--card-border);
+}
+
+.sidebar-theme {
+  background-color: var(--sidebar-bg);
+  border-color: var(--card-border);
+}
+
+.text-sub-theme {
+  color: var(--text-sub);
+}
+
+.text-muted-theme {
+  color: var(--text-muted);
+}
+
+::selection {
+  @apply bg-violet-500/30 text-white;
+}
