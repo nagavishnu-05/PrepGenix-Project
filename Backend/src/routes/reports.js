@@ -90,7 +90,7 @@ router.get("/tests/:id", authenticate, async (req, res) => {
     if (req.user.role !== "staff") return res.status(403).json({ error: "Staff Coordinator only" });
     const test = await col("tests").findOne({ _id: id(req.params.id) });
     if (!test) return res.status(404).json({ error: "Test not found" });
-    const attempts = await col("attempts").find({ testId: test._id.toString(), status: "completed" }).sort({ score: -1 }).toArray();
+    const attempts = await col("attempts").find({ testId: test._id.toString(), status: { $in: ["completed", "disqualified", "flagged"] } }).sort({ score: -1 }).toArray();
     const violationIds = attempts.map((a) => a._id.toString());
     const violationDocs = violationIds.length
       ? await col("violations").find({ attemptId: { $in: violationIds } }).sort({ timestamp: -1 }).toArray()

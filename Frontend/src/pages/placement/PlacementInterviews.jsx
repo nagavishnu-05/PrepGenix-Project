@@ -91,10 +91,10 @@ export default function PlacementInterviews() {
                 action={<Button onClick={() => setSchedOpen(true)}><Plus className="h-4 w-4" /> Schedule Interview</Button>}
             />
 
-            <Card className="border-zinc-800/80 bg-zinc-900/40">
+            <Card className="border-slate-200/80 dark:border-zinc-800/80 bg-white/70 dark:bg-zinc-900/40">
                 <CardContent className="p-0">
                     {loading ? (
-                        <p className="py-10 text-center text-sm text-zinc-500">Loading...</p>
+                        <p className="py-10 text-center text-sm text-slate-500 dark:text-zinc-500">Loading...</p>
                     ) : interviews.length === 0 ? (
                         <div className="p-10">
                             <EmptyState icon={CalendarClock} title="No interviews" description="Schedule an interview for a shortlisted student." />
@@ -116,20 +116,20 @@ export default function PlacementInterviews() {
                                 {interviews.map((iv) => (
                                     <TableRow key={iv.id}>
                                         <TableCell>
-                                            <p className="font-medium text-zinc-100">{iv.studentName}</p>
-                                            <p className="text-xs text-zinc-500">{iv.regNo}</p>
+                                            <p className="font-medium text-slate-800 dark:text-zinc-100">{iv.studentName}</p>
+                                            <p className="text-xs text-slate-500 dark:text-zinc-500">{iv.regNo}</p>
                                         </TableCell>
-                                        <TableCell className="text-sm text-zinc-300">{iv.type}</TableCell>
-                                        <TableCell className="text-sm text-zinc-300">{new Date(iv.scheduledAt).toLocaleString()}</TableCell>
-                                        <TableCell className="text-sm text-zinc-300">{iv.interviewer}</TableCell>
+                                        <TableCell className="text-sm text-slate-600 dark:text-zinc-300">{iv.type}</TableCell>
+                                        <TableCell className="text-sm text-slate-600 dark:text-zinc-300">{new Date(iv.scheduledAt).toLocaleString()}</TableCell>
+                                        <TableCell className="text-sm text-slate-600 dark:text-zinc-300">{iv.interviewer}</TableCell>
                                         <TableCell><StatusBadge value={iv.status} /></TableCell>
-                                        <TableCell className="text-sm text-zinc-300">{iv.rating ? `${iv.rating}/5` : "—"}</TableCell>
+                                        <TableCell className="text-sm text-slate-600 dark:text-zinc-300">{iv.rating ? `${iv.rating}/5` : "—"}</TableCell>
                                         <TableCell className="text-right">
                                             <div className="flex items-center justify-end gap-1">
                                                 {iv.status === "scheduled" && (
                                                     <>
                                                         <Button variant="ghost" size="sm" onClick={() => openResult(iv)}><Star className="h-4 w-4" /> Record</Button>
-                                                        <Button variant="ghost" size="sm" className="text-red-400 hover:text-red-300" onClick={() => cancel(iv)}>Cancel</Button>
+                                                        <Button variant="ghost" size="sm" className="text-red-650 hover:text-red-500 dark:text-red-400 dark:hover:text-red-300" onClick={() => cancel(iv)}>Cancel</Button>
                                                     </>
                                                 )}
                                             </div>

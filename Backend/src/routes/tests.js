@@ -224,13 +224,15 @@ router.post("/import-questions", authenticate, upload.single("file"), async (req
     if (!req.file) return res.status(400).json({ error: "No file uploaded" });
 
     const testType = req.body.testType; // "aptitude" or "coding"
-    const manualType = req.body.manualType; // "mcq" or "fillup" (only if aptitude)
+    const manualType = req.body.manualType; // "mcq" or "fillup" or "programming"
     const questionLimit = Number(req.body.questionLimit) || 0;
 
     const rows = rowsFromBuffer(req.file.buffer);
     let parsed = [];
 
-    if (testType === "coding") {
+    if (testType === "coding" && manualType === "mcq") {
+      parsed = parseAptitudeMcqManual(rows).map(q => ({ ...q, type: "coding", format: "mcq" }));
+    } else if (testType === "coding") {
       parsed = parseCodingManual(rows);
     } else {
       if (manualType === "fillup") {
@@ -353,6 +355,35 @@ router.delete("/:id", authenticate, async (req, res) => {
     res.json({ message: "Test deleted" });
   } catch {
     res.status(500).json({ error: "Failed to delete test" });
+  }
+});
+
+// DELETE /api/tests/attempts/:attemptId  (staff) - reset/delete attempt for a student
+router.delete("/attempts/:attemptId", authenticate, async (req, res) => {
+  try {
+    if (req.user.role !== "staff") return res.status(403).json({ error: "Staff Coordinator only" });
+    const attemptId = req.params.attemptId;
+    const attempt = await col("attempts").findOne({ _id: id(attemptId) });
+    if (attempt) {
+      const studentRegNo = attempt.studentRegNo;
+      const testId = attempt.testId;
+      await Promise.all([
+        col("attempts").deleteOne({ _id: id(attemptId) }),
+        col("violations").deleteMany({ attemptId }),
+        col("performances", "perf").updateOne(
+          { regNo: studentRegNo },
+          { 
+            $pull: { 
+              aptitude: { testId },
+              coding: { testId }
+            } 
+          }
+        )
+      ]);
+    }
+    res.json({ message: "Student attempt reset successfully" });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to reset attempt: " + err.message });
   }
 });
 
@@ -513,6 +544,9 @@ router.get("/attempts/:attemptId/question", authenticate, async (req, res) => {
     if (attempt.status === "completed") {
       return res.json({ finished: true, result: attempt.result });
     }
+    if (attempt.status === "flagged" || attempt.reviewRequired) {
+      return res.status(423).json({ error: "This attempt is paused pending staff review" });
+    }
 
     if (attempt.pendingQuestionId) {
       const q = await getQuestionById(attempt.pendingQuestionId);
@@ -568,6 +602,9 @@ router.post("/attempts/:attemptId/answer", authenticate, async (req, res) => {
     if (!attempt) return res.status(404).json({ error: "Attempt not found" });
     if (attempt.studentRegNo !== req.user.username) return res.status(403).json({ error: "Access denied" });
     if (attempt.status === "completed") return res.status(400).json({ error: "Attempt already completed" });
+    if (attempt.status === "flagged" || attempt.reviewRequired) {
+      return res.status(423).json({ error: "This attempt is paused pending staff review" });
+    }
 
     const { questionId, answer, code, language } = req.body;
     const qid = questionId || attempt.pendingQuestionId;

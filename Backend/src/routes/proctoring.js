@@ -51,10 +51,25 @@ async function withAttempt(attemptId, fn) {
 
 async function enforceLimits(attemptId, config, triggerType = null) {
   const count = await col("violations").countDocuments({ attemptId });
-  await col("attempts").updateOne({ _id: id(attemptId) }, { $set: { violations: count } });
-  
+  const attempt = await col("attempts").findOne({ _id: id(attemptId) });
+
+  if (attempt && attempt.status === "in_progress") {
+    await col("attempts").updateOne(
+      { _id: id(attemptId) },
+      {
+        $set: {
+          violations: count,
+          reviewRequired: true,
+          status: "flagged",
+          lastSeenAt: new Date(),
+          updatedAt: new Date(),
+        },
+      }
+    );
+  }
+
   const fresh = await col("attempts").findOne({ _id: id(attemptId) });
-  if (fresh && fresh.status === "in_progress") {
+  if (fresh && (fresh.status === "in_progress" || fresh.status === "flagged")) {
     const testsModule = require("./tests");
     if (triggerType === "fullscreen_exit") {
       const finalized = await testsModule.disqualifyAttempt(fresh, "Exited fullscreen mode during test");
@@ -232,7 +247,17 @@ router.post("/attempt/:attemptId/reset", authenticate, async (req, res) => {
     await col("violations").deleteMany({ attemptId: attempt._id.toString() });
     const resetAttempt = await col("attempts").findOneAndUpdate(
       { _id: attempt._id },
-      { $set: { violations: 0, latestAnalysis: null, latestFrame: null, lastSeenAt: new Date(), status: attempt.status === "completed" ? "completed" : "in_progress" } },
+      {
+        $set: {
+          violations: 0,
+          latestAnalysis: null,
+          latestFrame: null,
+          lastSeenAt: new Date(),
+          reviewRequired: false,
+          status: attempt.status === "completed" ? "completed" : "in_progress",
+          updatedAt: new Date(),
+        },
+      },
       { returnDocument: "after" }
     );
 
@@ -246,13 +271,16 @@ router.post("/attempt/:attemptId/reset", authenticate, async (req, res) => {
 router.get("/live", authenticate, async (req, res) => {
   try {
     if (req.user.role !== "staff") return res.status(403).json({ error: "Staff Coordinator only" });
-    const attempts = await col("attempts").find({ status: "in_progress" }).sort({ startedAt: -1 }).toArray();
+    const attempts = await col("attempts").find({ status: { $in: ["in_progress", "flagged"] } }).sort({ startedAt: -1 }).toArray();
     const rows = await Promise.all(
       attempts.map(async (a) => {
         const latest = await col("violations").find({ attemptId: a._id.toString() }).sort({ timestamp: -1 }).limit(1).toArray();
         const test = await col("tests").findOne({ _id: id(a.testId) });
         return {
           ...toId(a),
+          status: a.status === "flagged" ? "flagged" : "in_progress",
+          reviewRequired: !!a.reviewRequired,
+          violationCount: a.violations || 0,
           testTitle: a.testTitle || test?.title,
           durationMin: test?.durationMin || a.durationMin || 30,
           latestViolation: latest.length ? toId(latest[0]) : null,

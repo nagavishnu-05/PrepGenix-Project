@@ -1,7 +1,6 @@
 import { useEffect } from "react";
 import { Routes, Route, Navigate, useNavigate } from "react-router-dom";
 import Home from "@/pages/Home";
-import Login from "@/pages/Login";
 import { PortalLayout } from "@/components/layout/portal-layout";
 import { useAuthStore } from "@/store/auth-store";
 
@@ -35,19 +34,9 @@ function RequireRole({ role, children }) {
             </div>
         );
     }
-    if (!user) return <Navigate to="/login" replace />;
+    if (!user) return <Navigate to="/?login=1" replace />;
     if (role && user.role !== role) return <Navigate to={useAuthStore.getState().homeFor(user.role)} replace />;
     return children;
-}
-
-function HomeRedirect() {
-    const user = useAuthStore((s) => s.user);
-    const isBooting = useAuthStore((s) => s.isBooting);
-    const navigate = useNavigate();
-    useEffect(() => {
-        if (!isBooting) navigate(user ? useAuthStore.getState().homeFor(user.role) : "/login");
-    }, [user, isBooting, navigate]);
-    return null;
 }
 
 export function App() {
@@ -63,8 +52,8 @@ export function App() {
 
     return (
         <Routes>
-            <Route path="/" element={<HomeRedirect />} />
-            <Route path="/login" element={<Login />} />
+            <Route path="/" element={<Home />} />
+            <Route path="/login" element={<Navigate to="/" replace />} />
 
             <Route path="/student" element={<RequireRole role="student"><PortalLayout /></RequireRole>}>
                 <Route index element={<StudentDashboard />} />

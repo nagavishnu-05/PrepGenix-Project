@@ -23,7 +23,7 @@ export default function StaffDashboard() {
             .finally(() => setLoading(false));
     }, []);
 
-    if (loading) return <p className="text-sm text-zinc-500">Loading...</p>;
+    if (loading) return <p className="text-sm text-slate-500 dark:text-zinc-500">Loading...</p>;
 
     return (
         <div>
@@ -45,25 +45,25 @@ export default function StaffDashboard() {
             </div>
 
             <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-                <Card className="border-zinc-800/80 bg-zinc-900/40">
+                <Card className="border-slate-200/80 dark:border-zinc-800/80 bg-white/70 dark:bg-zinc-900/40">
                     <CardHeader className="flex flex-row items-center justify-between">
-                        <CardTitle className="text-sm font-medium text-zinc-400">Recent Tests</CardTitle>
-                        <Link to="/staff/tests" className="text-xs text-violet-400 hover:underline">View all</Link>
+                        <CardTitle className="text-sm font-medium text-slate-500 dark:text-zinc-400">Recent Tests</CardTitle>
+                        <Link to="/staff/tests" className="text-xs text-violet-600 dark:text-violet-400 hover:underline">View all</Link>
                     </CardHeader>
                     <CardContent className="space-y-3">
                         {tests.length === 0 ? (
                             <EmptyState icon={ClipboardList} title="No tests yet" description="Create your first test to get started." />
                         ) : (
                             tests.slice(0, 5).map((t) => (
-                                <div key={t.id} className="flex items-center justify-between rounded-lg border border-zinc-800 bg-zinc-950/40 p-3">
+                                <div key={t.id} className="flex items-center justify-between rounded-lg border border-slate-200 dark:border-zinc-800 bg-slate-50 dark:bg-zinc-950/40 p-3">
                                     <div className="min-w-0">
-                                        <p className="truncate text-sm font-medium text-zinc-200">{t.title}</p>
-                                        <p className="text-xs text-zinc-500">
+                                        <p className="truncate text-sm font-medium text-slate-800 dark:text-zinc-200">{t.title}</p>
+                                        <p className="text-xs text-slate-500 dark:text-zinc-500">
                                             {t.type === "coding" ? "Coding" : "Aptitude"} • {t.mode === "adaptive" ? "Adaptive" : "Fixed"} • {t.durationMin} min
                                         </p>
                                     </div>
                                     <div className="flex items-center gap-2">
-                                        <span className="text-xs text-zinc-500">{t._count?.attempts ?? 0} attempts</span>
+                                        <span className="text-xs text-slate-500 dark:text-zinc-500">{t._count?.attempts ?? 0} attempts</span>
                                     </div>
                                 </div>
                             ))
@@ -71,22 +71,22 @@ export default function StaffDashboard() {
                     </CardContent>
                 </Card>
 
-                <Card className="border-zinc-800/80 bg-zinc-900/40">
+                <Card className="border-slate-200/80 dark:border-zinc-800/80 bg-white/70 dark:bg-zinc-900/40">
                     <CardHeader className="flex flex-row items-center justify-between">
-                        <CardTitle className="text-sm font-medium text-zinc-400">Question Bank</CardTitle>
-                        <Link to="/staff/questions" className="text-xs text-violet-400 hover:underline">View all</Link>
+                        <CardTitle className="text-sm font-medium text-slate-500 dark:text-zinc-400">Question Bank</CardTitle>
+                        <Link to="/staff/questions" className="text-xs text-violet-600 dark:text-violet-400 hover:underline">View all</Link>
                     </CardHeader>
                     <CardContent className="space-y-3">
                         {questions.length === 0 ? (
                             <EmptyState icon={FileCode} title="No questions yet" description="Add questions manually or import from Excel / AIML." />
                         ) : (
                             questions.slice(0, 5).map((q) => (
-                                <div key={q.id} className="flex items-center justify-between rounded-lg border border-zinc-800 bg-zinc-950/40 p-3">
+                                <div key={q.id} className="flex items-center justify-between rounded-lg border border-slate-200 dark:border-zinc-800 bg-slate-50 dark:bg-zinc-950/40 p-3">
                                     <div className="min-w-0">
-                                        <p className="truncate text-sm font-medium text-zinc-200">{q.title}</p>
-                                        <p className="text-xs text-zinc-500">{q.type === "coding" ? "Coding" : "Aptitude"} • {q.format} • {q.difficulty}</p>
+                                        <p className="truncate text-sm font-medium text-slate-800 dark:text-zinc-200">{q.title}</p>
+                                        <p className="text-xs text-slate-500 dark:text-zinc-500">{q.type === "coding" ? "Coding" : "Aptitude"} • {q.format} • {q.difficulty}</p>
                                     </div>
-                                    <span className="text-xs text-zinc-400">{q.points} pts</span>
+                                    <span className="text-xs text-slate-500 dark:text-zinc-400">{q.points} pts</span>
                                 </div>
                             ))
                         )}

@@ -1,11 +1,12 @@
 import { useState, useEffect, Fragment } from "react";
-import { Search, Users, FileCode, BrainCircuit, AlertTriangle, ChevronDown, ChevronRight } from "lucide-react";
+import { Search, Users, FileCode, BrainCircuit, AlertTriangle, ChevronDown, ChevronRight, TrendingUp } from "lucide-react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { PageHeader, EmptyState } from "@/components/portal/primitives";
+import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip } from "recharts";
 import { api } from "@/lib/api";
 
 export default function StaffReports() {
@@ -18,6 +19,7 @@ export default function StaffReports() {
     const [search, setSearch] = useState("");
     const [tab, setTab] = useState("students");
     const [openV, setOpenV] = useState({});
+    const [reloadKey, setReloadKey] = useState(0);
 
     useEffect(() => {
         api.tests.list().then(setTests).catch(() => {});
@@ -30,7 +32,7 @@ export default function StaffReports() {
             .then(setRows)
             .catch(() => {})
             .finally(() => setLoading(false));
-    }, [tab, batch, search]);
+    }, [tab, batch, search, reloadKey]);
 
     useEffect(() => {
         if (tab !== "test" || !selectedTest) return;
@@ -39,7 +41,18 @@ export default function StaffReports() {
             .then(setTestReport)
             .catch(() => {})
             .finally(() => setLoading(false));
-    }, [tab, selectedTest]);
+    }, [tab, selectedTest, reloadKey]);
+
+    const handleResetAttempt = async (attemptId) => {
+        if (!confirm("Are you sure you want to reset this student's attempt? They will be able to take the test again from scratch.")) return;
+        try {
+            await api.tests.resetAttempt(attemptId);
+            alert("Attempt reset successfully.");
+            setReloadKey((k) => k + 1);
+        } catch (e) {
+            alert("Failed to reset attempt: " + e.message);
+        }
+    };
 
     const resultColor = (r) => {
         if (r === "selected") return "text-emerald-400";
@@ -68,11 +81,11 @@ export default function StaffReports() {
             </div>
 
             {tab === "students" && (
-                <Card className="border-zinc-800/80 bg-zinc-900/40">
+                <Card className="border-slate-200/80 dark:border-zinc-800/80 bg-white/70 dark:bg-zinc-900/40">
                     <CardHeader className="space-y-3">
                         <div className="flex flex-wrap items-center gap-3">
                             <div className="relative flex-1 min-w-48">
-                                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
+                                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400 dark:text-zinc-500" />
                                 <Input placeholder="Search..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" />
                             </div>
                             <Select value={batch} onValueChange={setBatch}>
@@ -86,7 +99,7 @@ export default function StaffReports() {
                     </CardHeader>
                     <CardContent>
                         {loading ? (
-                            <p className="py-10 text-center text-sm text-zinc-500">Loading...</p>
+                            <p className="py-10 text-center text-sm text-slate-500 dark:text-zinc-500">Loading...</p>
                         ) : rows.length === 0 ? (
                             <EmptyState icon={Users} title="No data" description="No student performance data matches the filters." />
                         ) : (
@@ -104,22 +117,22 @@ export default function StaffReports() {
                                     {rows.map((s) => (
                                         <TableRow key={s.regNo}>
                                             <TableCell>
-                                                <p className="font-medium text-zinc-100">{s.name}</p>
-                                                <p className="text-xs text-zinc-500">{s.regNo}</p>
+                                                <p className="font-medium text-slate-800 dark:text-zinc-100">{s.name}</p>
+                                                <p className="text-xs text-slate-500 dark:text-zinc-500">{s.regNo}</p>
                                             </TableCell>
                                             <TableCell>
-                                                <p className="text-sm text-zinc-200">{s.aptitudeCount ? `${s.aptitudeAverage}% avg` : "—"}</p>
+                                                <p className="text-sm text-slate-700 dark:text-zinc-200">{s.aptitudeCount ? `${s.aptitudeAverage}% avg` : "—"}</p>
                                                 {s.lastAptitude && <p className={`text-xs ${resultColor(s.lastAptitude.result)}`}>{s.lastAptitude.result} · {s.lastAptitude.percentage}%</p>}
                                             </TableCell>
                                             <TableCell>
-                                                <p className="text-sm text-zinc-200">{s.codingCount ? `${s.codingAverage}% avg` : "—"}</p>
+                                                <p className="text-sm text-slate-700 dark:text-zinc-200">{s.codingCount ? `${s.codingAverage}% avg` : "—"}</p>
                                                 {s.lastCoding && <p className={`text-xs ${resultColor(s.lastCoding.result)}`}>{s.lastCoding.result} · {s.lastCoding.percentage}%</p>}
                                             </TableCell>
                                             <TableCell>
-                                                <p className="text-sm text-zinc-200">{s.interviewCount || "—"}</p>
-                                                {s.lastInterview && <p className="text-xs text-zinc-400">rating {s.lastInterview.rating}/5</p>}
+                                                <p className="text-sm text-slate-700 dark:text-zinc-200">{s.interviewCount || "—"}</p>
+                                                {s.lastInterview && <p className="text-xs text-slate-500 dark:text-zinc-400">rating {s.lastInterview.rating}/5</p>}
                                             </TableCell>
-                                            <TableCell className="text-sm text-zinc-300">{s.topCategory || "—"}</TableCell>
+                                            <TableCell className="text-sm text-slate-600 dark:text-zinc-300">{s.topCategory || "—"}</TableCell>
                                         </TableRow>
                                     ))}
                                 </TableBody>
@@ -130,7 +143,7 @@ export default function StaffReports() {
             )}
 
             {tab === "test" && (
-                <Card className="border-zinc-800/80 bg-zinc-900/40">
+                <Card className="border-slate-200/80 dark:border-zinc-800/80 bg-white/70 dark:bg-zinc-900/40">
                     <CardHeader>
                         <Select value={selectedTest} onValueChange={setSelectedTest}>
                             <SelectTrigger className="w-80"><SelectValue placeholder="Select a test" /></SelectTrigger>
@@ -143,7 +156,7 @@ export default function StaffReports() {
                         {!selectedTest ? (
                             <EmptyState icon={FileCode} title="Pick a test" description="Select a test to see its performance breakdown." />
                         ) : loading ? (
-                            <p className="py-10 text-center text-sm text-zinc-500">Loading...</p>
+                            <p className="py-10 text-center text-sm text-slate-500 dark:text-zinc-500">Loading...</p>
                         ) : testReport ? (
                             <div className="space-y-6">
                                 <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
@@ -152,6 +165,24 @@ export default function StaffReports() {
                                     <Stat label="Best" value={`${testReport.stats?.bestScore}%`} />
                                     <Stat label="Total score" value={`${testReport.stats?.totalScore}`} />
                                 </div>
+
+                                {testReport.attempts?.length > 0 && (
+                                    <div className="rounded-lg border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/40 p-4">
+                                        <p className="mb-3 text-xs font-bold uppercase tracking-wider text-slate-550 dark:text-zinc-400 flex items-center gap-1.5"><TrendingUp className="h-4 w-4 text-violet-500" /> Score Distribution Chart</p>
+                                        <div className="h-48 pr-4">
+                                            <ResponsiveContainer width="100%" height="100%">
+                                                <BarChart data={testReport.attempts.slice(0, 15).map(a => ({ name: a.studentName || a.studentRegNo, score: a.score }))}>
+                                                    <CartesianGrid strokeDasharray="3 3" className="stroke-slate-200 dark:stroke-zinc-800/40" />
+                                                    <XAxis dataKey="name" tick={{ fill: 'currentColor', opacity: 0.6 }} className="text-[10px] text-slate-500 dark:text-zinc-500" />
+                                                    <YAxis tick={{ fill: 'currentColor', opacity: 0.6 }} className="text-[10px] text-slate-500" />
+                                                    <RechartsTooltip />
+                                                    <Bar dataKey="score" fill="#8b5cf6" name="Score" radius={[4, 4, 0, 0]} />
+                                                </BarChart>
+                                            </ResponsiveContainer>
+                                        </div>
+                                    </div>
+                                )}
+
                                 <Table>
                                     <TableHeader>
                                         <TableRow>
@@ -160,6 +191,7 @@ export default function StaffReports() {
                                             <TableHead>Result</TableHead>
                                             <TableHead>Correct</TableHead>
                                             <TableHead>Violations</TableHead>
+                                            <TableHead className="text-right">Actions</TableHead>
                                         </TableRow>
                                     </TableHeader>
                                     <TableBody>
@@ -167,35 +199,45 @@ export default function StaffReports() {
                                             <Fragment key={a.id}>
                                                 <TableRow className="cursor-pointer" onClick={() => setOpenV((o) => ({ ...o, [a.id]: !o[a.id] }))}>
                                                     <TableCell>
-                                                        <p className="font-medium text-zinc-100">{a.studentName}</p>
-                                                        <p className="text-xs text-zinc-500">{a.studentRegNo}</p>
+                                                        <p className="font-medium text-slate-800 dark:text-zinc-100">{a.studentName}</p>
+                                                        <p className="text-xs text-slate-500 dark:text-zinc-500">{a.studentRegNo}</p>
                                                     </TableCell>
-                                                    <TableCell className="text-sm text-zinc-200">{a.score}/{a.totalScore}</TableCell>
+                                                    <TableCell className="text-sm text-slate-700 dark:text-zinc-200">{a.score}/{a.totalScore}</TableCell>
                                                     <TableCell className={`text-sm capitalize ${resultColor(a.result)}`}>{a.result}</TableCell>
-                                                    <TableCell className="text-sm text-zinc-300">{a.correct}/{a.totalQuestions}</TableCell>
+                                                    <TableCell className="text-sm text-slate-600 dark:text-zinc-300">{a.correct}/{a.totalQuestions}</TableCell>
                                                     <TableCell>
-                                                        <span className={`flex items-center gap-1 text-sm ${a.violationCount > 0 ? "text-amber-400" : "text-zinc-600"}`}>
+                                                        <span className={`flex items-center gap-1 text-sm ${a.violationCount > 0 ? "text-amber-600 dark:text-amber-400" : "text-slate-400 dark:text-zinc-600"}`}>
                                                             {a.violationCount > 0 && <AlertTriangle className="h-3.5 w-3.5" />}
                                                             {a.violationCount}
                                                             {openV[a.id] ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
                                                         </span>
                                                     </TableCell>
+                                                    <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
+                                                        <Button 
+                                                            variant="ghost" 
+                                                            size="sm" 
+                                                            className="text-red-500 font-semibold cursor-pointer hover:bg-red-50"
+                                                            onClick={() => handleResetAttempt(a.id)}
+                                                        >
+                                                            Reset Attempt
+                                                        </Button>
+                                                    </TableCell>
                                                 </TableRow>
                                                 {openV[a.id] && (
-                                                    <TableRow className="bg-zinc-950/40">
-                                                        <TableCell colSpan={5} className="bg-zinc-950/40">
+                                                    <TableRow className="bg-slate-50/50 dark:bg-zinc-950/40">
+                                                        <TableCell colSpan={6} className="bg-slate-50/50 dark:bg-zinc-950/40">
                                                             <div className="space-y-2 py-1">
-                                                                {(a.violations || []).length === 0 && <p className="text-xs text-zinc-500">No proctoring violations.</p>}
+                                                                {(a.violations || []).length === 0 && <p className="text-xs text-slate-500 dark:text-zinc-500">No proctoring violations.</p>}
                                                                 {(a.violations || []).map((v) => (
-                                                                    <div key={v.id} className="flex items-start justify-between gap-3 rounded-lg border border-zinc-800 bg-zinc-950/60 p-2.5">
+                                                                    <div key={v.id} className="flex items-start justify-between gap-3 rounded-lg border border-slate-200 dark:border-zinc-800 bg-slate-50 dark:bg-zinc-950/60 p-2.5">
                                                                         <div className="min-w-0">
-                                                                            <p className="text-xs font-medium capitalize text-zinc-200">{v.type.replace(/_/g, " ")}</p>
-                                                                            <p className="mt-0.5 text-xs text-zinc-400">{v.description}</p>
+                                                                            <p className="text-xs font-medium capitalize text-slate-800 dark:text-zinc-200">{v.type.replace(/_/g, " ")}</p>
+                                                                            <p className="mt-0.5 text-xs text-slate-500 dark:text-zinc-400">{v.description}</p>
                                                                         </div>
                                                                         <div className="flex shrink-0 items-center gap-3">
-                                                                            <span className="text-xs text-zinc-500">{new Date(v.timestamp).toLocaleString()}</span>
+                                                                            <span className="text-xs text-slate-500 dark:text-zinc-500">{new Date(v.timestamp).toLocaleString()}</span>
                                                                             {v.cameraFrame && (
-                                                                                <img src={`data:image/jpeg;base64,${v.cameraFrame}`} alt="frame" className="h-16 rounded border border-zinc-800" />
+                                                                                <img src={`data:image/jpeg;base64,${v.cameraFrame}`} alt="frame" className="h-16 rounded border border-slate-200 dark:border-zinc-800" />
                                                                             )}
                                                                         </div>
                                                                     </div>
@@ -221,9 +263,9 @@ export default function StaffReports() {
 
 function Stat({ label, value }) {
     return (
-        <div className="rounded-lg border border-zinc-800 bg-zinc-950/40 p-4">
-            <p className="text-xs text-zinc-500">{label}</p>
-            <p className="mt-1 text-xl font-semibold text-zinc-100">{value ?? "—"}</p>
+        <div className="rounded-lg border border-slate-200 dark:border-zinc-800 bg-slate-50 dark:bg-zinc-950/40 p-4">
+            <p className="text-xs text-slate-500 dark:text-zinc-500">{label}</p>
+            <p className="mt-1 text-xl font-semibold text-slate-900 dark:text-zinc-100">{value ?? "—"}</p>
         </div>
     );
 }

@@ -290,6 +290,28 @@ export default function TakeTest() {
     }
 
     // ---------- Proctoring gate screen ----------
+    if (attempt?.status === "flagged" || attempt?.reviewRequired) {
+        return (
+            <div className="mx-auto max-w-xl">
+                <Card className="border-red-500/30 bg-red-500/5">
+                    <CardContent className="flex flex-col items-center gap-4 py-12 text-center">
+                        <div className="flex h-16 w-16 items-center justify-center rounded-full bg-red-500/15 text-red-400">
+                            <ShieldAlert className="h-8 w-8" />
+                        </div>
+                        <h2 className="text-2xl font-bold text-white">Attempt Paused for Staff Review</h2>
+                        <p className="text-sm text-zinc-300">
+                            A proctoring violation was detected on this attempt. The test is locked until the staff coordinator reviews and resets it.
+                        </p>
+                        <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-xs text-red-300">
+                            {attempt?.violations || 0} violation{(attempt?.violations || 0) === 1 ? "" : "s"} recorded.
+                        </div>
+                        <Button variant="outline" onClick={() => navigate("/student/tests")}>Back to tests</Button>
+                    </CardContent>
+                </Card>
+            </div>
+        );
+    }
+
     if (proctored && proctoring.status !== "active") {
         return (
             <div className="mx-auto max-w-lg">

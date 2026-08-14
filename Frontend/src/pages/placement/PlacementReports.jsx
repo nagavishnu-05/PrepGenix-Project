@@ -22,21 +22,21 @@ export default function PlacementReports() {
     }, [batch, search]);
 
     const resultColor = (r) => {
-        if (r === "selected") return "text-emerald-400";
-        if (r === "passed") return "text-blue-400";
-        if (r === "failed") return "text-red-400";
-        return "text-zinc-400";
+        if (r === "selected") return "text-emerald-600 dark:text-emerald-400";
+        if (r === "passed") return "text-blue-600 dark:text-blue-400";
+        if (r === "failed") return "text-red-650 dark:text-red-400";
+        return "text-slate-500 dark:text-zinc-400";
     };
 
     return (
         <div>
             <PageHeader title="Reports" description="Placement readiness across all candidates" />
 
-            <Card className="border-zinc-800/80 bg-zinc-900/40">
+            <Card className="border-slate-200/80 dark:border-zinc-800/80 bg-white/70 dark:bg-zinc-900/40">
                 <CardHeader className="space-y-3">
                     <div className="flex flex-wrap items-center gap-3">
                         <div className="relative flex-1 min-w-48">
-                            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
+                            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400 dark:text-zinc-500" />
                             <Input placeholder="Search..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" />
                         </div>
                         <Select value={batch} onValueChange={setBatch}>
@@ -50,7 +50,7 @@ export default function PlacementReports() {
                 </CardHeader>
                 <CardContent>
                     {loading ? (
-                        <p className="py-10 text-center text-sm text-zinc-500">Loading...</p>
+                        <p className="py-10 text-center text-sm text-slate-500 dark:text-zinc-500">Loading...</p>
                     ) : rows.length === 0 ? (
                         <EmptyState icon={Users} title="No data" description="No student performance data yet." />
                     ) : (
@@ -68,22 +68,22 @@ export default function PlacementReports() {
                                 {rows.map((s) => (
                                     <TableRow key={s.regNo}>
                                         <TableCell>
-                                            <p className="font-medium text-zinc-100">{s.name}</p>
-                                            <p className="text-xs text-zinc-500">{s.regNo} • {s.batch || ""}</p>
+                                            <p className="font-medium text-slate-800 dark:text-zinc-100">{s.name}</p>
+                                            <p className="text-xs text-slate-500 dark:text-zinc-500">{s.regNo} • {s.batch || ""}</p>
                                         </TableCell>
                                         <TableCell>
-                                            <p className="text-sm text-zinc-200">{s.aptitudeCount ? `${s.aptitudeAverage}% avg` : "—"}</p>
+                                            <p className="text-sm text-slate-700 dark:text-zinc-200">{s.aptitudeCount ? `${s.aptitudeAverage}% avg` : "—"}</p>
                                             {s.lastAptitude && <p className={`text-xs ${resultColor(s.lastAptitude.result)}`}>{s.lastAptitude.result} · {s.lastAptitude.percentage}%</p>}
                                         </TableCell>
                                         <TableCell>
-                                            <p className="text-sm text-zinc-200">{s.codingCount ? `${s.codingAverage}% avg` : "—"}</p>
+                                            <p className="text-sm text-slate-700 dark:text-zinc-200">{s.codingCount ? `${s.codingAverage}% avg` : "—"}</p>
                                             {s.lastCoding && <p className={`text-xs ${resultColor(s.lastCoding.result)}`}>{s.lastCoding.result} · {s.lastCoding.percentage}%</p>}
                                         </TableCell>
                                         <TableCell>
-                                            <p className="text-sm text-zinc-200">{s.interviewCount || "—"}</p>
-                                            {s.lastInterview && <p className="text-xs text-amber-400">★ {s.lastInterview.rating}/5</p>}
+                                            <p className="text-sm text-slate-700 dark:text-zinc-200">{s.interviewCount || "—"}</p>
+                                            {s.lastInterview && <p className="text-xs text-amber-600 dark:text-amber-400">★ {s.lastInterview.rating}/5</p>}
                                         </TableCell>
-                                        <TableCell className="text-sm text-violet-400">{s.topCategory || "—"}</TableCell>
+                                        <TableCell className="text-sm text-violet-600 dark:text-violet-400">{s.topCategory || "—"}</TableCell>
                                     </TableRow>
                                 ))}
                             </TableBody>

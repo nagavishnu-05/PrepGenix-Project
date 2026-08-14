@@ -76,6 +76,7 @@ export const api = {
             finish: (attemptId) => request(`/tests/attempts/${attemptId}/finish`, { method: "POST", body: {} }),
             result: (attemptId) => request(`/tests/attempts/${attemptId}/result`),
             importQuestions: (file, data) => request("/tests/import-questions", { method: "POST", body: formData(file, data) }),
+            resetAttempt: (attemptId) => request(`/tests/attempts/${attemptId}`, { method: "DELETE" }),
         },
     judge: {
         run: (code, language, input) => request("/judge/run", { method: "POST", body: { code, language, input } }),

@@ -24,7 +24,7 @@ export default function PlacementDashboard() {
             .finally(() => setLoading(false));
     }, []);
 
-    if (loading) return <p className="text-sm text-zinc-500">Loading...</p>;
+    if (loading) return <p className="text-sm text-slate-500 dark:text-zinc-500">Loading...</p>;
 
     const upcoming = interviews.filter((i) => i.status === "scheduled").slice(0, 5);
 
@@ -34,7 +34,7 @@ export default function PlacementDashboard() {
                 title="Placement Dashboard"
                 description="Shortlist candidates, manage resumes, and track interviews"
                 action={
-                    <Link to="/placement/interviews" className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500">
+                    <Link to="/placement/interviews" className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-50">
                         Schedule Interview
                     </Link>
                 }
@@ -48,20 +48,20 @@ export default function PlacementDashboard() {
             </div>
 
             <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-                <Card className="border-zinc-800/80 bg-zinc-900/40">
+                <Card className="border-slate-200/80 dark:border-zinc-800/80 bg-white/70 dark:bg-zinc-900/40">
                     <CardHeader className="flex flex-row items-center justify-between">
-                        <CardTitle className="text-sm font-medium text-zinc-400">Upcoming Interviews</CardTitle>
-                        <Link to="/placement/interviews" className="text-xs text-emerald-400 hover:underline">View all</Link>
+                        <CardTitle className="text-sm font-medium text-slate-500 dark:text-zinc-400">Upcoming Interviews</CardTitle>
+                        <Link to="/placement/interviews" className="text-xs text-emerald-600 dark:text-emerald-400 hover:underline">View all</Link>
                     </CardHeader>
                     <CardContent className="space-y-3">
                         {upcoming.length === 0 ? (
                             <EmptyState icon={CalendarClock} title="No scheduled interviews" description="Schedule interviews for shortlisted candidates." />
                         ) : (
                             upcoming.map((i) => (
-                                <div key={i.id} className="flex items-center justify-between rounded-lg border border-zinc-800 bg-zinc-950/40 p-3">
+                                <div key={i.id} className="flex items-center justify-between rounded-lg border border-slate-200 dark:border-zinc-800 bg-slate-50 dark:bg-zinc-950/40 p-3">
                                     <div className="min-w-0">
-                                        <p className="truncate text-sm font-medium text-zinc-200">{i.studentName}</p>
-                                        <p className="text-xs text-zinc-500">{i.type} • {new Date(i.scheduledAt).toLocaleString()}</p>
+                                        <p className="truncate text-sm font-medium text-slate-800 dark:text-zinc-200">{i.studentName}</p>
+                                        <p className="text-xs text-slate-500 dark:text-zinc-500">{i.type} • {new Date(i.scheduledAt).toLocaleString()}</p>
                                     </div>
                                     <StatusBadge value={i.status} />
                                 </div>
@@ -70,22 +70,22 @@ export default function PlacementDashboard() {
                     </CardContent>
                 </Card>
 
-                <Card className="border-zinc-800/80 bg-zinc-900/40">
+                <Card className="border-slate-200/80 dark:border-zinc-800/80 bg-white/70 dark:bg-zinc-900/40">
                     <CardHeader className="flex flex-row items-center justify-between">
-                        <CardTitle className="text-sm font-medium text-zinc-400">Latest Resumes</CardTitle>
-                        <Link to="/placement/resumes" className="text-xs text-emerald-400 hover:underline">View all</Link>
+                        <CardTitle className="text-sm font-medium text-slate-500 dark:text-zinc-400">Latest Resumes</CardTitle>
+                        <Link to="/placement/resumes" className="text-xs text-emerald-600 dark:text-emerald-400 hover:underline">View all</Link>
                     </CardHeader>
                     <CardContent className="space-y-3">
                         {resumes.length === 0 ? (
                             <EmptyState icon={FileText} title="No resumes uploaded" description="Upload student resumes to extract skills and categories." />
                         ) : (
                             resumes.slice(0, 5).map((r) => (
-                                <div key={r.id} className="flex items-center justify-between rounded-lg border border-zinc-800 bg-zinc-950/40 p-3">
+                                <div key={r.id} className="flex items-center justify-between rounded-lg border border-slate-200 dark:border-zinc-800 bg-slate-50 dark:bg-zinc-950/40 p-3">
                                     <div className="min-w-0">
-                                        <p className="truncate text-sm font-medium text-zinc-200">{r.studentName}</p>
-                                        <p className="text-xs text-zinc-500">{r.topCategory || "Not categorized"}</p>
+                                        <p className="truncate text-sm font-medium text-slate-800 dark:text-zinc-200">{r.studentName}</p>
+                                        <p className="text-xs text-slate-500 dark:text-zinc-500">{r.topCategory || "Not categorized"}</p>
                                     </div>
-                                    <span className="text-xs text-zinc-400">{(r.skills || []).length} skills</span>
+                                    <span className="text-xs text-slate-500 dark:text-zinc-400">{(r.skills || []).length} skills</span>
                                 </div>
                             ))
                         )}

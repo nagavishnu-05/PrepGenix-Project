@@ -10,9 +10,9 @@ const ACCENTS = {
 
 export function StatsCard({ title, value, sub, icon: Icon, accent = "violet" }) {
     return (
-        <Card className="border-zinc-800/80 bg-zinc-900/40">
+        <Card className="border-slate-200/80 dark:border-zinc-800/80 bg-white/70 dark:bg-zinc-900/40">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium text-zinc-400">{title}</CardTitle>
+                <CardTitle className="text-sm font-medium text-slate-500 dark:text-zinc-400">{title}</CardTitle>
                 {Icon && (
                     <div className={`flex h-9 w-9 items-center justify-center rounded-lg bg-gradient-to-br ${ACCENTS[accent] || ACCENTS.violet}`}>
                         <Icon className="h-4.5 w-4.5 text-white" />
@@ -20,8 +20,8 @@ export function StatsCard({ title, value, sub, icon: Icon, accent = "violet" }) 
                 )}
             </CardHeader>
             <CardContent>
-                <div className="text-3xl font-bold text-white">{value}</div>
-                {sub && <p className="mt-1 text-xs text-zinc-500">{sub}</p>}
+                <div className="text-3xl font-bold text-slate-900 dark:text-white">{value}</div>
+                {sub && <p className="mt-1 text-xs text-slate-500 dark:text-zinc-500">{sub}</p>}
             </CardContent>
         </Card>
     );

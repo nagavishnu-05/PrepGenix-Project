@@ -3,6 +3,7 @@
 const { MongoClient, ObjectId } = require("mongodb");
 
 let client = null;
+let resumeClient = null;
 const databases = {};
 
 function dbName(key) {
@@ -19,7 +20,13 @@ async function connectDB() {
   await client.connect();
   databases.main = client.db(dbName("main"));
   databases.perf = client.db(dbName("perf"));
-  databases.resume = client.db(dbName("resume"));
+
+  // Establish a separate connection client specifically for resumes storage
+  const resumeUrl = process.env.RESUME_DATABASE_URL || process.env.DATABASE_URL || "mongodb://localhost:27017/codeassess_resumes";
+  resumeClient = new MongoClient(resumeUrl, { serverSelectionTimeoutMS: 8000 });
+  await resumeClient.connect();
+  databases.resume = resumeClient.db(dbName("resume"));
+
   return databases.main;
 }
 
@@ -68,6 +75,7 @@ async function upsertDoc(collection, filter, setFields, pushFields = null, inser
 
 async function closeDB() {
   if (client) await client.close();
+  if (resumeClient) await resumeClient.close();
 }
 
 module.exports = { connectDB, getDb, col, id, toId, toIds, upsertDoc, closeDB, ObjectId };
