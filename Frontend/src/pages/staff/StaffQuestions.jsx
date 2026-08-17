@@ -3,6 +3,7 @@ import { Plus, Search, Trash2, Edit3, Upload, Sparkles, BrainCircuit, FileCode, 
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { FileInput } from "@/components/ui/file-input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
@@ -294,7 +295,7 @@ export default function StaffQuestions() {
                                 <SelectItem value="coding">Coding questions</SelectItem>
                             </SelectContent>
                         </Select>
-                        <Input type="file" accept=".xlsx,.xls,.csv" onChange={(e) => setImportFile(e.target.files?.[0] || null)} />
+                        <FileInput accept=".xlsx,.xls,.csv" placeholder="Select Excel or CSV file" onChange={(e) => setImportFile(e.target.files?.[0] || null)} />
                         <div className="flex justify-end gap-2">
                             <Button variant="outline" onClick={() => setImportOpen(false)}>Cancel</Button>
                             <Button onClick={doImport} disabled={!importFile || busy}>{busy ? "Importing..." : "Import"}</Button>

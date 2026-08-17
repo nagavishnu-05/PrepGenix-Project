@@ -1,4 +1,4 @@
-tensorflow
+tensorflow>=2.21
 keras
 opencv-python
 scikit-learn
@@ -6,3 +6,7 @@ pandas
 numpy
 jupyter
 onnx
+datasets
+pyarrow
+pillow
+matplotlib

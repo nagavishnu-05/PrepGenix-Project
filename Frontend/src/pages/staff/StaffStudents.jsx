@@ -3,6 +3,7 @@ import { Plus, Search, Upload, Trash2, FileText, Users, ChevronDown, ChevronRigh
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { FileInput } from "@/components/ui/file-input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -282,7 +283,7 @@ export default function StaffStudents() {
                         <DialogDescription>Upload an .xlsx or .csv file with columns: regNo, name, email, batch, department, cgpa...</DialogDescription>
                     </DialogHeader>
                     <div className="space-y-4">
-                        <Input type="file" accept=".xlsx,.xls,.csv" onChange={(e) => setFile(e.target.files?.[0] || null)} />
+                        <FileInput accept=".xlsx,.xls,.csv" placeholder="Select Excel or CSV file" onChange={(e) => setFile(e.target.files?.[0] || null)} />
                         <div className="flex justify-end gap-2">
                             <Button variant="outline" onClick={() => setImportOpen(false)}>Cancel</Button>
                             <Button onClick={doImport} disabled={!file || busy}>{busy ? "Importing..." : "Import"}</Button>

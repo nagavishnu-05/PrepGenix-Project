@@ -3,6 +3,7 @@ import { Plus, Trash2, Users, ClipboardList, Code2, BrainCircuit, CheckCircle2, 
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { FileInput } from "@/components/ui/file-input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -324,7 +325,7 @@ export default function StaffTests() {
 
                                 <div className="space-y-1.5">
                                     <Label className="text-xs text-slate-500 dark:text-zinc-400">Questions Excel File (.xlsx, .xls, .csv)</Label>
-                                    <Input type="file" accept=".xlsx, .xls, .csv" onChange={(e) => setSelectedFile(e.target.files[0])} className="text-slate-900 dark:text-zinc-200" />
+                                    <FileInput accept=".xlsx, .xls, .csv" placeholder="Select Excel or CSV file" onChange={(e) => setSelectedFile(e.target.files[0])} className="text-slate-900 dark:text-zinc-200" />
                                     <p className="text-[11px] text-slate-500 dark:text-zinc-500 leading-normal">
                                         <strong>Required columns:</strong><br />
                                         {f.testTypeSelection === "coding_programming" ? (

@@ -3,6 +3,7 @@ import { Upload, RefreshCw, Trash2, FileText, Tag } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { FileInput } from "@/components/ui/file-input";
 import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
@@ -167,7 +168,7 @@ export default function PlacementResumes() {
                                 </SelectContent>
                             </Select>
                         </div>
-                        <Input type="file" accept=".pdf,.docx,.txt" onChange={(e) => setFile(e.target.files?.[0] || null)} />
+                        <FileInput accept=".pdf,.docx,.txt" placeholder="Select resume (PDF, DOCX, TXT)" onChange={(e) => setFile(e.target.files?.[0] || null)} />
                         <div className="flex justify-end gap-2">
                             <Button variant="outline" onClick={() => setUploadOpen(false)}>Cancel</Button>
                             <Button onClick={doUpload} disabled={!regNo || !file || busy}>{busy ? "Uploading & parsing..." : "Upload"}</Button>

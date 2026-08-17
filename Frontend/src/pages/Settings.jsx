@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { PageHeader } from "@/components/portal/primitives";
 import { StatusBadge } from "@/components/portal/status-badge";
+import { FileInput } from "@/components/ui/file-input";
 import { useAuthStore } from "@/store/auth-store";
 import { useUIStore } from "@/store/ui-store";
 import { api } from "@/lib/api";
@@ -148,8 +149,10 @@ export default function SettingsPage() {
                                                     <p className="text-sm text-slate-500">No resume uploaded yet.</p>
                                                 )}
 
-                                                <div className="flex items-center gap-2">
-                                                    <input id="resume-file" type="file" accept=".pdf,.docx,.txt" className="text-sm text-slate-600 dark:text-zinc-400" onChange={async (e) => {
+                                                <FileInput
+                                                    accept=".pdf,.docx,.txt"
+                                                    placeholder="Upload resume (PDF, DOCX, TXT)"
+                                                    onChange={async (e) => {
                                                         const f = e.target.files && e.target.files[0];
                                                         if (!f) return;
                                                         setResumeError(null);
@@ -162,18 +165,16 @@ export default function SettingsPage() {
                                                         } finally {
                                                             setUploadingResume(false);
                                                         }
-                                                    }} />
-                                                    <button className="px-3 py-1 rounded bg-violet-600 text-white text-xs cursor-pointer" disabled={uploadingResume} onClick={() => document.getElementById('resume-file').click()}>
-                                                        {uploadingResume ? 'Uploading…' : 'Choose file'}
-                                                    </button>
-                                                    {resume && <button className="px-3 py-1 rounded border border-slate-200 dark:border-zinc-700 text-xs text-slate-600 dark:text-zinc-300 cursor-pointer" onClick={async () => {
+                                                    }}
+                                                />
+                                                {uploadingResume && <p className="text-xs text-slate-500">Uploading...</p>}
+                                                {resume && <button className="px-3 py-1 rounded border border-slate-200 dark:border-zinc-700 text-xs text-slate-600 dark:text-zinc-300 cursor-pointer hover:bg-slate-50 dark:hover:bg-zinc-800 transition-colors" onClick={async () => {
                                                         try {
                                                             await api.resumes.parse(regNo);
                                                             const updated = await api.resumes.get(regNo);
                                                             setResume(updated);
                                                         } catch (err) { setResumeError(err.message); }
                                                     }}>Re-parse</button>}
-                                                </div>
                                                 {resumeError && <p className="text-xs text-red-400">{resumeError}</p>}
                                             </div>
                                         </CardContent>

@@ -9,9 +9,15 @@ const router = express.Router();
 
 const ROLES = ["student", "staff", "placement"];
 
+function stripSensitive(user) {
+  if (!user) return user;
+  const { passwordHash, ...rest } = user;
+  return rest;
+}
+
 async function attachProfile(user) {
   const profile = user.role === "student" ? await col("students").findOne({ regNo: user.username }) : null;
-  return { ...user, profile: profile ? toId(profile) : null };
+  return stripSensitive({ ...user, profile: profile ? toId(profile) : null });
 }
 
 // POST /api/auth/login  { role, username, password }

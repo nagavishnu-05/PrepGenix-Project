@@ -61,3 +61,11 @@ Frontend/tsconfig.tsbuildinfo
 
 # docker
 docker-compose.override.yml
+
+# python / ml
+AIML/.venv/
+AIML/data/places365/
+AIML/models/places365/
+*.keras
+__pycache__/
+.ipynb_checkpoints/
