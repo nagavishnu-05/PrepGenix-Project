@@ -36,7 +36,7 @@ exports.createTestSchema = zod_1.z.object({
     passingScore: zod_1.z.number().min(1),
     allowedLanguages: zod_1.z.array(zod_1.z.string()).min(1, "At least one language required"),
     proctoringEnabled: zod_1.z.boolean().default(true),
-    maxViolations: zod_1.z.number().min(1).max(20).default(5),
+    maxViolations: zod_1.z.number().min(1).max(20).default(1),
     autoSubmit: zod_1.z.boolean().default(true),
     startDate: zod_1.z.string().optional(),
     endDate: zod_1.z.string().optional(),

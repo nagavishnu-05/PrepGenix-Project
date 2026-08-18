@@ -26,7 +26,7 @@ const DIFFICULTIES = ["easy", "medium", "hard"];
 
 const PROCTOR_DEFAULT = {
   enabled: true,
-  maxViolations: 5,
+  maxViolations: 1,
   autoSubmit: true,
   snapshotIntervalSec: 20,
 };
@@ -35,7 +35,7 @@ function normalizeProctoring(body) {
   const p = body && typeof body === "object" ? body : {};
   return {
     enabled: p.enabled !== false,
-    maxViolations: Math.max(1, Number(p.maxViolations) || 5),
+    maxViolations: Math.max(1, Number(p.maxViolations) || 1),
     autoSubmit: p.autoSubmit !== false,
     snapshotIntervalSec: Math.max(5, Number(p.snapshotIntervalSec) || 20),
   };
@@ -409,6 +409,9 @@ router.post("/:id/start", authenticate, async (req, res) => {
       if (existing.status === "completed") {
         return res.json({ ...toId(existing), alreadyCompleted: true });
       }
+      if (existing.status === "cheated") {
+        return res.status(403).json({ error: "This attempt was terminated due to a proctoring violation.", cheatingReason: existing.cheatingReason, status: "cheated" });
+      }
       return res.json(toId(existing));
     }
 
@@ -463,17 +466,10 @@ router.post("/:id/start", authenticate, async (req, res) => {
 });
 
 async function disqualifyAttempt(attempt, reason = "Exited fullscreen mode") {
-  const completed = {
-    ...attempt,
-    status: "completed",
-    result: "disqualified",
-    disqualified: true,
-    disqualifyReason: reason,
-    completedAt: new Date(),
-  };
+  const now = new Date();
   await col("attempts").updateOne(
     { _id: attempt._id },
-    { $set: { status: "completed", result: "disqualified", disqualified: true, disqualifyReason: reason, completedAt: completed.completedAt } }
+    { $set: { status: "completed", result: "disqualified", disqualified: true, disqualifyReason: reason, completedAt: now } }
   );
 
   const perfEntry = {
@@ -487,38 +483,35 @@ async function disqualifyAttempt(attempt, reason = "Exited fullscreen mode") {
   };
   if (attempt.type === "coding") await pushCoding(attempt.studentRegNo, perfEntry);
   else await pushAptitude(attempt.studentRegNo, perfEntry);
-  return { ...completed, result: "disqualified" };
+  return { status: "completed", result: "disqualified" };
 }
 
 async function finalizeAttempt(attempt) {
   let result;
-  if (attempt.mode === "adaptive") {
+  if (attempt.status === "cheated" || attempt.result === "cheated") {
+    result = "cheated";
+  } else if (attempt.mode === "adaptive") {
     result = classifyResult(attempt.adaptive);
   } else {
     const ratio = attempt.totalScore ? attempt.score / attempt.totalScore : 0;
     const passingRatio = (attempt.totalScore ? (attempt.totalScore * (attempt.passingScore || 50)) / 100 : 0);
     result = attempt.score >= passingRatio ? "passed" : "failed";
   }
-  const completed = {
-    ...attempt,
-    status: "completed",
-    result,
-    completedAt: new Date(),
-  };
-  await col("attempts").updateOne({ _id: attempt._id }, { $set: { status: "completed", result, completedAt: completed.completedAt } });
+  const status = result === "cheated" ? "cheated" : "completed";
+  await col("attempts").updateOne({ _id: attempt._id }, { $set: { status, result, completedAt: new Date() } });
 
   const perfEntry = {
     testId: attempt.testId,
     testTitle: attempt.testTitle,
-    score: attempt.score,
+    score: attempt.score || 0,
     total: attempt.totalScore,
     result,
     mode: attempt.mode,
-    percentage: attempt.totalScore ? Math.round((attempt.score / attempt.totalScore) * 100) : 0,
+    percentage: attempt.totalScore ? Math.round(((attempt.score || 0) / attempt.totalScore) * 100) : 0,
   };
   if (attempt.type === "coding") await pushCoding(attempt.studentRegNo, perfEntry);
   else await pushAptitude(attempt.studentRegNo, perfEntry);
-  return { ...completed, result };
+  return { status, result };
 }
 
 // GET /api/tests/attempts/:attemptId  -> attempt detail (student own or staff)

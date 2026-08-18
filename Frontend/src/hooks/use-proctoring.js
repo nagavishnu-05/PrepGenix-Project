@@ -9,10 +9,7 @@ function requestFullscreen() {
             if (p && typeof p.catch === "function") p.catch(() => {});
             return p || Promise.resolve();
         }
-    } catch {
-        // fullscreen unsupported/denied (headless, iframes) — the test still runs;
-        // the fullscreenchange listener records fullscreen_exit violations instead.
-    }
+    } catch {}
     try {
         if (el.webkitRequestFullscreen) return el.webkitRequestFullscreen();
     } catch {}
@@ -59,14 +56,29 @@ function toWavBase64(audioBuffer, targetRate = 16000) {
     return btoa(bin);
 }
 
-export default function useProctoring({ attemptId, config, previewRef, onAutoSubmit, onViolation }) {
-    const [status, setStatus] = useState("idle"); // idle | denied | ready | active
-    const [violationCount, setViolationCount] = useState(0);
+const VIOLATION_REASON_MAP = {
+    fullscreen_exit: "FULLSCREEN_EXIT",
+    multiple_faces: "MULTIPLE_FACES",
+    phone_detected: "PHONE_DETECTED",
+    dev_tools: "DEV_TOOLS",
+    screen_capture: "SCREEN_CAPTURE",
+    tab_switch: "TAB_SWITCH",
+    window_blur: "WINDOW_FOCUS_LOST",
+    right_click: "RIGHT_CLICK",
+    copy_attempt: "COPY_ATTEMPT",
+    paste_attempt: "PASTE_ATTEMPT",
+    camera_lost: "CAMERA_LOST",
+    mic_lost: "MIC_LOST",
+    no_face: "NO_FACE",
+    voice_detected: "VOICE_DETECTED",
+    looking_away: "LOOKING_AWAY",
+};
+
+export default function useProctoring({ attemptId, config, previewRef, onAutoSubmit }) {
+    const [status, setStatus] = useState("idle");
     const [cameraActive, setCameraActive] = useState(false);
     const [micActive, setMicActive] = useState(false);
     const [fullscreenActive, setFullscreenActive] = useState(false);
-    const [lastAnalysis, setLastAnalysis] = useState(null);
-    const [warning, setWarning] = useState(null);
 
     const streamRef = useRef(null);
     const canvasRef = useRef(null);
@@ -74,11 +86,8 @@ export default function useProctoring({ attemptId, config, previewRef, onAutoSub
     const intervalRef = useRef(null);
     const activeRef = useRef(false);
     const runningRef = useRef(false);
-    const countRef = useRef(0);
-    const warnedRef = useRef(new Set());
+    const autoSubmittedRef = useRef(false);
 
-    const maxViolations = config?.maxViolations ?? 5;
-    const autoSubmit = config?.autoSubmit ?? true;
     const intervalMs = (config?.snapshotIntervalSec ?? 20) * 1000;
 
     const stop = useCallback(() => {
@@ -95,34 +104,16 @@ export default function useProctoring({ attemptId, config, previewRef, onAutoSub
         exitFullscreen();
     }, [previewRef]);
 
-    const reportViolation = useCallback(async (type, description, extra = {}) => {
-        if (!activeRef.current) return;
-        countRef.current += 1;
-        setViolationCount(countRef.current);
-        onViolation?.(type, countRef.current);
-        const severity = { multiple_faces: "high", no_face: "medium", voice_detected: "high", fullscreen_exit: "high", camera_lost: "high", mic_lost: "high" }[type] || "medium";
-        if (!warnedRef.current.has(type)) {
-            warnedRef.current.add(type);
-            setWarning({ type, description, severity });
-            setTimeout(() => setWarning(null), 5000);
-        }
+    const submitAndStop = useCallback((type) => {
+        if (autoSubmittedRef.current) return;
+        autoSubmittedRef.current = true;
+        const reason = VIOLATION_REASON_MAP[type] || type.toUpperCase();
+        stop();
+        onAutoSubmit?.("cheated", reason);
         try {
-            const r = await api.proctoring.report({ attemptId, type, severity, description, ...extra });
-            if (r.violationCount != null) {
-                countRef.current = r.violationCount;
-                setViolationCount(r.violationCount);
-            }
-            if (r.autoSubmitted) {
-                stop();
-                onAutoSubmit?.(r.result);
-            }
-        } catch {
-            if (autoSubmit && countRef.current >= maxViolations) {
-                stop();
-                onAutoSubmit?.();
-            }
-        }
-    }, [attemptId, autoSubmit, maxViolations, onAutoSubmit, onViolation, stop]);
+            api.proctoring.report({ attemptId, type, severity: "high", description: `${type} violation detected` }).catch(() => {});
+        } catch {}
+    }, [attemptId, onAutoSubmit, stop]);
 
     const captureFrame = useCallback(() => {
         const video = previewRef?.current;
@@ -167,24 +158,31 @@ export default function useProctoring({ attemptId, config, previewRef, onAutoSub
     }, []);
 
     const tick = useCallback(async () => {
-        if (!activeRef.current || runningRef.current) return;
+        if (!activeRef.current || runningRef.current || autoSubmittedRef.current) return;
         runningRef.current = true;
         try {
             const image = captureFrame();
             const audio = await captureAudio();
             if (!image && !audio) return;
             const r = await api.proctoring.analyze({ attemptId, image, audio });
-            setLastAnalysis(r.analysis);
-            if (r.violationCount != null) {
-                countRef.current = r.violationCount;
-                setViolationCount(r.violationCount);
-            }
             if (r.autoSubmitted) {
+                autoSubmittedRef.current = true;
                 stop();
-                onAutoSubmit?.(r.result);
+                onAutoSubmit?.(r.result, r.cheatingReason);
+                return;
+            }
+            if (r.violations && r.violations.length > 0) {
+                const first = r.violations[0];
+                autoSubmittedRef.current = true;
+                stop();
+                const reason = VIOLATION_REASON_MAP[first.type] || first.type.toUpperCase();
+                onAutoSubmit?.("cheated", reason);
+                try {
+                    api.proctoring.report({ attemptId, type: first.type, severity: "high", description: first.description }).catch(() => {});
+                } catch {}
             }
         } catch {
-            // transient network/analysis errors are ignored; next tick retries
+            // transient network errors ignored
         } finally {
             runningRef.current = false;
         }
@@ -195,6 +193,7 @@ export default function useProctoring({ attemptId, config, previewRef, onAutoSub
 
     const start = useCallback(async () => {
         activeRef.current = true;
+        autoSubmittedRef.current = false;
         setStatus("active");
         startGraceUntilRef.current = Date.now() + 3000;
         await requestFullscreen();
@@ -206,9 +205,6 @@ export default function useProctoring({ attemptId, config, previewRef, onAutoSub
     }, [intervalMs, tick]);
 
     const enable = useCallback(async (allowSimulated = false) => {
-        window.__ENABLE_V2 = (window.__ENABLE_V2 || 0) + 1;
-        window.__ENABLE_LOGGED = true;
-        console.log("[proctoring] enable() called", new Date().toISOString());
         setStatus("ready");
         try {
             await requestFullscreen().catch(() => {});
@@ -225,7 +221,6 @@ export default function useProctoring({ attemptId, config, previewRef, onAutoSub
                         const hostname = typeof window !== "undefined" ? window.location.hostname : "";
                         const isLocal = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "0.0.0.0" || hostname === "::1" || hostname.endsWith(".local");
                         if (allowSimulated || isLocal) {
-                            console.warn("[proctoring] Hardware media access unavailable. Using simulated stream fallback.");
                             const canvas = document.createElement("canvas");
                             canvas.width = 640;
                             canvas.height = 480;
@@ -264,8 +259,8 @@ export default function useProctoring({ attemptId, config, previewRef, onAutoSub
             const aTrack = stream.getAudioTracks()[0];
             setCameraActive(!!vTrack);
             setMicActive(!!aTrack);
-            if (vTrack) vTrack.addEventListener("ended", () => { setCameraActive(false); reportViolation("camera_lost", "Camera disconnected during test."); });
-            if (aTrack) aTrack.addEventListener("ended", () => { setMicActive(false); reportViolation("mic_lost", "Microphone disconnected during test."); });
+            if (vTrack) vTrack.addEventListener("ended", () => { setCameraActive(false); submitAndStop("camera_lost"); });
+            if (aTrack) aTrack.addEventListener("ended", () => { setMicActive(false); submitAndStop("mic_lost"); });
             if (previewRef?.current) {
                 previewRef.current.srcObject = stream;
                 await previewRef.current.play().catch(() => {});
@@ -277,17 +272,17 @@ export default function useProctoring({ attemptId, config, previewRef, onAutoSub
             setStatus("denied");
             return "denied";
         }
-    }, [previewRef, reportViolation]);
+    }, [previewRef, submitAndStop]);
 
     useEffect(() => {
         if (!activeRef.current) return;
         const onVis = () => {
             if (Date.now() < startGraceUntilRef.current) return;
-            if (document.hidden) reportViolation("tab_switch", "Tab or window switched during the test.");
+            if (document.hidden) submitAndStop("tab_switch");
         };
         const onBlur = () => {
             if (Date.now() < startGraceUntilRef.current) return;
-            reportViolation("window_blur", "Window lost focus during the test.");
+            submitAndStop("window_blur");
         };
         const onFs = () => {
             const fs = document.fullscreenElement != null;
@@ -296,20 +291,54 @@ export default function useProctoring({ attemptId, config, previewRef, onAutoSub
             }
             setFullscreenActive(fs);
             if (!fs && hasBeenFullscreenRef.current && Date.now() >= startGraceUntilRef.current) {
-                reportViolation("fullscreen_exit", "You exited fullscreen during the test.");
+                submitAndStop("fullscreen_exit");
+            }
+        };
+        const onContextMenu = (e) => {
+            if (Date.now() < startGraceUntilRef.current) return;
+            e.preventDefault();
+            submitAndStop("right_click");
+        };
+        const onKeyDown = (e) => {
+            if (Date.now() < startGraceUntilRef.current) return;
+            const key = e.key.toLowerCase();
+            const ctrl = e.ctrlKey || e.metaKey;
+            const shift = e.shiftKey;
+            if (key === "f12" || (ctrl && shift && ["i", "j", "c"].includes(key))) {
+                e.preventDefault();
+                submitAndStop("dev_tools");
+                return;
+            }
+            if (ctrl && key === "u") {
+                e.preventDefault();
+                submitAndStop("dev_tools");
+                return;
+            }
+            if (ctrl && ["c", "v", "x"].includes(key)) {
+                if (document.activeElement?.tagName === "TEXTAREA" || document.activeElement?.tagName === "INPUT" || document.querySelector(".monaco-editor:focus")) return;
+                e.preventDefault();
+                submitAndStop(key === "c" ? "copy_attempt" : key === "v" ? "paste_attempt" : "copy_attempt");
+                return;
+            }
+            if (key === "printscreen") {
+                submitAndStop("screen_capture");
             }
         };
         document.addEventListener("visibilitychange", onVis);
         window.addEventListener("blur", onBlur);
         document.addEventListener("fullscreenchange", onFs);
+        document.addEventListener("contextmenu", onContextMenu);
+        document.addEventListener("keydown", onKeyDown);
         return () => {
             document.removeEventListener("visibilitychange", onVis);
             window.removeEventListener("blur", onBlur);
             document.removeEventListener("fullscreenchange", onFs);
+            document.removeEventListener("contextmenu", onContextMenu);
+            document.removeEventListener("keydown", onKeyDown);
         };
-    }, [status, reportViolation]);
+    }, [status, submitAndStop]);
 
     useEffect(() => () => stop(), [stop]);
 
-    return { status, violationCount, cameraActive, micActive, fullscreenActive, lastAnalysis, warning, enable, start, stop, reportViolation };
+    return { status, cameraActive, micActive, fullscreenActive, enable, start, stop };
 }

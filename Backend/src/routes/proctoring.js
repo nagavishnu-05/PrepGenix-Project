@@ -16,12 +16,19 @@ const ANALYZE_SCRIPT = path.join(__dirname, "..", "..", "..", "AIML", "scripts",
 const SEVERITY = {
   no_face: "medium",
   multiple_faces: "high",
+  phone_detected: "high",
   voice_detected: "high",
   tab_switch: "medium",
   window_blur: "medium",
   fullscreen_exit: "high",
+  right_click: "medium",
+  dev_tools: "high",
+  copy_attempt: "medium",
+  paste_attempt: "medium",
+  screen_capture: "high",
   camera_lost: "high",
   mic_lost: "high",
+  looking_away: "low",
 };
 
 function runPython(args) {
@@ -71,14 +78,15 @@ async function enforceLimits(attemptId, config, triggerType = null) {
   const fresh = await col("attempts").findOne({ _id: id(attemptId) });
   if (fresh && (fresh.status === "in_progress" || fresh.status === "flagged")) {
     const testsModule = require("./tests");
-    if (triggerType === "fullscreen_exit") {
-      const finalized = await testsModule.disqualifyAttempt(fresh, "Exited fullscreen mode during test");
-      return { autoSubmitted: true, result: finalized.result };
-    }
-    if (config.autoSubmit && count >= config.maxViolations) {
-      const finalized = await testsModule.finalizeAttempt(fresh);
-      return { autoSubmitted: true, result: finalized.result };
-    }
+    const now = new Date();
+
+    const reasonCode = triggerType ? triggerType.toUpperCase().replace(/ /g, "_") : "PROCTORING_VIOLATION";
+    await col("attempts").updateOne(
+      { _id: fresh._id },
+      { $set: { cheatingReason: reasonCode, cheatingTimestamp: now, autoSubmitted: true, status: "cheated", result: "cheated" } }
+    );
+    await testsModule.finalizeAttempt({ ...fresh, status: "cheated", result: "cheated" });
+    return { autoSubmitted: true, result: "cheated", cheatingReason: reasonCode };
   }
   return { autoSubmitted: false };
 }
@@ -103,13 +111,15 @@ router.post("/report", authenticate, async (req, res) => {
     const attempt = await withAttempt(attemptId, async (a) => a);
     let autoSubmitted = false;
     let submittedResult = null;
+    let cheatingReason = null;
     if (attempt) {
-      const config = attempt.proctoring || { autoSubmit: true, maxViolations: 5 };
+      const config = attempt.proctoring || { autoSubmit: true, maxViolations: 1 };
       const enforcement = await enforceLimits(attemptId, config, type);
       autoSubmitted = enforcement.autoSubmitted;
       submittedResult = enforcement.result;
+      cheatingReason = enforcement.cheatingReason || null;
     }
-    res.status(201).json({ ...toId(violation), violationCount: await col("violations").countDocuments({ attemptId: String(attemptId) }), autoSubmitted, result: submittedResult });
+    res.status(201).json({ ...toId(violation), violationCount: await col("violations").countDocuments({ attemptId: String(attemptId) }), autoSubmitted, result: submittedResult, cheatingReason });
   } catch (err) {
     res.status(500).json({ error: `Failed to report violation: ${err.message}` });
   }
@@ -170,28 +180,35 @@ router.post("/analyze", authenticate, async (req, res) => {
         type: v.type,
         severity: SEVERITY[v.type] || "medium",
         description: v.description,
-        cameraFrame: v.type === "multiple_faces" || v.type === "no_face" ? latestFrame : undefined,
+        confidence: v.confidence || undefined,
+        cameraFrame: ["multiple_faces", "no_face", "phone_detected"].includes(v.type) ? latestFrame : undefined,
         analysis: { image: analysis.image, audio: analysis.audio },
         timestamp: new Date(),
       });
     }
 
-    const config = attempt.proctoring || { autoSubmit: true, maxViolations: 5, snapshotIntervalSec: 20 };
+    const config = attempt.proctoring || { autoSubmit: true, maxViolations: 1, snapshotIntervalSec: 20 };
     const set = {
       lastSeenAt: new Date(),
       latestAnalysis: analysis,
       ...(latestFrame ? { latestFrame } : {}),
     };
     await col("attempts").updateOne({ _id: attempt._id }, { $set: set });
-    const enforcement = await enforceLimits(attemptId, config);
+
+    let autoResult = { autoSubmitted: false };
+    for (const v of flagged) {
+      const r = await enforceLimits(attemptId, config, v.type);
+      if (r.autoSubmitted) { autoResult = r; break; }
+    }
 
     res.json({
       analysis,
       flagged: flagged.length,
       violations: analysis.violations,
       violationCount: await col("violations").countDocuments({ attemptId }),
-      autoSubmitted: enforcement.autoSubmitted,
-      result: enforcement.result,
+      autoSubmitted: autoResult.autoSubmitted,
+      result: autoResult.result,
+      cheatingReason: autoResult.cheatingReason || null,
     });
   } catch (err) {
     res.status(500).json({ error: `Analysis failed: ${err.message}` });

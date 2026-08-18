@@ -116,7 +116,7 @@ export default function StaffTests() {
                 passingScore: Number(f.passingScore) || 50,
                 proctoring: {
                     enabled: f.proctoringEnabled,
-                    maxViolations: Number(f.proctoringMax) || 5,
+                    maxViolations: Number(f.proctoringMax) || 1,
                     autoSubmit: f.proctoringAuto,
                     snapshotIntervalSec: Number(f.proctoringInterval) || 20,
                 },

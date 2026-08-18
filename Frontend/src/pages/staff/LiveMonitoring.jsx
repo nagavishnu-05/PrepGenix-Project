@@ -197,7 +197,7 @@ export default function LiveMonitoring() {
                                     <TableBody>
                                         {filteredRows.map((r) => {
                                             const violations = r.violations || 0;
-                                            const maxV = r.proctoring?.maxViolations ?? 5;
+                                            const maxV = r.proctoring?.maxViolations ?? 1;
                                             const open = expanded[r.id];
                                             const vList = detail[r.id] || [];
 
@@ -316,7 +316,7 @@ export default function LiveMonitoring() {
                         <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
                             {filteredRows.map((r) => {
                                 const violations = r.violations || 0;
-                                const maxV = r.proctoring?.maxViolations ?? 5;
+                                const maxV = r.proctoring?.maxViolations ?? 1;
                                 const open = expanded[r.id];
                                 const vList = detail[r.id] || [];
                                 return (

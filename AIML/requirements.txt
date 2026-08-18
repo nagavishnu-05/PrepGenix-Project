@@ -6,13 +6,12 @@ pandas
 numpy
 jupyter
 onnx
-<<<<<<< HEAD
 datasets
 pyarrow
 pillow
 matplotlib
-=======
 pypdf
 flask
+flask-cors
 python-dotenv
->>>>>>> 14a6075 (AIML Updations)
+ultralytics

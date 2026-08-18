@@ -51,7 +51,7 @@ export default function CreateTestPage() {
     const [settings, setSettings] = useState({
         allowedLanguages: ["javascript", "python"],
         proctoringEnabled: true,
-        maxViolations: 5,
+        maxViolations: 1,
         autoSubmit: true,
     });
     const filteredBank = mockQuestions.filter((q) => !selectedQuestions.find((sq) => sq.id === q.id) &&

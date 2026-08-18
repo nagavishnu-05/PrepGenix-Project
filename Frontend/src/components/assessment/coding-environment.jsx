@@ -17,11 +17,9 @@ import { ConsolePanel } from "./console-panel";
 import { QuestionTabs } from "./question-tabs";
 import { ProctoringPanel } from "./proctoring-panel";
 import { FullscreenGuard } from "./fullscreen-guard";
-import { useProctoring } from "@/hooks/use-proctoring";
 const AUTO_SUBMIT_CRITICAL_THRESHOLD = 2;
 export function CodingEnvironment({ testId }) {
     const { currentTest, currentQuestion, currentAttempt, code, language, isRunning, isSubmitting, violations, submissions, fullscreen, setCode, setLanguage, setCurrentQuestion, setIsRunning, setIsSubmitting, setFullscreen, addSubmission, } = useTestStore();
-    const { startProctoring, stopProctoring } = useProctoring();
     const consoleHeight = 30;
     const hasAutoSubmitted = useRef(false);
     const questions = useMemo(() => currentTest?.questions ?? [], [currentTest]);
@@ -30,10 +28,6 @@ export function CodingEnvironment({ testId }) {
             setCurrentQuestion(questions[0]);
         }
     }, [questions, currentQuestion, setCurrentQuestion]);
-    useEffect(() => {
-        startProctoring();
-        return () => stopProctoring();
-    }, [startProctoring, stopProctoring]);
     useEffect(() => {
         document.documentElement.requestFullscreen().then(() => setFullscreen(true)).catch(() => { });
     }, [setFullscreen]);

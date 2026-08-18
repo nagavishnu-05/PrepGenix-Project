@@ -1,123 +1,67 @@
-# AIML Module - Interview Coding Assessment Platform
+# AIML Module — AI Proctoring
 
-Complete AI/ML module for proctoring analysis and resume parsing with integrated Flask API server.
+AI-powered proctoring engine for the PrepGenix examination platform.
 
-## 🚀 Quick Start
+## Architecture
 
-### Option 1: Run API Server (Recommended - Like `npm run dev`)
-
-```bash
-# Navigate to AIML folder
-cd AIML
-
-# Install dependencies (one-time)
-pip install -r requirements.txt
-
-# Start the development server
-python run.py
+```
+AIML/
+├── api/
+│   └── proctoring_api.py      # Flask REST API (face + phone detection)
+├── scripts/
+│   └── analyze_proctor.py      # CLI script (face + audio analysis)
+├── models/
+│   ├── places365/              # Places365 scene classifier (scene recognition)
+│   └── yolov8n.pt             # YOLOv8-nano (auto-downloaded on first use)
+├── data/
+│   └── places365/              # Scene classification training data (3000 images)
+├── notebooks/                  # Jupyter training notebooks
+└── requirements.txt            # Python dependencies
 ```
 
-Server starts on `http://localhost:5000`
+## Detection Capabilities
 
----
+| Capability | Model | Backend Route | Status |
+|---|---|---|---|
+| Face detection | Haar Cascade (OpenCV) | `analyze_proctor.py --image` | Active |
+| Multiple faces | Haar Cascade (OpenCV) | `analyze_proctor.py --image` | Active |
+| No face detected | Haar Cascade (OpenCV) | `analyze_proctor.py --image` | Active |
+| Voice/speech detection | RMS energy analysis | `analyze_proctor.py --audio` | Active |
+| Phone detection | YOLOv8-nano | `proctoring_api.py /analyze` | Active |
+| Prohibited objects | YOLOv8-nano | `proctoring_api.py /analyze` | Active |
+| Scene classification | Places365 (Keras) | training notebooks | Experimental |
 
-### Option 2: Run Individual Scripts
+## Quick Start
 
-#### Analyze Proctoring (Face & Voice Detection)
-```bash
-python main.py analyze-proctor --image frame.jpg [--audio audio.wav]
-```
-
-#### Parse Resume & Extract Skills
-```bash
-python main.py parse-resume --input resume.pdf --out result.json
-```
-
----
-
-## 📋 Setup Instructions
-
-### Prerequisites
-- Python 3.8 or higher
-- pip (Python package manager)
-
-### Step 1: Install Dependencies
+### Setup Virtual Environment
 
 ```bash
 cd AIML
+python -m venv .venv
+.venv\Scripts\activate        # Windows
 pip install -r requirements.txt
 ```
 
-**Required packages:**
-- `tensorflow`, `keras` - Deep learning
-- `opencv-python` - Face detection
-- `scikit-learn` - ML algorithms
-- `pandas`, `numpy` - Data processing
-- `jupyter` - Notebooks
-- `pypdf` - PDF parsing
-- `flask` - API server
-
-### Step 2: Run in Development Mode
+### Run Flask API (standalone)
 
 ```bash
-python run.py
+cd AIML
+python -m api.proctoring_api
+# API starts on http://localhost:5050
 ```
 
-Or with custom port:
-```bash
-python run.py --port 3001
-```
+### API Endpoints
 
----
+#### `POST /analyze`
 
-## 🎯 Available Commands
+Send base64-encoded image and/or audio for proctoring analysis.
 
-### Start API Server (Development)
-```bash
-python run.py
-python run.py serve --host 0.0.0.0 --port 5000
-```
-
-### Setup Environment
-```bash
-python run.py setup
-```
-Installs dependencies and checks Python version.
-
-### Analyze Proctoring
-```bash
-python run.py analyze --image frame.jpg --audio audio.wav
-```
-
-### Parse Resume
-```bash
-python run.py parse --input resume.pdf --out output.json
-```
-
----
-
-## 🌐 API Endpoints
-
-### Health Check
-```http
-GET /api/health
-```
-**Response:**
+**Request:**
 ```json
 {
-  "status": "healthy",
-  "service": "AIML Interview Assessment API"
+  "image": "<base64 JPEG>",
+  "audio": "<base64 WAV>"
 }
-```
-
-### Analyze Proctoring
-```http
-POST /api/analyze-proctor
-Content-Type: multipart/form-data
-
-Parameters:
-  - image (file, optional): jpg/png for face detection
-  - audio (file, optional): wav for voice detection
 ```
 
 **Response:**
@@ -127,216 +71,76 @@ Parameters:
     "faces": 1,
     "facePresent": true,
     "multipleFaces": false,
-    "note": "Single face detected"
+    "note": ""
+  },
+  "objects": {
+    "objects": [{"class": "person", "confidence": 0.89}],
+    "phoneDetected": false,
+    "count": 1
   },
   "audio": {
-    "voiceDetected": true,
-    "voicedRatio": 0.65,
-    "rms": 150.5,
-    "note": "Voice detected"
-  }
+    "voiceDetected": false,
+    "voicedRatio": 0.023,
+    "rms": 412.5,
+    "note": ""
+  },
+  "violations": []
 }
 ```
 
-### Parse Resume
-```http
-POST /api/parse-resume
-Content-Type: multipart/form-data
+#### `GET /health`
 
-Parameters:
-  - file (file, required): pdf/txt resume file
-```
+Returns `{"status": "ok", "service": "proctoring-api"}`.
 
-**Response:**
-```json
-{
-  "skills": ["Python", "React", "MongoDB", "Node.js"],
-  "categories": [
-    {"name": "Full Stack Developer", "score": 0.85},
-    {"name": "Backend Developer", "score": 0.75}
-  ],
-  "text": "extracted resume text..."
-}
-```
+### Environment Variables
 
-### Available Skills
-```http
-GET /api/available-skills
-```
-Returns all skill categories from `data/skills.json`.
+| Variable | Default | Description |
+|---|---|---|
+| `PROCTORING_PORT` | `5050` | Flask API port |
+| `PHONE_CONFIDENCE` | `0.50` | YOLOv8 confidence threshold |
+| `FACE_CONFIDENCE` | `0.60` | Face detection confidence threshold |
 
----
+## Integration with Backend
 
-## 📂 Project Structure
+The Express backend (`Backend/src/routes/proctoring.js`) calls the CLI script:
 
-```
-AIML/
-├── run.py                 # Main development runner (like npm run dev)
-├── main.py               # CLI entry point for all commands
-├── server.py             # Flask API server
-├── setup.py              # Package setup configuration
-├── requirements.txt      # Python dependencies
-│
-├── scripts/
-│   ├── analyze_proctor.py    # Face & voice detection
-│   └── parse_resume.py        # Resume parsing & skill extraction
-│
-├── data/
-│   └── skills.json            # Skill categories and keywords
-│
-├── models/               # Pre-trained models (placeholder)
-└── notebooks/            # Jupyter notebooks (placeholder)
-```
-
----
-
-## 🔧 Development Workflow
-
-### 1. Initial Setup
-```bash
-cd AIML
-python run.py setup
-```
-
-### 2. Start Development Server
-```bash
-python run.py
-```
-Server runs on `http://localhost:5000`
-
-### 3. Test with cURL
-
-**Analyze image:**
-```bash
-curl -X POST -F "image=@frame.jpg" http://localhost:5000/api/analyze-proctor
-```
-
-**Parse resume:**
-```bash
-curl -X POST -F "file=@resume.pdf" http://localhost:5000/api/parse-resume
-```
-
-### 4. Use Python CLI
-
-```bash
-# Direct CLI
-python main.py analyze-proctor --image frame.jpg --audio audio.wav
-python main.py parse-resume --input resume.pdf --out result.json
-
-# Via run.py wrapper
-python run.py analyze --image frame.jpg --audio audio.wav
-python run.py parse --input resume.pdf --out result.json
-```
-
----
-
-## 🐍 Using with Jupyter Notebooks
-
-Start Jupyter server:
-```bash
-jupyter notebook
-```
-
-Access notebooks at `http://localhost:8888`
-
----
-
-## 🐛 Troubleshooting
-
-### OpenCV Issues on Windows
-If you encounter OpenCV errors, install Visual C++ Build Tools:
-```bash
-pip install --upgrade opencv-python
-```
-
-### TensorFlow/CUDA Issues
-For CPU-only (recommended for testing):
-```bash
-pip install tensorflow-cpu
-```
-
-### PDF Parsing Issues
-Ensure pypdf is installed:
-```bash
-pip install pypdf
-```
-
-### Port Already in Use
-Use a different port:
-```bash
-python run.py --port 3001
-```
-
----
-
-## 📝 Integrating with Backend/Frontend
-
-### Backend Integration
-Make requests to AIML API from Express:
 ```javascript
-const FormData = require('form-data');
-const fs = require('fs');
-const http = require('http');
-
-const form = new FormData();
-form.append('image', fs.createReadStream('frame.jpg'));
-
-http.post('http://localhost:5000/api/analyze-proctor', form, (res) => {
-  // Handle response
-});
+// analyze_proctor.py is invoked via child_process.execFile
+execFile(PYTHON, [ANALYZE_SCRIPT, "--image", tmpFile], ...)
 ```
 
-### Frontend Integration
-Use FormData for file uploads:
-```javascript
-const formData = new FormData();
-formData.append('image', imageFile);
-formData.append('audio', audioFile);
+The Flask API is an optional alternative for richer object detection (phone, etc.).
 
-const response = await fetch('http://localhost:5000/api/analyze-proctor', {
-  method: 'POST',
-  body: formData
-});
+## Prohibited Objects (YOLOv8)
 
-const result = await response.json();
-```
+- Cell phone / mobile phone
+- Tablet
+- Laptop
+- Remote control
+- External keyboard
 
----
+## Models
 
-## 🚀 Production Deployment
+- **Haar Cascade** — bundled with OpenCV (`haarcascade_frontalface_default.xml`)
+- **YOLOv8-nano** — downloaded automatically on first API call (~6MB)
+- **Places365** — pre-trained scene classifier in `models/places365/` (~21MB Keras model)
 
-For production, use Gunicorn:
-```bash
-pip install gunicorn
-gunicorn -w 4 -b 0.0.0.0:5000 server:app
-```
+## Violation Types
 
----
-
-## 📚 API Documentation
-
-Visit `http://localhost:5000/api/health` to verify server is running.
-
-Full endpoint reference:
-- `GET  /api/health` - Health check
-- `POST /api/analyze-proctor` - Proctoring analysis
-- `POST /api/parse-resume` - Resume parsing
-- `GET  /api/available-skills` - List available skills
-
----
-
-## 🤝 Contributing
-
-For adding new functionalities:
-
-1. Add script in `scripts/` folder
-2. Add CLI command in `main.py`
-3. Add API endpoint in `server.py`
-4. Update `requirements.txt` if new dependencies needed
-5. Test via `run.py` or `main.py`
-
----
-
-## 📄 License
-
-Part of Interview Coding Assessment Platform
+| Type | Severity | Auto-submit? |
+|---|---|---|
+| `fullscreen_exit` | high | Yes |
+| `multiple_faces` | high | Yes |
+| `phone_detected` | high | Yes |
+| `dev_tools` | high | Yes |
+| `screen_capture` | high | Yes |
+| `voice_detected` | high | No |
+| `no_face` | medium | No |
+| `tab_switch` | medium | No |
+| `window_blur` | medium | No |
+| `right_click` | medium | No |
+| `copy_attempt` | medium | No |
+| `paste_attempt` | medium | No |
+| `camera_lost` | high | No |
+| `mic_lost` | high | No |
+| `looking_away` | low | No |

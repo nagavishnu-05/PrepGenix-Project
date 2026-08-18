@@ -47,7 +47,7 @@ export default function LoginPage() {
         setError("");
         setLoading(true);
         try {
-            await login(role, username, password);
+            await login(role, username.trim(), password.trim());
         } catch (err) {
             setError(err.message || "Login failed");
         } finally {

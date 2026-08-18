@@ -1,15 +1,12 @@
 import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Card } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useCamera } from "@/hooks/use-camera";
-import { useTestStore } from "@/store/test-store";
-import { Minimize2, Maximize2, AlertTriangle, Video, VideoOff, RefreshCw, } from "lucide-react";
+import { Minimize2, Maximize2, Video, VideoOff, RefreshCw, } from "lucide-react";
 export function ProctoringPanel() {
     const [isMinimized, setIsMinimized] = useState(false);
     const { videoRef, isActive, startCamera, stopCamera, error } = useCamera();
-    const { violations } = useTestStore();
     useEffect(() => {
         const timer = setTimeout(() => {
             startCamera();
@@ -29,10 +26,6 @@ export function ProctoringPanel() {
                 {isActive ? "Camera Active" : error ? "Camera Error" : "Initializing..."}
               </span>
             </span>
-            {violations.length > 0 && (<Badge variant="destructive" className="text-[10px] px-1.5 py-0">
-                <AlertTriangle className="mr-0.5 h-2.5 w-2.5"/>
-                {violations.length}
-              </Badge>)}
           </div>
           <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setIsMinimized(!isMinimized)}>
             {isMinimized ? <Maximize2 className="h-3 w-3"/> : <Minimize2 className="h-3 w-3"/>}
@@ -68,9 +61,6 @@ export function ProctoringPanel() {
                         Start
                       </>)}
                   </Button>)}
-                <Button variant="ghost" size="sm" className="text-xs h-7 text-zinc-500">
-                  Report Issue
-                </Button>
               </div>
             </motion.div>)}
         </AnimatePresence>

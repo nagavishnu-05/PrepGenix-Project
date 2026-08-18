@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useParams, useSearchParams, useNavigate } from "react-router-dom";
-import { Clock, Send, Play, CheckCircle2, XCircle, Camera, Mic, Maximize2, AlertTriangle, ShieldAlert, Video, VideoOff, MicOff } from "lucide-react";
+import { Clock, Send, Play, CheckCircle2, XCircle, Camera, Mic, Maximize2, ShieldAlert, Video, VideoOff, MicOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent } from "@/components/ui/card";
@@ -46,7 +46,7 @@ export default function TakeTest() {
     const [runOutput, setRunOutput] = useState("");
     const [timeLeft, setTimeLeft] = useState(null);
     const [error, setError] = useState("");
-    const [sessionLog, setSessionLog] = useState([]);
+    const [cheatingReasonState, setCheatingReasonState] = useState(null);
     const startAtRef = useRef(Date.now());
     const durationRef = useRef(30 * 60);
     const previewRef = useRef(null);
@@ -62,8 +62,11 @@ export default function TakeTest() {
         attemptId: attempt?.id,
         config: attempt?.proctoring,
         previewRef,
-        onAutoSubmit: finishWithResult,
-        onViolation: (type, count) => setSessionLog((log) => [...log.slice(-9), { type, count, at: new Date().toLocaleTimeString() }]),
+        onAutoSubmit: (res, reason) => {
+            setFinished(true);
+            if (res) setResult(res);
+            if (reason) setCheatingReasonState(reason);
+        },
     });
 
     const applyQuestion = (qr) => {
@@ -107,7 +110,7 @@ export default function TakeTest() {
                     att = await api.tests.start(attemptId);
                 } else {
                     att = await api.tests.attempt(attemptId);
-                    if (att.status === "completed") {
+                    if (att.status === "completed" || att.status === "cheated") {
                         setFinished(true);
                         setResult(att.result);
                         setAttempt(att);
@@ -232,18 +235,55 @@ export default function TakeTest() {
         const answers = attempt?.answers || [];
         const correctCount = answers.filter((a) => a.correct).length;
         const isDisqualified = result === "disqualified" || attempt?.disqualified;
+        const isCheated = result === "cheated" || attempt?.status === "cheated";
+
+        const cheatingReasonLabels = {
+            FULLSCREEN_EXIT: "You exited fullscreen mode during the test.",
+            MULTIPLE_FACES: "Multiple persons were detected in the camera feed.",
+            PHONE_DETECTED: "A mobile phone or prohibited device was detected.",
+            DEV_TOOLS: "Developer tools or prohibited keyboard shortcut was detected.",
+            SCREEN_CAPTURE: "A screen capture attempt was detected.",
+            MAX_VIOLATIONS_EXCEEDED: `You exceeded the maximum allowed proctoring violations (${attempt?.proctoring?.maxViolations ?? 1}).`,
+            TAB_SWITCH: "Tab or window switching was detected multiple times.",
+            WINDOW_FOCUS_LOST: "The exam window lost focus multiple times.",
+            RIGHT_CLICK: "Right-click was detected during the test.",
+            COPY_ATTEMPT: "Copy shortcut was detected during the test.",
+            PASTE_ATTEMPT: "Paste shortcut was detected during the test.",
+        };
+
+        const cheatingReason = attempt?.cheatingReason || cheatingReasonState;
+        const cheatingLabel = cheatingReasonLabels[cheatingReason] || cheatingReason?.replace(/_/g, " ").toLowerCase() || "A proctoring violation was detected.";
 
         return (
             <div className="mx-auto max-w-2xl">
-                <Card className="border-zinc-800 bg-zinc-900/40">
+                <Card className={cn("border-zinc-800 bg-zinc-900/40", isCheated && "border-red-500/30")}>
                     <CardContent className="flex flex-col items-center gap-4 py-14 text-center">
-                        <div className={cn("flex h-16 w-16 items-center justify-center rounded-full", isDisqualified ? "bg-red-500/20 text-red-400 border border-red-500/30" : "bg-gradient-to-br from-violet-600 to-indigo-600 text-white")}>
-                            {isDisqualified ? <ShieldAlert className="h-8 w-8" /> : <CheckCircle2 className="h-8 w-8" />}
+                        <div className={cn("flex h-16 w-16 items-center justify-center rounded-full", isCheated ? "bg-red-500/20 text-red-400 border border-red-500/30" : isDisqualified ? "bg-red-500/20 text-red-400 border border-red-500/30" : "bg-gradient-to-br from-violet-600 to-indigo-600 text-white")}>
+                            {isCheated || isDisqualified ? <ShieldAlert className="h-8 w-8" /> : <CheckCircle2 className="h-8 w-8" />}
                         </div>
                         <h2 className="text-2xl font-bold text-white">
-                            {isDisqualified ? "Test Terminated & Disqualified" : "Test completed"}
+                            {isCheated ? "Exam Automatically Submitted" : isDisqualified ? "Test Terminated & Disqualified" : "Test completed"}
                         </h2>
-                        {isDisqualified && (
+                        {isCheated && (
+                            <div className="max-w-md rounded-xl border border-red-500/30 bg-red-500/10 p-5 text-sm text-red-300 space-y-3">
+                                <p className="font-semibold">Your examination has been terminated due to a proctoring violation.</p>
+                                <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-3">
+                                    <p className="text-xs font-semibold uppercase tracking-wide text-red-400">Reason</p>
+                                    <p className="mt-1 text-sm text-red-300">{cheatingLabel}</p>
+                                </div>
+                                {cheatingReason && (
+                                    <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-3">
+                                        <p className="text-xs font-semibold uppercase tracking-wide text-red-400">Violation Code</p>
+                                        <p className="mt-1 font-mono text-xs text-red-300">{cheatingReason}</p>
+                                    </div>
+                                )}
+                                {attempt?.cheatingTimestamp && (
+                                    <p className="text-xs text-red-300/70">Detected at: {new Date(attempt.cheatingTimestamp).toLocaleString()}</p>
+                                )}
+                                <p className="text-xs text-red-300/70">Status: <span className="font-semibold text-red-400">CHEATED</span></p>
+                            </div>
+                        )}
+                        {isDisqualified && !isCheated && (
                             <div className="max-w-md rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-300">
                                 <p className="font-semibold">Full Screen Violation</p>
                                 <p className="mt-1 text-xs text-red-300/80">
@@ -251,15 +291,15 @@ export default function TakeTest() {
                                 </p>
                             </div>
                         )}
-                        {result && <StatusBadge value={result} className="px-4 py-1 text-base" />}
-                        {attempt?.violations > 0 && !isDisqualified && (
+                        {result && <StatusBadge value={isCheated ? "cheated" : result} className="px-4 py-1 text-base" />}
+                        {attempt?.violations > 0 && !isDisqualified && !isCheated && (
                             <p className="flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-sm text-amber-400">
                                 <AlertTriangle className="h-4 w-4" /> {attempt.violations} proctoring violation{attempt.violations === 1 ? "" : "s"} recorded
                             </p>
                         )}
                         <div className="mt-2 grid w-full max-w-sm grid-cols-3 gap-3">
                             <div className="rounded-lg border border-zinc-800 bg-zinc-950/40 p-3">
-                                <p className="text-2xl font-bold text-white">{isDisqualified ? 0 : attempt?.score ?? 0}</p>
+                                <p className="text-2xl font-bold text-white">{isCheated || isDisqualified ? 0 : attempt?.score ?? 0}</p>
                                 <p className="text-xs text-zinc-500">Score</p>
                             </div>
                             <div className="rounded-lg border border-zinc-800 bg-zinc-950/40 p-3">
@@ -267,7 +307,7 @@ export default function TakeTest() {
                                 <p className="text-xs text-zinc-500">Total</p>
                             </div>
                             <div className="rounded-lg border border-zinc-800 bg-zinc-950/40 p-3">
-                                <p className="text-2xl font-bold text-white">{isDisqualified ? 0 : correctCount}</p>
+                                <p className="text-2xl font-bold text-white">{isCheated || isDisqualified ? 0 : correctCount}</p>
                                 <p className="text-xs text-zinc-500">Correct</p>
                             </div>
                         </div>
@@ -324,8 +364,7 @@ export default function TakeTest() {
                         <p className="text-sm text-zinc-400">
                             {attempt.testTitle} is monitored. You must enable your <span className="font-medium text-zinc-200">camera</span>,{" "}
                             <span className="font-medium text-zinc-200">microphone</span>, and <span className="font-medium text-zinc-200">fullscreen</span> to continue.
-                            Leaving the window, switching tabs, or detecting extra faces / voices records a violation.{" "}
-                            {attempt.proctoring?.autoSubmit ? `After ${attempt.proctoring?.maxViolations ?? 5} violations the test is submitted automatically.` : ""}
+                            Any violation of the proctoring rules will result in immediate test submission and disqualification.
                         </p>
 
                         {proctoring.status === "ready" && (
@@ -405,10 +444,6 @@ export default function TakeTest() {
                             <Maximize2 className="h-3.5 w-3.5" />
                             {proctoring.fullscreenActive ? "Fullscreen" : "Not fullscreen"}
                         </span>
-                        <span className={cn("flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs", proctoring.violationCount > 0 ? "border-amber-500/30 bg-amber-500/10 text-amber-400" : "border-zinc-700 bg-zinc-800 text-zinc-400")}>
-                            <AlertTriangle className="h-3.5 w-3.5" />
-                            {proctoring.violationCount}/{attempt.proctoring?.maxViolations ?? 5} violations
-                        </span>
                     </div>
                 )}
 
@@ -418,14 +453,6 @@ export default function TakeTest() {
 
                 <Button variant="outline" size="sm" onClick={handleFinish}>Finish</Button>
             </div>
-
-            {/* Warning banner */}
-            {proctored && proctoring.warning && (
-                <div className={cn("flex items-center gap-2 border-b px-4 py-2 text-sm", proctoring.warning.severity === "high" ? "border-red-500/30 bg-red-500/10 text-red-300" : "border-amber-500/30 bg-amber-500/10 text-amber-300")}>
-                    <AlertTriangle className="h-4 w-4 shrink-0" />
-                    <span>{proctoring.warning.description}</span>
-                </div>
-            )}
 
             {/* Main content */}
             <div className="grid flex-1 grid-cols-1 gap-5 overflow-y-auto p-5 xl:grid-cols-3">
@@ -600,14 +627,6 @@ export default function TakeTest() {
                             </span>
                         )}
                     </div>
-                </div>
-            )}
-
-            {sessionLog.length > 0 && (
-                <div className="pointer-events-none absolute bottom-4 left-4 z-10 max-h-32 w-64 space-y-1 overflow-hidden rounded-lg border border-zinc-800 bg-zinc-950/90 p-2 text-[11px] text-zinc-400">
-                    {sessionLog.map((l, i) => (
-                        <p key={i} className="flex justify-between"><span className="capitalize">{l.type.replace(/_/g, " ")}</span><span className="text-zinc-500">#{l.count} · {l.at}</span></p>
-                    ))}
                 </div>
             )}
         </div>
