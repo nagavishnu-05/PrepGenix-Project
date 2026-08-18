@@ -5,7 +5,7 @@ const dotenv = require("dotenv");
 const bcrypt = require("bcryptjs");
 const { connectDB, closeDB, col, upsertDoc } = require("./db");
 
-dotenv.config({ path: path.join(__dirname, "..", ".env") });
+dotenv.config({ path: path.join(__dirname, "..", ".env"), override: true });
 
 async function upsertCoordinator(username, password, name, role) {
   const passwordHash = await bcrypt.hash(password, 10);

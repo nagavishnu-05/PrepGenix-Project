@@ -24,23 +24,31 @@ async function attachProfile(user) {
 router.post("/login", async (req, res) => {
   try {
     const { role, username, password } = req.body;
+    console.log(`POST /api/auth/login — role=${role}, username=${String(username || "").trim()}`);
     const normalizedRole = String(role || "").toLowerCase();
     if (!ROLES.includes(normalizedRole)) {
+      console.log("  → 400: Invalid role");
       return res.status(400).json({ error: "Invalid role" });
     }
     const users = col("users");
     const user = await users.findOne({ role: normalizedRole, username: String(username || "").trim() });
     if (!user || !user.passwordHash) {
+      console.log("  → 401: User not found or no password");
       return res.status(401).json({ error: "Invalid credentials" });
     }
+    console.log("  Password verification started");
     const valid = await bcrypt.compare(String(password || "").trim(), user.passwordHash);
     if (!valid) {
+      console.log("  → 401: Invalid password");
       return res.status(401).json({ error: "Invalid credentials" });
     }
+    console.log("  JWT generation started");
     const token = generateToken({ userId: user._id.toString(), role: user.role, username: user.username });
     const sanitized = await attachProfile(toId(user));
+    console.log("  → 200: Login successful");
     res.json({ token, user: sanitized });
-  } catch {
+  } catch (err) {
+    console.error("  → 500: Login failed:", err.message);
     res.status(500).json({ error: "Login failed" });
   }
 });

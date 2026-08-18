@@ -13,22 +13,54 @@ const router = express.Router();
 const PYTHON = process.env.PYTHON_PATH || "python";
 const ANALYZE_SCRIPT = path.join(__dirname, "..", "..", "..", "AIML", "scripts", "analyze_proctor.py");
 
+const VIOLATION_TYPES = {
+  MULTIPLE_PERSONS: "MULTIPLE_PERSONS",
+  ELECTRONIC_DEVICE: "ELECTRONIC_DEVICE",
+  CANDIDATE_NOT_VISIBLE: "CANDIDATE_NOT_VISIBLE",
+  CAMERA_DISABLED: "CAMERA_DISABLED",
+  PROCTORING_FAILURE: "PROCTORING_FAILURE",
+  FULLSCREEN_EXIT: "FULLSCREEN_EXIT",
+  TAB_SWITCH: "TAB_SWITCH",
+  WINDOW_BLUR: "WINDOW_BLUR",
+  DEV_TOOLS: "DEV_TOOLS",
+  RIGHT_CLICK: "RIGHT_CLICK",
+  COPY_ATTEMPT: "COPY_ATTEMPT",
+  PASTE_ATTEMPT: "PASTE_ATTEMPT",
+  SCREEN_CAPTURE: "SCREEN_CAPTURE",
+  VOICE_DETECTED: "VOICE_DETECTED",
+  LOOKING_AWAY: "LOOKING_AWAY",
+};
+
 const SEVERITY = {
   no_face: "medium",
   multiple_faces: "high",
+  MULTIPLE_PERSONS: "high",
+  ELECTRONIC_DEVICE: "high",
+  CANDIDATE_NOT_VISIBLE: "medium",
+  CAMERA_DISABLED: "high",
   phone_detected: "high",
   voice_detected: "high",
   tab_switch: "medium",
+  TAB_SWITCH: "medium",
   window_blur: "medium",
+  WINDOW_BLUR: "medium",
   fullscreen_exit: "high",
+  FULLSCREEN_EXIT: "high",
   right_click: "medium",
+  RIGHT_CLICK: "medium",
   dev_tools: "high",
+  DEV_TOOLS: "high",
   copy_attempt: "medium",
+  COPY_ATTEMPT: "medium",
   paste_attempt: "medium",
+  PASTE_ATTEMPT: "medium",
   screen_capture: "high",
+  SCREEN_CAPTURE: "high",
   camera_lost: "high",
+  CAMERA_DISABLED: "high",
   mic_lost: "high",
   looking_away: "low",
+  LOOKING_AWAY: "low",
 };
 
 function runPython(args) {
@@ -96,6 +128,12 @@ router.post("/report", authenticate, async (req, res) => {
   try {
     const { attemptId, type, severity, description, cameraFrame, audioSample, metadata, analysis } = req.body;
     if (!attemptId || !type) return res.status(400).json({ error: "attemptId and type are required" });
+
+    const normalizedType = String(type).toUpperCase().replace(/ /g, "_");
+    const validTypes = Object.values(VIOLATION_TYPES);
+    if (!validTypes.includes(normalizedType)) {
+      console.warn(`Unknown violation type: ${type}, treating as generic violation`);
+    }
     const result = await col("violations").insertOne({
       attemptId: String(attemptId),
       type,

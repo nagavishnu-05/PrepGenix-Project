@@ -162,23 +162,21 @@ export default function useProctoring({ attemptId, config, previewRef, onAutoSub
         runningRef.current = true;
         try {
             const image = captureFrame();
-            const audio = await captureAudio();
-            if (!image && !audio) return;
-            const r = await api.proctoring.analyze({ attemptId, image, audio });
+            if (!image) return;
+
+            const proctoringApiBase = import.meta.env.VITE_PROCTORING_API || "http://localhost:5050";
+            const r = await fetch(`${proctoringApiBase}/analyze`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ image, attemptId }),
+            }).then((res) => res.json());
+
             if (r.autoSubmitted) {
                 autoSubmittedRef.current = true;
                 stop();
-                onAutoSubmit?.(r.result, r.cheatingReason);
-                return;
-            }
-            if (r.violations && r.violations.length > 0) {
-                const first = r.violations[0];
-                autoSubmittedRef.current = true;
-                stop();
-                const reason = VIOLATION_REASON_MAP[first.type] || first.type.toUpperCase();
-                onAutoSubmit?.("cheated", reason);
+                onAutoSubmit?.("cheated", r.cheatingReason);
                 try {
-                    api.proctoring.report({ attemptId, type: first.type, severity: "high", description: first.description }).catch(() => {});
+                    api.proctoring.report({ attemptId, type: r.cheatingReason, severity: "high", description: `${r.cheatingReason} confirmed by temporal analysis` }).catch(() => {});
                 } catch {}
             }
         } catch {
@@ -186,7 +184,7 @@ export default function useProctoring({ attemptId, config, previewRef, onAutoSub
         } finally {
             runningRef.current = false;
         }
-    }, [attemptId, captureFrame, captureAudio, onAutoSubmit, stop]);
+    }, [attemptId, captureFrame, onAutoSubmit, stop]);
 
     const hasBeenFullscreenRef = useRef(false);
     const startGraceUntilRef = useRef(0);
