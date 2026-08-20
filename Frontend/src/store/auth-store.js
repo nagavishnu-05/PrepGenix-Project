@@ -1,6 +1,12 @@
 import { create } from "zustand";
 import { api } from "@/lib/api";
 
+let _loginGraceUntil = 0;
+
+export function isInLoginGrace() {
+    return Date.now() < _loginGraceUntil;
+}
+
 export const useAuthStore = create((set, get) => ({
     user: null,
     token: null,
@@ -12,6 +18,7 @@ export const useAuthStore = create((set, get) => ({
         try {
             const { token, user } = await api.auth.login(role, username, password);
             localStorage.setItem("auth-token", token);
+            _loginGraceUntil = Date.now() + 3000;
             set({ user, token, isAuthenticated: true, isLoading: false });
             return user;
         } catch (err) {

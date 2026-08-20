@@ -13,26 +13,43 @@ function dbName(key) {
 }
 
 async function connectDB() {
-  client = new MongoClient(
-    process.env.DATABASE_URL || "mongodb://localhost:27017/codeassess",
-    { serverSelectionTimeoutMS: 8000 }
-  );
+  const url = process.env.DATABASE_URL || "mongodb://localhost:27017/codeassess";
+  const opts = {
+    serverSelectionTimeoutMS: 30000,
+    connectTimeoutMS: 15000,
+    socketTimeoutMS: 30000,
+    readPreference: "primary",
+    retryWrites: true,
+    w: "majority",
+  };
+  client = new MongoClient(url, opts);
   await client.connect();
   databases.main = client.db(dbName("main"));
   databases.perf = client.db(dbName("perf"));
 
-  // Establish a separate connection client specifically for resumes storage
+  // Resume client: connect lazily so it doesn't block server startup
   const resumeUrl = process.env.RESUME_DATABASE_URL || process.env.DATABASE_URL || "mongodb://localhost:27017/codeassess_resumes";
-  resumeClient = new MongoClient(resumeUrl, { serverSelectionTimeoutMS: 8000 });
-  await resumeClient.connect();
-  databases.resume = resumeClient.db(dbName("resume"));
+  const resumeOpts = {
+    serverSelectionTimeoutMS: 30000,
+    connectTimeoutMS: 15000,
+    socketTimeoutMS: 30000,
+    readPreference: "primary",
+    retryWrites: true,
+    w: "majority",
+  };
+  resumeClient = new MongoClient(resumeUrl, resumeOpts);
+  resumeClient.connect().then(() => {
+    databases.resume = resumeClient.db(dbName("resume"));
+  }).catch((err) => {
+    console.error("Resume DB connection failed (non-blocking):", err.message);
+  });
 
   return databases.main;
 }
 
 function getDb(key = "main") {
   const db = databases[key] || databases.main;
-  if (!db) throw new Error("Database not connected");
+  if (!db) throw new Error(`Database "${key}" not connected yet`);
   return db;
 }
 

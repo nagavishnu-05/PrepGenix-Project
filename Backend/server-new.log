@@ -1,0 +1,7 @@
+Connected to database
+Server running on port 8080
+POST /api/auth/login
+POST /api/auth/login — role=student, username=2023001
+  Password verification started
+  JWT generation started
+  → 200: Login successful

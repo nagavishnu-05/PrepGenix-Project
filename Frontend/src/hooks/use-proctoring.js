@@ -72,6 +72,12 @@ const VIOLATION_REASON_MAP = {
     no_face: "NO_FACE",
     voice_detected: "VOICE_DETECTED",
     looking_away: "LOOKING_AWAY",
+    IMPOSTER_DETECTED: "IMPOSTER_DETECTED",
+    ELECTRONIC_DEVICE: "ELECTRONIC_DEVICE",
+    MULTIPLE_PERSONS: "MULTIPLE_PERSONS",
+    CANDIDATE_NOT_VISIBLE: "CANDIDATE_NOT_VISIBLE",
+    f5_refresh: "F5_REFRESH",
+    escape_pressed: "ESCAPE_PRESSED",
 };
 
 export default function useProctoring({ attemptId, config, previewRef, onAutoSubmit }) {
@@ -79,6 +85,7 @@ export default function useProctoring({ attemptId, config, previewRef, onAutoSub
     const [cameraActive, setCameraActive] = useState(false);
     const [micActive, setMicActive] = useState(false);
     const [fullscreenActive, setFullscreenActive] = useState(false);
+    const [faceMonitor, setFaceMonitor] = useState({ faceRegistered: false, match: null, similarity: null, faceCount: 0, quality: "unknown" });
 
     const streamRef = useRef(null);
     const canvasRef = useRef(null);
@@ -88,7 +95,8 @@ export default function useProctoring({ attemptId, config, previewRef, onAutoSub
     const runningRef = useRef(false);
     const autoSubmittedRef = useRef(false);
 
-    const intervalMs = (config?.snapshotIntervalSec ?? 20) * 1000;
+    const monitoringIntervalMs = parseInt(import.meta.env.VITE_FACE_CHECK_INTERVAL_MS || "2000", 10);
+    const intervalMs = monitoringIntervalMs;
 
     const stop = useCallback(() => {
         activeRef.current = false;
@@ -165,18 +173,40 @@ export default function useProctoring({ attemptId, config, previewRef, onAutoSub
             if (!image) return;
 
             const proctoringApiBase = import.meta.env.VITE_PROCTORING_API || "http://localhost:5050";
-            const r = await fetch(`${proctoringApiBase}/analyze`, {
+            const r = await fetch(`${proctoringApiBase}/monitor`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ image, attemptId }),
+                body: JSON.stringify({ image, attemptId, cameraActive: cameraActive }),
             }).then((res) => res.json());
 
-            if (r.autoSubmitted) {
+            setFaceMonitor({
+                faceRegistered: r.face_registered || false,
+                match: r.match,
+                similarity: r.similarity,
+                faceCount: r.face_count || 0,
+                quality: r.quality || "unknown",
+            });
+
+            if (r.violations && r.violations.length > 0) {
+                for (const v of r.violations) {
+                    try {
+                        api.proctoring.report({
+                            attemptId,
+                            type: v.type,
+                            severity: v.type === "IDENTITY_MISMATCH" || v.type === "MULTIPLE_FACES" ? "high" : "medium",
+                            description: v.description || v.type,
+                        }).catch(() => {});
+                    } catch {}
+                }
+            }
+
+            if (r.should_auto_submit || r.autoSubmitted) {
                 autoSubmittedRef.current = true;
+                const reason = r.violations?.[0]?.type || r.cheatingReason || "PROCTORING_VIOLATION";
                 stop();
-                onAutoSubmit?.("cheated", r.cheatingReason);
+                onAutoSubmit?.("cheated", reason);
                 try {
-                    api.proctoring.report({ attemptId, type: r.cheatingReason, severity: "high", description: `${r.cheatingReason} confirmed by temporal analysis` }).catch(() => {});
+                    api.proctoring.report({ attemptId, type: reason, severity: "high", description: `${reason} confirmed by temporal analysis` }).catch(() => {});
                 } catch {}
             }
         } catch {
@@ -184,7 +214,7 @@ export default function useProctoring({ attemptId, config, previewRef, onAutoSub
         } finally {
             runningRef.current = false;
         }
-    }, [attemptId, captureFrame, onAutoSubmit, stop]);
+    }, [attemptId, captureFrame, onAutoSubmit, stop, cameraActive]);
 
     const hasBeenFullscreenRef = useRef(false);
     const startGraceUntilRef = useRef(0);
@@ -302,6 +332,16 @@ export default function useProctoring({ attemptId, config, previewRef, onAutoSub
             const key = e.key.toLowerCase();
             const ctrl = e.ctrlKey || e.metaKey;
             const shift = e.shiftKey;
+            if (key === "f5" || (ctrl && key === "r")) {
+                e.preventDefault();
+                submitAndStop("f5_refresh");
+                return;
+            }
+            if (key === "escape") {
+                e.preventDefault();
+                submitAndStop("escape_pressed");
+                return;
+            }
             if (key === "f12" || (ctrl && shift && ["i", "j", "c"].includes(key))) {
                 e.preventDefault();
                 submitAndStop("dev_tools");
@@ -322,21 +362,67 @@ export default function useProctoring({ attemptId, config, previewRef, onAutoSub
                 submitAndStop("screen_capture");
             }
         };
+        const onBeforeUnload = (e) => {
+            e.preventDefault();
+            e.returnValue = "";
+        };
         document.addEventListener("visibilitychange", onVis);
         window.addEventListener("blur", onBlur);
         document.addEventListener("fullscreenchange", onFs);
         document.addEventListener("contextmenu", onContextMenu);
         document.addEventListener("keydown", onKeyDown);
+        window.addEventListener("beforeunload", onBeforeUnload);
         return () => {
             document.removeEventListener("visibilitychange", onVis);
             window.removeEventListener("blur", onBlur);
             document.removeEventListener("fullscreenchange", onFs);
             document.removeEventListener("contextmenu", onContextMenu);
             document.removeEventListener("keydown", onKeyDown);
+            window.removeEventListener("beforeunload", onBeforeUnload);
         };
     }, [status, submitAndStop]);
 
+    const reattachStream = useCallback(() => {
+        const stream = streamRef.current;
+        const video = previewRef?.current;
+        if (stream && video && video.srcObject !== stream) {
+            video.srcObject = stream;
+            video.play().catch(() => {});
+        }
+    }, [previewRef]);
+
+    const captureFrameForEnrollment = useCallback(() => {
+        const video = previewRef?.current;
+        if (!video || !video.videoWidth) return undefined;
+        const canvas = canvasRef.current || (canvasRef.current = document.createElement("canvas"));
+        canvas.width = 320;
+        const h = video.videoHeight && video.videoWidth ? Math.round((video.videoHeight / video.videoWidth) * 320) : 240;
+        canvas.height = h;
+        canvas.getContext("2d").drawImage(video, 0, 0, 320, h);
+        return canvas.toDataURL("image/jpeg", 0.7).split(",")[1];
+    }, [previewRef]);
+
+    const enrollFrame = useCallback(async (imageBase64) => {
+        const proctoringApiBase = import.meta.env.VITE_PROCTORING_API || "http://localhost:5050";
+        const res = await fetch(`${proctoringApiBase}/enroll-frame`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ image: imageBase64, attemptId }),
+        });
+        return res.json();
+    }, [attemptId]);
+
+    const enrollStatus = useCallback(async () => {
+        const proctoringApiBase = import.meta.env.VITE_PROCTORING_API || "http://localhost:5050";
+        const res = await fetch(`${proctoringApiBase}/enroll-status`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ attemptId }),
+        });
+        return res.json();
+    }, [attemptId]);
+
     useEffect(() => () => stop(), [stop]);
 
-    return { status, cameraActive, micActive, fullscreenActive, enable, start, stop };
+    return { status, cameraActive, micActive, fullscreenActive, faceMonitor, enable, start, stop, reattachStream, streamRef, captureFrameForEnrollment, enrollFrame, enrollStatus };
 }

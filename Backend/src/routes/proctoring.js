@@ -18,6 +18,7 @@ const VIOLATION_TYPES = {
   ELECTRONIC_DEVICE: "ELECTRONIC_DEVICE",
   CANDIDATE_NOT_VISIBLE: "CANDIDATE_NOT_VISIBLE",
   CAMERA_DISABLED: "CAMERA_DISABLED",
+  CAMERA_ERROR: "CAMERA_ERROR",
   PROCTORING_FAILURE: "PROCTORING_FAILURE",
   FULLSCREEN_EXIT: "FULLSCREEN_EXIT",
   TAB_SWITCH: "TAB_SWITCH",
@@ -29,6 +30,15 @@ const VIOLATION_TYPES = {
   SCREEN_CAPTURE: "SCREEN_CAPTURE",
   VOICE_DETECTED: "VOICE_DETECTED",
   LOOKING_AWAY: "LOOKING_AWAY",
+  IMPOSTER_DETECTED: "IMPOSTER_DETECTED",
+  IDENTITY_MISMATCH: "IDENTITY_MISMATCH",
+  NO_FACE: "NO_FACE",
+  MULTIPLE_FACES: "MULTIPLE_FACES",
+  LOW_FACE_CONFIDENCE: "LOW_FACE_CONFIDENCE",
+  CAMERA_LOST: "CAMERA_LOST",
+  MIC_LOST: "MIC_LOST",
+  F5_REFRESH: "F5_REFRESH",
+  ESCAPE_PRESSED: "ESCAPE_PRESSED",
 };
 
 const SEVERITY = {
@@ -57,10 +67,20 @@ const SEVERITY = {
   screen_capture: "high",
   SCREEN_CAPTURE: "high",
   camera_lost: "high",
-  CAMERA_DISABLED: "high",
+  CAMERA_LOST: "high",
   mic_lost: "high",
+  MIC_LOST: "high",
   looking_away: "low",
   LOOKING_AWAY: "low",
+  IMPOSTER_DETECTED: "high",
+  imposter_detected: "high",
+  IDENTITY_MISMATCH: "high",
+  NO_FACE: "medium",
+  MULTIPLE_FACES: "high",
+  CAMERA_ERROR: "high",
+  LOW_FACE_CONFIDENCE: "low",
+  F5_REFRESH: "high",
+  ESCAPE_PRESSED: "high",
 };
 
 function runPython(args) {
@@ -91,37 +111,59 @@ async function withAttempt(attemptId, fn) {
 async function enforceLimits(attemptId, config, triggerType = null) {
   const count = await col("violations").countDocuments({ attemptId });
   const attempt = await col("attempts").findOne({ _id: id(attemptId) });
-
-  if (attempt && attempt.status === "in_progress") {
-    await col("attempts").updateOne(
-      { _id: id(attemptId) },
-      {
-        $set: {
-          violations: count,
-          reviewRequired: true,
-          status: "flagged",
-          lastSeenAt: new Date(),
-          updatedAt: new Date(),
-        },
-      }
-    );
+  if (!attempt || (attempt.status !== "in_progress" && attempt.status !== "flagged")) {
+    return { autoSubmitted: false };
   }
 
-  const fresh = await col("attempts").findOne({ _id: id(attemptId) });
-  if (fresh && (fresh.status === "in_progress" || fresh.status === "flagged")) {
-    const testsModule = require("./tests");
-    const now = new Date();
+  const maxViolations = config?.maxViolations ?? 1;
+  const autoSubmit = config?.autoSubmit !== false;
 
+  if (count >= maxViolations && autoSubmit) {
     const reasonCode = triggerType ? triggerType.toUpperCase().replace(/ /g, "_") : "PROCTORING_VIOLATION";
+    const now = new Date();
     await col("attempts").updateOne(
-      { _id: fresh._id },
-      { $set: { cheatingReason: reasonCode, cheatingTimestamp: now, autoSubmitted: true, status: "cheated", result: "cheated" } }
+      { _id: attempt._id },
+      { $set: { violations: count, cheatingReason: reasonCode, cheatingTimestamp: now, autoSubmitted: true, status: "cheated", result: "cheated", updatedAt: now } }
     );
-    await testsModule.finalizeAttempt({ ...fresh, status: "cheated", result: "cheated" });
+    const testsModule = require("./tests");
+    await testsModule.finalizeAttempt({ ...attempt, status: "cheated", result: "cheated" });
     return { autoSubmitted: true, result: "cheated", cheatingReason: reasonCode };
+  }
+
+  if (count >= maxViolations) {
+    await col("attempts").updateOne(
+      { _id: attempt._id },
+      { $set: { violations: count, reviewRequired: true, status: "flagged", lastSeenAt: new Date(), updatedAt: new Date() } }
+    );
+  } else {
+    await col("attempts").updateOne(
+      { _id: attempt._id },
+      { $set: { violations: count, lastSeenAt: new Date(), updatedAt: new Date() } }
+    );
   }
   return { autoSubmitted: false };
 }
+
+// POST /api/proctoring/attempt/:attemptId/register-face  (student) -> store reference face image on attempt
+router.post("/attempt/:attemptId/register-face", authenticate, async (req, res) => {
+  try {
+    const { image } = req.body;
+    const attemptId = req.params.attemptId;
+    if (!image) return res.status(400).json({ error: "image (base64) is required" });
+
+    const attempt = await col("attempts").findOne({ _id: id(attemptId) });
+    if (!attempt) return res.status(404).json({ error: "Attempt not found" });
+
+    await col("attempts").updateOne(
+      { _id: attempt._id },
+      { $set: { referenceFaceImage: image, faceRegistered: true, updatedAt: new Date() } }
+    );
+
+    res.json({ success: true, message: "Reference face stored on attempt" });
+  } catch (err) {
+    res.status(500).json({ error: `Failed to store reference face: ${err.message}` });
+  }
+});
 
 // POST /api/proctoring/report  (student during attempt, or staff marking a violation)
 router.post("/report", authenticate, async (req, res) => {

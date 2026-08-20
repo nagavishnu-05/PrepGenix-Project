@@ -136,6 +136,8 @@ const models = {
     lastSeenAt: "Date | null",
     latestAnalysis: "object | null",
     latestFrame: "string | null",
+    referenceFaceImage: "string | null",
+    faceRegistered: "boolean",
     proctoring: "object",
     createdAt: "Date",
     updatedAt: "Date"
@@ -144,7 +146,7 @@ const models = {
   violations: {
     _id: "ObjectId",
     attemptId: "string",
-    type: "no_face | multiple_faces | phone_detected | voice_detected | tab_switch | window_blur | fullscreen_exit | right_click | dev_tools | copy_attempt | paste_attempt | screen_capture | camera_lost | mic_lost | looking_away",
+    type: "no_face | multiple_faces | phone_detected | voice_detected | tab_switch | window_blur | fullscreen_exit | right_click | dev_tools | copy_attempt | paste_attempt | screen_capture | camera_lost | mic_lost | looking_away | imposter_detected | electronic_device | multiple_persons | candidate_not_visible",
     severity: "low | medium | high",
     description: "string",
     confidence: "number | null",

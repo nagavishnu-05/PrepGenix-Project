@@ -1,2 +1,29 @@
 Connected to database
 Server running on port 8080
+POST /api/auth/login
+POST /api/auth/login — role=student, username=2023001
+  Password verification started
+  JWT generation started
+  → 200: Login successful
+POST /api/auth/login
+POST /api/auth/login — role=student, username=2023001
+  Password verification started
+  JWT generation started
+  → 200: Login successful
+POST /api/auth/login
+POST /api/auth/login — role=student, username=2023003
+  Password verification started
+  JWT generation started
+  → 200: Login successful
+POST /api/tests/6a84af6cd1d08ad8ec6f8ab4/start
+POST /api/tests/6a84af6cd1d08ad8ec6f8ab4/start
+POST /api/tests/6a846f55fd63257fd4a64f80/start
+POST /api/tests/6a846f55fd63257fd4a64f80/start
+POST /api/tests/6a84b020d1d08ad8ec6f8aba/start
+POST /api/tests/6a84b020d1d08ad8ec6f8aba/start
+POST /api/auth/login
+POST /api/auth/login — role=staff, username=staff@gmail.com
+  Password verification started
+  JWT generation started
+  → 200: Login successful
+POST /api/tests/6a84af6cd1d08ad8ec6f8ab4/assign

@@ -376,10 +376,10 @@ export default function StaffTests() {
                                     <div className="grid grid-cols-2 gap-3">
                                         <div className="space-y-1">
                                             <Label className="text-xs text-slate-500 dark:text-zinc-500">Batch</Label>
-                                            <Select value={f.assignedBatch} onValueChange={(v) => set({ assignedBatch: v })}>
+                                            <Select value={f.assignedBatch || "__all__"} onValueChange={(v) => set({ assignedBatch: v === "__all__" ? "" : v })}>
                                                 <SelectTrigger><SelectValue placeholder="Any batch" /></SelectTrigger>
                                                 <SelectContent>
-                                                    <SelectItem value="">Any batch</SelectItem>
+                                                    <SelectItem value="__all__">Any batch</SelectItem>
                                                     {batches.map((b) => <SelectItem key={b} value={b}>{b}</SelectItem>)}
                                                 </SelectContent>
                                             </Select>
@@ -445,17 +445,17 @@ export default function StaffTests() {
                             <>
                                 <div className="space-y-1.5">
                                     <Label className="text-xs text-zinc-400">Batch</Label>
-                                    <Select value={assignF.batch} onValueChange={(v) => setAssignF({ ...assignF, batch: v })}>
+                                    <Select value={assignF.batch || "__all__"} onValueChange={(v) => setAssignF({ ...assignF, batch: v === "__all__" ? "" : v })}>
                                         <SelectTrigger><SelectValue placeholder="Any batch" /></SelectTrigger>
                                         <SelectContent>
-                                            <SelectItem value="">Any batch</SelectItem>
+                                            <SelectItem value="__all__">Any batch</SelectItem>
                                             {batches.map((b) => <SelectItem key={b} value={b}>{b}</SelectItem>)}
                                         </SelectContent>
                                     </Select>
                                 </div>
                                 <div className="space-y-1.5">
-                                    <Label className="text-xs text-zinc-400">Reg numbers (comma separated)</Label>
-                                    <Input value={assignF.regNos} onChange={(e) => setAssignF({ ...assignF, regNos: e.target.value })} placeholder="23CS001, 23CS002" />
+                                    <Label className="text-xs text-zinc-400">Reg no. or roll no. (comma separated)</Label>
+                                    <Input value={assignF.regNos} onChange={(e) => setAssignF({ ...assignF, regNos: e.target.value })} placeholder="2023001, 23CS002" />
                                 </div>
                             </>
                         )}

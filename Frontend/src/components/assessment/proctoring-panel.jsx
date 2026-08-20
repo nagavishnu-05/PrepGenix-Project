@@ -3,8 +3,8 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useCamera } from "@/hooks/use-camera";
-import { Minimize2, Maximize2, Video, VideoOff, RefreshCw, } from "lucide-react";
-export function ProctoringPanel() {
+import { Minimize2, Maximize2, Video, VideoOff, RefreshCw, ScanFace, ShieldCheck, ShieldAlert } from "lucide-react";
+export function ProctoringPanel({ faceMonitor }) {
     const [isMinimized, setIsMinimized] = useState(false);
     const { videoRef, isActive, startCamera, stopCamera, error } = useCamera();
     useEffect(() => {
@@ -15,7 +15,8 @@ export function ProctoringPanel() {
             clearTimeout(timer);
             stopCamera();
         };
-    }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    }, []);
+    const faceStatus = faceMonitor?.match === true ? "verified" : faceMonitor?.match === false ? "mismatch" : faceMonitor?.faceCount > 0 ? "detected" : "none";
     return (<motion.div initial={{ opacity: 0, scale: 0.8, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} className="fixed bottom-4 right-4 z-50">
       <Card className="border-zinc-800 bg-zinc-900/95 backdrop-blur-sm shadow-2xl overflow-hidden">
         <div className="flex items-center justify-between border-b border-zinc-800 px-3 py-2">
@@ -44,9 +45,31 @@ export function ProctoringPanel() {
                   </div>)}
               </div>
               <div className="flex items-center justify-between px-3 py-2 border-t border-zinc-800">
+                <div className="flex items-center gap-2 text-xs">
+                  {faceStatus === "verified" && (
+                    <span className="flex items-center gap-1 text-emerald-400">
+                      <ShieldCheck className="h-3 w-3"/> Verified
+                    </span>
+                  )}
+                  {faceStatus === "mismatch" && (
+                    <span className="flex items-center gap-1 text-red-400">
+                      <ShieldAlert className="h-3 w-3"/> Mismatch
+                    </span>
+                  )}
+                  {faceStatus === "detected" && (
+                    <span className="flex items-center gap-1 text-zinc-400">
+                      <ScanFace className="h-3 w-3"/> Face OK
+                    </span>
+                  )}
+                  {faceStatus === "none" && (
+                    <span className="flex items-center gap-1 text-amber-400">
+                      <ScanFace className="h-3 w-3"/> No face
+                    </span>
+                  )}
+                </div>
                 {error ? (<Button variant="outline" size="sm" className="text-xs h-7" onClick={() => startCamera()}>
                     <RefreshCw className="h-3 w-3 mr-1"/>
-                    Retry Camera
+                    Retry
                   </Button>) : (<Button variant="outline" size="sm" className="text-xs h-7" onClick={() => {
                     if (isActive)
                         stopCamera();

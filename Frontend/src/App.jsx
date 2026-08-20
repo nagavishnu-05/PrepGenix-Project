@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { Routes, Route, Navigate, useNavigate } from "react-router-dom";
 import Home from "@/pages/Home";
 import { PortalLayout } from "@/components/layout/portal-layout";
-import { useAuthStore } from "@/store/auth-store";
+import { useAuthStore, isInLoginGrace } from "@/store/auth-store";
 
 import StudentDashboard from "@/pages/student/StudentDashboard";
 import StudentTests from "@/pages/student/StudentTests";
@@ -45,7 +45,9 @@ export function App() {
 
     useEffect(() => {
         loadUser();
-        const onUnauthorized = () => logout();
+        const onUnauthorized = () => {
+            if (!isInLoginGrace()) logout();
+        };
         window.addEventListener("auth-unauthorized", onUnauthorized);
         return () => window.removeEventListener("auth-unauthorized", onUnauthorized);
     }, [loadUser, logout]);

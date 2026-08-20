@@ -1,3 +1,5 @@
+import { isInLoginGrace } from "@/store/auth-store";
+
 const rawApiBase = import.meta.env.VITE_API_URL || "/api";
 const API_BASE = rawApiBase.replace(/\/+$/, "").replace(/\/api$/, "") + "/api";
 
@@ -11,8 +13,10 @@ async function request(endpoint, options = {}) {
     if (!res.ok) {
         const err = await res.json().catch(() => ({ error: "Request failed" }));
         if (res.status === 401 && !endpoint.startsWith("/auth/login")) {
-            localStorage.removeItem("auth-token");
-            window.dispatchEvent(new Event("auth-unauthorized"));
+            if (!isInLoginGrace()) {
+                localStorage.removeItem("auth-token");
+                window.dispatchEvent(new Event("auth-unauthorized"));
+            }
         }
         throw new Error(err.error || `HTTP ${res.status}`);
     }
@@ -106,6 +110,7 @@ export const api = {
     proctoring: {
         report: (data) => request("/proctoring/report", { method: "POST", body: data }),
         analyze: (data) => request("/proctoring/analyze", { method: "POST", body: data }),
+        registerFace: (attemptId, image) => request(`/proctoring/attempt/${attemptId}/register-face`, { method: "POST", body: { image } }),
         attempt: (attemptId) => request(`/proctoring/attempt/${attemptId}`),
         resetAttempt: (attemptId) => request(`/proctoring/attempt/${attemptId}/reset`, { method: "POST", body: {} }),
         test: (testId) => request(`/proctoring/test/${testId}`),

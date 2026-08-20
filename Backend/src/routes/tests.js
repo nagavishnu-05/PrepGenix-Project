@@ -49,7 +49,9 @@ function isAssigned(test, student) {
   if (!student) return false;
   if (test.assignedToAll) return true;
   if (test.assignedBatch && student.batch && test.assignedBatch === student.batch) return true;
-  return Array.isArray(test.assignedStudents) && test.assignedStudents.includes(student.regNo);
+  if (!Array.isArray(test.assignedStudents)) return false;
+  const identifiers = [student.regNo, student.rollNo].filter(Boolean).map(String);
+  return test.assignedStudents.some((assignedStudent) => identifiers.includes(String(assignedStudent)));
 }
 
 function sampleQuestions(list, count) {
@@ -331,15 +333,40 @@ router.post("/:id/assign", authenticate, async (req, res) => {
   try {
     if (req.user.role !== "staff") return res.status(403).json({ error: "Staff Coordinator only" });
     const { regNos, batch, all } = req.body;
+    const testId = req.params.id;
+    const test = await col("tests").findOne({ _id: id(testId) });
+    if (!test) return res.status(404).json({ error: "Test not found" });
+
+    console.log("[assign]", {
+      staffId: req.user.userId,
+      role: req.user.role,
+      testId,
+      testTitle: test.title,
+      all,
+      batch: batch || null,
+      regNos: regNos || [],
+    });
+
     const set = { updatedAt: new Date() };
-    if (regNos !== undefined) set.assignedStudents = regNos.map(String);
+    if (regNos !== undefined) {
+      const values = Array.isArray(regNos) ? regNos : [regNos];
+      const validRegNos = values.map(String).map((v) => v.trim()).filter(Boolean);
+      for (const regNo of validRegNos) {
+        const student = await col("students").findOne({ regNo });
+        if (!student) return res.status(404).json({ error: `Student with register number ${regNo} not found` });
+      }
+      set.assignedStudents = validRegNos;
+    }
     if (batch !== undefined) set.assignedBatch = batch || null;
     if (all !== undefined) set.assignedToAll = !!all;
-    const test = await col("tests").findOneAndUpdate({ _id: id(req.params.id) }, { $set: set }, { returnDocument: "after" });
-    if (!test) return res.status(404).json({ error: "Test not found" });
-    res.json(toId(test));
-  } catch {
-    res.status(500).json({ error: "Failed to assign test" });
+    const updated = await col("tests").updateOne({ _id: id(testId) }, { $set: set });
+    if (!updated.matchedCount) return res.status(404).json({ error: "Test not found" });
+    const fresh = await col("tests").findOne({ _id: id(testId) });
+    console.log("[assign] OK:", { testId, assignedToAll: fresh.assignedToAll, assignedBatch: fresh.assignedBatch, assignedStudents: fresh.assignedStudents });
+    res.json(toId(fresh));
+  } catch (error) {
+    console.error("[assign] ERROR:", error.message, error.stack);
+    res.status(500).json({ error: `Failed to assign test: ${error.message}` });
   }
 });
 
