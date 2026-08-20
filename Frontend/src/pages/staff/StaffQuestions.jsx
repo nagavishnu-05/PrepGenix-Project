@@ -7,6 +7,7 @@ import { FileInput } from "@/components/ui/file-input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { Checkbox } from "@/components/ui/checkbox";
 import { PageHeader, EmptyState, DifficultyBadge } from "@/components/portal/primitives";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -28,6 +29,7 @@ export default function StaffQuestions() {
     const [aimlFiles, setAimlFiles] = useState([]);
     const [busy, setBusy] = useState(false);
     const [msg, setMsg] = useState("");
+    const [selectedIds, setSelectedIds] = useState([]);
 
     // Grouping state
     const [expandedGroups, setExpandedGroups] = useState({ pool: true });
@@ -75,7 +77,22 @@ export default function StaffQuestions() {
     const remove = async (q) => {
         if (!confirm(`Delete "${q.title}"?`)) return;
         await api.questions.remove(q.id).catch((e) => alert(e.message));
+        setSelectedIds((ids) => ids.filter((id) => id !== q.id));
         load();
+    };
+
+    const removeSelected = async () => {
+        if (!selectedIds.length || !confirm(`Delete ${selectedIds.length} selected question${selectedIds.length === 1 ? "" : "s"}?`)) return;
+        setBusy(true);
+        try {
+            await Promise.all(selectedIds.map((id) => api.questions.remove(id)));
+            setSelectedIds([]);
+            load();
+        } catch (e) {
+            alert(e.message);
+        } finally {
+            setBusy(false);
+        }
     };
 
     const doImport = async () => {
@@ -147,6 +164,7 @@ export default function StaffQuestions() {
                                 <SelectItem value="hard">Hard</SelectItem>
                             </SelectContent>
                         </Select>
+                        {selectedIds.length > 0 && <Button variant="destructive" onClick={removeSelected} disabled={busy}><Trash2 className="h-4 w-4" /> Delete selected ({selectedIds.length})</Button>}
                     </div>
                 </CardHeader>
                 <CardContent className="space-y-6">
@@ -220,6 +238,7 @@ export default function StaffQuestions() {
                                                 <Table>
                                                     <TableHeader>
                                                         <TableRow>
+                                                            <TableHead className="w-10"><Checkbox checked={g.questions.length > 0 && g.questions.every((q) => selectedIds.includes(q.id))} onCheckedChange={(checked) => setSelectedIds((ids) => checked ? [...new Set([...ids, ...g.questions.map((q) => q.id)])] : ids.filter((id) => !g.questions.some((q) => q.id === id)))} aria-label={`Select all questions in ${g.name}`} /></TableHead>
                                                             <TableHead>Question</TableHead>
                                                             <TableHead>Type</TableHead>
                                                             <TableHead>Format</TableHead>
@@ -232,6 +251,7 @@ export default function StaffQuestions() {
                                                     <TableBody>
                                                         {g.questions.map((q) => (
                                                             <TableRow key={q.id} className="hover:bg-slate-50/40 dark:hover:bg-zinc-800/10 transition-colors">
+                                                                <TableCell><Checkbox checked={selectedIds.includes(q.id)} onCheckedChange={(checked) => setSelectedIds((ids) => checked ? [...new Set([...ids, q.id])] : ids.filter((id) => id !== q.id))} aria-label={`Select ${q.title}`} /></TableCell>
                                                                 <TableCell>
                                                                     <p className="font-semibold text-slate-800 dark:text-zinc-200">{q.title}</p>
                                                                     <p className="max-w-xs truncate text-xs text-slate-555 dark:text-zinc-500">{q.description}</p>
@@ -256,7 +276,7 @@ export default function StaffQuestions() {
                                                         ))}
                                                         {g.questions.length === 0 && (
                                                             <TableRow>
-                                                                <TableCell colSpan={7} className="py-4 text-center text-slate-500">No questions match filters.</TableCell>
+                                                                <TableCell colSpan={8} className="py-4 text-center text-slate-500">No questions match filters.</TableCell>
                                                             </TableRow>
                                                         )}
                                                     </TableBody>

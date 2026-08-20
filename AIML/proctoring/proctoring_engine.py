@@ -27,7 +27,7 @@ from face_detection.utils.config import FACE_MATCH_THRESHOLD
 DEVICE_CONFIRM_FRAMES = int(os.environ.get("DEVICE_CONFIRMATION_FRAMES", "5"))
 PERSON_CONFIRM_FRAMES = int(os.environ.get("PERSON_CONFIRMATION_FRAMES", "5"))
 NO_FACE_CONFIRM_FRAMES = int(os.environ.get("NO_FACE_CONFIRMATION_FRAMES", "15"))
-IMPOSTER_CONFIRM_FRAMES = int(os.environ.get("IMPOSTER_CONFIRMATION_FRAMES", "3"))
+IMPOSTER_CONFIRM_FRAMES = int(os.environ.get("IMPOSTER_CONFIRMATION_FRAMES", "5"))
 DEVICE_CONFIDENCE = float(os.environ.get("DEVICE_CONFIDENCE_THRESHOLD", "0.60"))
 PERSON_CONFIDENCE = float(os.environ.get("PERSON_CONFIDENCE_THRESHOLD", "0.60"))
 
@@ -50,6 +50,8 @@ class ProctoringEngine:
         self._face_registered = False
         self._reference_embedding = None
         self._enrollment_embeddings = []
+        self._start_time = time.time()
+        self._grace_seconds = float(os.environ.get("VIOLATION_GRACE_SECONDS", "8"))
 
     def register_face(self, frame) -> dict:
         """Register the reference face from the initial frame."""
@@ -91,6 +93,13 @@ class ProctoringEngine:
         import numpy as np
         if frame is None or not isinstance(frame, np.ndarray):
             return self._result()
+
+        # Skip violation tracking during grace period after engine creation.
+        elapsed = time.time() - self._start_time
+        if elapsed < self._grace_seconds:
+            result = self._result()
+            result["face"] = {"faces": 0, "facePresent": False, "multipleFaces": False}
+            return result
 
         mod_det = self._modern_detector.detect(frame)
         face_result = self.face_detector.detect(frame)
@@ -242,4 +251,5 @@ class ProctoringEngine:
         self._face_registered = False
         self._reference_embedding = None
         self._enrollment_embeddings.clear()
+        self._start_time = time.time()
         self.face_verifier.reset()

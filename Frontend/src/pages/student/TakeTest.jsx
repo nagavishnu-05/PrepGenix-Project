@@ -14,7 +14,7 @@ import useProctoring from "@/hooks/use-proctoring";
 function CodeBlock({ code }) {
     if (!code) return null;
     return (
-        <pre className="mt-3 overflow-x-auto rounded-lg border border-zinc-800 bg-zinc-950 p-4 text-sm text-zinc-200">
+        <pre className="mt-3 overflow-x-auto whitespace-pre rounded-lg border border-slate-200 bg-slate-100 p-4 text-sm text-slate-800 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-200">
             <code>{code}</code>
         </pre>
     );
@@ -81,13 +81,23 @@ export default function TakeTest() {
         let cancelled = false;
         fetch(`${proctoringApiBase}/health`, { method: "GET", signal: AbortSignal.timeout(3000) })
             .then((r) => { if (r.ok && !cancelled) setFaceCaptureState("pending"); })
-            .catch(() => { if (!cancelled) setFaceCaptureState("done"); });
+            .catch(() => { if (!cancelled) setFaceCaptureError("Face verification service is unavailable. Start the AIML proctoring API before continuing."); });
         return () => { cancelled = true; };
     }, [faceCaptureState, proctoringApiBase]);
 
     useEffect(() => {
         if (faceCaptureState !== "pending" || !proctored) return;
         proctoring.reattachStream();
+    }, [faceCaptureState, proctored, proctoring]);
+
+    // Reattach camera stream when transitioning from enrollment to test view.
+    // The video element changes between screens, so the stream must be re-bound.
+    useEffect(() => {
+        if (faceCaptureState !== "done" || !proctored) return;
+        const timer = setTimeout(() => {
+            proctoring.reattachStream();
+        }, 300);
+        return () => clearTimeout(timer);
     }, [faceCaptureState, proctored, proctoring]);
 
     const captureFace = useCallback(async () => {
@@ -571,12 +581,12 @@ export default function TakeTest() {
 
     // ---------- Full-screen test shell ----------
     return (
-        <div className="fixed inset-0 z-50 flex flex-col bg-zinc-950">
+        <div className="fixed inset-0 z-50 flex flex-col overflow-hidden bg-slate-50 text-slate-900 dark:bg-zinc-950 dark:text-zinc-100">
             {/* Top bar */}
-            <div className="flex items-center gap-4 border-b border-zinc-800 bg-zinc-900/60 px-4 py-2.5">
+            <div className="flex items-center gap-4 border-b border-slate-200 bg-white px-4 py-2.5 dark:border-zinc-800 dark:bg-zinc-900/60">
                 <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-semibold text-zinc-100">{attempt.testTitle}</p>
-                    <p className="text-xs text-zinc-500">Question {questionIndex + 1}{attempt.totalQuestions ? ` of ${attempt.totalQuestions}` : ""}</p>
+                    <p className="truncate text-sm font-semibold text-slate-900 dark:text-zinc-100">{attempt.testTitle}</p>
+                    <p className="text-xs text-slate-500 dark:text-zinc-500">Question {questionIndex + 1}{attempt.totalQuestions ? ` of ${attempt.totalQuestions}` : ""}</p>
                 </div>
 
                 {proctored && (
@@ -604,7 +614,7 @@ export default function TakeTest() {
                     </div>
                 )}
 
-                <span className="flex items-center gap-1.5 rounded-lg bg-zinc-800 px-2.5 py-1 text-sm font-medium text-zinc-100">
+                <span className="flex items-center gap-1.5 rounded-lg bg-slate-200 px-2.5 py-1 text-sm font-medium text-slate-800 dark:bg-zinc-800 dark:text-zinc-100">
                     <Clock className="h-4 w-4 text-violet-400" /> {fmt(timeLeft)}
                 </span>
 
@@ -614,10 +624,10 @@ export default function TakeTest() {
             {/* Main content */}
             <div className="grid flex-1 grid-cols-1 gap-5 overflow-y-auto p-5 xl:grid-cols-3">
                 <div className="xl:col-span-2">
-                    <Card className="border-zinc-800 bg-zinc-900/40">
+                    <Card className="border-slate-200 bg-white dark:border-zinc-800 dark:bg-zinc-900/40">
                         <CardContent className="p-5">
                             <div className="mb-4 flex flex-wrap items-center gap-3">
-                                <span className="rounded-lg bg-zinc-800 px-3 py-1 text-xs font-medium text-zinc-300">Question {questionIndex + 1}</span>
+                                <span className="rounded-lg bg-slate-200 px-3 py-1 text-xs font-medium text-slate-700 dark:bg-zinc-800 dark:text-zinc-300">Question {questionIndex + 1}</span>
                                 <DifficultyBadge difficulty={question.difficulty} />
                                 <span className="rounded-lg bg-zinc-800/70 px-3 py-1 text-xs text-zinc-400">
                                     {question.type === "coding" ? `Coding • ${question.language}` : question.format === "mcq" ? "MCQ" : question.format === "fillup" ? "Fill in the blank" : "Code Snippet"}
@@ -629,8 +639,7 @@ export default function TakeTest() {
                                 )}
                             </div>
 
-                            <h2 className="text-lg font-semibold text-white">{question.title}</h2>
-                            <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-zinc-300">{question.description}</p>
+                            <p className="whitespace-pre-wrap text-sm leading-relaxed text-slate-700 dark:text-zinc-300">{question.description}</p>
 
                             {question.format === "code_snippet" && <CodeBlock code={question.codeSnippet} />}
 
@@ -729,7 +738,7 @@ export default function TakeTest() {
                                             onClick={() => setAnswer(i)}
                                             className={cn(
                                                 "flex w-full items-center gap-3 rounded-lg border px-4 py-3 text-left text-sm transition-all",
-                                                answer === i ? "border-violet-500 bg-violet-600/10 text-violet-200" : "border-zinc-800 bg-zinc-950/40 text-zinc-300 hover:border-zinc-700"
+                                                answer === i ? "border-violet-500 bg-violet-600/10 text-violet-800 dark:text-violet-200" : "border-slate-200 bg-white text-slate-700 hover:border-slate-300 dark:border-zinc-800 dark:bg-zinc-950/40 dark:text-zinc-300 dark:hover:border-zinc-700"
                                             )}
                                         >
                                             <span className={cn("flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-xs font-semibold", answer === i ? "border-violet-400 bg-violet-500 text-white" : "border-zinc-700 text-zinc-400")}>

@@ -233,6 +233,7 @@ router.post("/import-questions", authenticate, upload.single("file"), async (req
     let parsed = [];
 
     if (testType === "coding" && manualType === "mcq") {
+      // Coding MCQ: option-based questions but kept as coding type so code snippets are preserved.
       parsed = parseAptitudeMcqManual(rows).map(q => ({ ...q, type: "coding", format: "mcq" }));
     } else if (testType === "coding") {
       parsed = parseCodingManual(rows);

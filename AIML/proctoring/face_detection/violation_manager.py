@@ -40,6 +40,8 @@ class ViolationManager:
 
         self._active_events: dict[str, dict] = {}
         self._cycle_count = 0
+        self._start_time: float = time.time()
+        self._grace_seconds: float = float(os.environ.get("VIOLATION_GRACE_SECONDS", "8"))
 
     def update(self, detection_result: dict) -> dict:
         """Process one monitoring cycle.
@@ -63,6 +65,17 @@ class ViolationManager:
         """
         self._cycle_count += 1
         new_violations = []
+
+        # Skip violation tracking during grace period after enrollment.
+        elapsed = time.time() - self._start_time
+        if elapsed < self._grace_seconds:
+            return {
+                "violations": [],
+                "violation_count": self._violation_count,
+                "should_auto_submit": False,
+                "active_events": dict(self._active_events),
+                "cycle": self._cycle_count,
+            }
 
         no_face = not detection_result.get("face_present", True)
         self._no_face_frames.append(no_face)
@@ -187,3 +200,4 @@ class ViolationManager:
         self._camera_frames.clear()
         self._active_events.clear()
         self._cycle_count = 0
+        self._start_time = time.time()

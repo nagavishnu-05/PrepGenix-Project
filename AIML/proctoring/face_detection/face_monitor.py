@@ -266,11 +266,16 @@ class FaceMonitor:
                 quality = q["quality"]
 
                 if self.is_enrolled:
-                    current_emb = self.embedding.generate_embedding_from_crop(face_crop)
-                    if current_emb is not None:
-                        match_result = self.embedding.compare(self._reference_embedding, current_emb)
+                    # Skip identity verification when face quality is too poor
+                    # to avoid false positives from bad lighting/angles.
+                    if quality in ("poor", "unusable"):
+                        match_result = {"match": True, "similarity": None, "quality": quality}
                     else:
-                        match_result = {"match": None, "similarity": None}
+                        current_emb = self.embedding.generate_embedding_from_crop(face_crop)
+                        if current_emb is not None:
+                            match_result = self.embedding.compare(self._reference_embedding, current_emb)
+                        else:
+                            match_result = {"match": True, "similarity": None}
 
         detection_input = {
             "face_count": face_count,

@@ -32,6 +32,7 @@ export default function StaffTests() {
     const [batches, setBatches] = useState([]);
     const [busy, setBusy] = useState(false);
     const [selectedFile, setSelectedFile] = useState(null);
+    const [selectedIds, setSelectedIds] = useState([]);
 
     // Grouping & Analytics popup state
     const [expandedTestId, setExpandedTestId] = useState(null);
@@ -168,7 +169,22 @@ export default function StaffTests() {
     const remove = async (t) => {
         if (!confirm(`Delete test "${t.title}" and all its attempts?`)) return;
         await api.tests.remove(t.id).catch((e) => alert(e.message));
+        setSelectedIds((ids) => ids.filter((id) => id !== t.id));
         load();
+    };
+
+    const removeSelected = async () => {
+        if (!selectedIds.length || !confirm(`Delete ${selectedIds.length} selected test${selectedIds.length === 1 ? "" : "s"} and all their attempts?`)) return;
+        setBusy(true);
+        try {
+            await Promise.all(selectedIds.map((id) => api.tests.remove(id)));
+            setSelectedIds([]);
+            load();
+        } catch (e) {
+            alert(e.message);
+        } finally {
+            setBusy(false);
+        }
     };
 
     return (
@@ -177,7 +193,10 @@ export default function StaffTests() {
                 title="Tests"
                 description="Create and assign assessment tests"
                 action={
-                    <Button onClick={() => setCreateOpen(true)}><Plus className="h-4 w-4" /> Create Test</Button>
+                    <div className="flex items-center gap-2">
+                        {selectedIds.length > 0 && <Button variant="destructive" onClick={removeSelected} disabled={busy}><Trash2 className="h-4 w-4" /> Delete selected ({selectedIds.length})</Button>}
+                        <Button onClick={() => setCreateOpen(true)}><Plus className="h-4 w-4" /> Create Test</Button>
+                    </div>
                 }
             />
 
@@ -193,6 +212,7 @@ export default function StaffTests() {
                         <Table>
                             <TableHeader>
                                 <TableRow>
+                                    <TableHead className="w-10"><Checkbox checked={tests.length > 0 && tests.every((t) => selectedIds.includes(t.id))} onCheckedChange={(checked) => setSelectedIds(checked ? tests.map((t) => t.id) : [])} aria-label="Select all tests" /></TableHead>
                                     <TableHead>Test</TableHead>
                                     <TableHead>Type</TableHead>
                                     <TableHead>Mode</TableHead>
@@ -206,6 +226,7 @@ export default function StaffTests() {
                             <TableBody>
                                 {tests.map((t) => (
                                     <TableRow key={t.id} className="hover:bg-slate-50/40 dark:hover:bg-zinc-800/10 transition-colors">
+                                        <TableCell><Checkbox checked={selectedIds.includes(t.id)} onCheckedChange={(checked) => setSelectedIds((ids) => checked ? [...new Set([...ids, t.id])] : ids.filter((id) => id !== t.id))} aria-label={`Select ${t.title}`} /></TableCell>
                                         <TableCell>
                                             <div className="min-w-0">
                                                 <p onClick={() => openAnalytics(t)} className="font-semibold text-slate-805 dark:text-zinc-100 cursor-pointer hover:text-violet-650 dark:hover:text-violet-400 hover:underline">

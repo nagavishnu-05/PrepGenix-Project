@@ -153,4 +153,9 @@ if __name__ == "__main__":
     print("  POST /api/analyze-proctor")
     print("  POST /api/parse-resume")
     print("  GET  /api/available-skills")
-    app.run(debug=True)
+    app.run(
+        host=os.environ.get("AIML_HOST", "0.0.0.0"),
+        port=int(os.environ.get("AIML_PORT", "5000")),
+        debug=os.environ.get("FLASK_ENV") == "development",
+        use_reloader=False,
+    )

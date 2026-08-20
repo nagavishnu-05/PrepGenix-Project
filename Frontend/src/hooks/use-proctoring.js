@@ -167,6 +167,8 @@ export default function useProctoring({ attemptId, config, previewRef, onAutoSub
 
     const tick = useCallback(async () => {
         if (!activeRef.current || runningRef.current || autoSubmittedRef.current) return;
+        // Skip monitoring during grace period after start or stream reattachment.
+        if (Date.now() < startGraceUntilRef.current) return;
         runningRef.current = true;
         try {
             const image = captureFrame();
@@ -218,12 +220,14 @@ export default function useProctoring({ attemptId, config, previewRef, onAutoSub
 
     const hasBeenFullscreenRef = useRef(false);
     const startGraceUntilRef = useRef(0);
+    const enrollmentGraceRef = useRef(false);
 
     const start = useCallback(async () => {
         activeRef.current = true;
         autoSubmittedRef.current = false;
+        enrollmentGraceRef.current = true;
         setStatus("active");
-        startGraceUntilRef.current = Date.now() + 3000;
+        startGraceUntilRef.current = Date.now() + 5000;
         await requestFullscreen();
         const isFs = document.fullscreenElement != null;
         if (isFs) hasBeenFullscreenRef.current = true;
@@ -385,9 +389,17 @@ export default function useProctoring({ attemptId, config, previewRef, onAutoSub
     const reattachStream = useCallback(() => {
         const stream = streamRef.current;
         const video = previewRef?.current;
-        if (stream && video && video.srcObject !== stream) {
-            video.srcObject = stream;
-            video.play().catch(() => {});
+        if (stream && video) {
+            if (video.srcObject !== stream) {
+                video.srcObject = stream;
+            }
+            if (video.paused || video.ended) {
+                video.play().catch(() => {});
+            }
+            // Extend grace period after stream reattachment to allow video to stabilize.
+            if (activeRef.current) {
+                startGraceUntilRef.current = Date.now() + 5000;
+            }
         }
     }, [previewRef]);
 

@@ -155,7 +155,7 @@ function parseAptitudeQuestions(rows) {
       subject: r.subject || r.category || "quantitative",
       title: String(title).trim(),
       description: cellValue(r.description || r.questiontext || r.question || title),
-      codeSnippet: cellValue(r.codesnippet || r.snippet || r.code),
+      codeSnippet: restoreCodeFormatting(cellValuePreserveIndent(r.codesnippet || r.snippet || r.code)),
       options,
       correctOption,
       answer: answer != null ? String(answer).trim() : null,
@@ -201,8 +201,8 @@ function parseCodingQuestions(rows) {
       type: "coding",
       format: "programming",
       title: String(title).trim(),
-      description: cellValue(r.description || r.problemstatement || r.problem),
-      codeSnippet: cellValue(r.codesnippet || r.snippet || r.startercode),
+      description: restoreCodeFormatting(cellValue(r.description || r.problemstatement || r.problem)),
+      codeSnippet: restoreCodeFormatting(cellValuePreserveIndent(r.codesnippet || r.snippet || r.startercode)),
       language: (r.language || "javascript").toLowerCase(),
       difficulty: ["easy", "medium", "hard"].includes(diff) ? diff : "easy",
       points: Number(r.points || r.marks || 10) || 10,
@@ -281,6 +281,38 @@ function cellValuePreserveIndent(v) {
   if (v == null) return "";
   if (typeof v === "number") return String(v);
   return String(v).replace(/\r\n/g, "\n").trimEnd();
+}
+
+// Attempt to restore code formatting when Excel has stripped newlines.
+// Inserts line breaks before/after common code tokens so single-line code
+// like "#include<stdio.h>int main(){int a=5;switch(a){..." becomes readable.
+function restoreCodeFormatting(code) {
+  if (!code || typeof code !== "string") return code;
+  const trimmed = code.trim();
+  if (!trimmed) return trimmed;
+  // If it already has multiple newlines, assume formatting is intact.
+  if ((trimmed.match(/\n/g) || []).length >= 3) return trimmed;
+
+  let s = trimmed;
+
+  // Insert newline before preprocessor directives (but not inside strings).
+  s = s.replace(/([;}\)])\s*(#\s*(?:include|define|ifdef|ifndef|endif|pragma|if|else|elif|undef)\b)/g, "$1\n$2");
+  // Insert newline after opening braces (C/Java/JS style block starts).
+  s = s.replace(/\{(\s*)/g, " {\n");
+  // Insert newline before closing braces.
+  s = s.replace(/(\s*)\}/g, "\n}");
+  // Insert newline before standalone keywords that start statements.
+  s = s.replace(/;\s*(case\s+\w+|default|return\b|if\b|else\b|for\b|while\b|switch\b|break|continue|int\b|float\b|double\b|char\b|void\b|long\b|short\b|unsigned\b|struct\b|class\b|public\b|private\b|static\b)/g, ";\n$1");
+  // Insert newline after semicolons that are followed by variable declarations or assignments.
+  s = s.replace(/;\s*([a-zA-Z_]\w*\s*[=\[;])/g, ";\n$1");
+  // Insert newline before printf/scanf/cout/cin and similar.
+  s = s.replace(/;\s*(printf|scanf|cout|cin|System\.out|print|println|console\.log)\b/g, ";\n$1");
+  // Clean up: collapse multiple blank lines into one.
+  s = s.replace(/\n{3,}/g, "\n\n");
+  // Ensure each line is properly trimmed of leading/trailing spaces per line but preserve indentation.
+  s = s.split("\n").map(line => line.trimEnd()).join("\n");
+
+  return s.trimEnd();
 }
 
 function parseTestCaseCellValue(value) {
@@ -408,10 +440,10 @@ function parseAptitudeFillupManual(rows) {
 function parseCodingManual(rows) {
   const questions = [];
   rows.forEach((r, i) => {
-    const title = cellValuePreserveIndent(r.ques || r.question || r.q || r.title || "");
+    const title = restoreCodeFormatting(cellValuePreserveIndent(r.ques || r.question || r.q || r.title || ""));
     if (!title) return;
 
-    const description = cellValuePreserveIndent(r.description || "");
+    const description = restoreCodeFormatting(cellValuePreserveIndent(r.description || ""));
     const inputFormat = cellValuePreserveIndent(r.inputformat || "");
     const outputFormat = cellValuePreserveIndent(r.outputformat || "");
     
