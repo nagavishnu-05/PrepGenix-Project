@@ -4,6 +4,7 @@ const express = require("express");
 const { col, toId, id } = require("../db");
 const { authenticate } = require("../middleware/auth");
 const { getPerformance } = require("../perf");
+const storage = require("../lib/storage");
 
 const router = express.Router();
 
@@ -95,10 +96,15 @@ router.get("/tests/:id", authenticate, async (req, res) => {
     const violationDocs = violationIds.length
       ? await col("violations").find({ attemptId: { $in: violationIds } }).sort({ timestamp: -1 }).toArray()
       : [];
+    const framePaths = violationDocs.map((v) => v.cameraFramePath).filter(Boolean);
+    const frameUrls = framePaths.length ? await storage.resolveUrls(framePaths) : {};
     const violMap = new Map();
     for (const v of violationDocs) {
       const list = violMap.get(v.attemptId) || [];
-      list.push(toId(v));
+      list.push({
+        ...toId(v),
+        cameraFrameUrl: v.cameraFramePath ? frameUrls[v.cameraFramePath] || null : null,
+      });
       violMap.set(v.attemptId, list);
     }
     const scores = attempts.map((a) => a.score);

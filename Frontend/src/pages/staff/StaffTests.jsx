@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback, Fragment } from "react";
-import { Plus, Trash2, Users, ClipboardList, Code2, BrainCircuit, CheckCircle2, ChevronDown, ChevronUp, BarChart3, Clock, TrendingUp, ShieldCheck } from "lucide-react";
+import { useState, useEffect, useCallback } from "react";
+import { Plus, Trash2, Users, ClipboardList, Code2, BrainCircuit, CheckCircle2, BarChart3, Clock, TrendingUp, ShieldCheck, AlertTriangle, Camera, Eye } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,6 +14,47 @@ import { PageHeader, EmptyState } from "@/components/portal/primitives";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip } from "recharts";
+
+const VIOLATION_LABELS = {
+    PHONE_DETECTED: "Phone detected",
+    ELECTRONIC_DEVICE: "Electronic device",
+    MULTIPLE_PERSONS: "Multiple people",
+    MULTIPLE_FACES: "Multiple faces",
+    NO_FACE: "Face not visible",
+    CANDIDATE_NOT_VISIBLE: "Candidate not visible",
+    IDENTITY_MISMATCH: "Identity mismatch",
+    IMPOSTER_DETECTED: "Imposter detected",
+    LOOKING_AWAY: "Looking away",
+    HEAD_TURNED_AWAY: "Head turned away",
+    EYES_CLOSED: "Eyes closed",
+    VOICE_DETECTED: "Voice detected",
+    TAB_SWITCH: "Tab switch",
+    WINDOW_BLUR: "Window focus lost",
+    FULLSCREEN_EXIT: "Fullscreen exit",
+    ESCAPE_PRESSED: "Escape pressed",
+    F5_REFRESH: "Page refresh",
+    DEV_TOOLS: "Developer tools",
+    RIGHT_CLICK: "Right click",
+    COPY_ATTEMPT: "Copy attempt",
+    PASTE_ATTEMPT: "Paste attempt",
+    SCREEN_CAPTURE: "Screen capture",
+    CAMERA_LOST: "Camera lost",
+    MIC_LOST: "Microphone lost",
+};
+
+function violationLabel(type) {
+    if (VIOLATION_LABELS[type]) return VIOLATION_LABELS[type];
+    return String(type || "")
+        .replace(/_/g, " ")
+        .toLowerCase()
+        .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function severityClass(severity) {
+    if (severity === "high") return "bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400 border-red-200 dark:border-red-500/30";
+    if (severity === "low") return "bg-slate-100 dark:bg-zinc-800 text-slate-600 dark:text-zinc-300 border-slate-200 dark:border-zinc-700";
+    return "bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-500/30";
+}
 
 function AssignmentBadge({ t }) {
     if (t.assignedToAll) return <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs text-emerald-400">All batches</span>;
@@ -38,6 +79,7 @@ export default function StaffTests() {
     const [expandedTestId, setExpandedTestId] = useState(null);
     const [testAnalytics, setTestAnalytics] = useState(null);
     const [analyticsLoading, setAnalyticsLoading] = useState(false);
+    const [violationReportAttempt, setViolationReportAttempt] = useState(null);
 
     const [f, setF] = useState(() => emptyForm());
     const [assignF, setAssignF] = useState({ batch: "", all: false, regNos: "" });
@@ -119,6 +161,7 @@ export default function StaffTests() {
                     enabled: f.proctoringEnabled,
                     maxViolations: Number(f.proctoringMax) || 1,
                     autoSubmit: f.proctoringAuto,
+                    reviewOnly: f.proctoringReviewOnly,
                     snapshotIntervalSec: Number(f.proctoringInterval) || 20,
                 },
                 adaptive: f.mode === "adaptive" ? { totalQuestions: Number(f.adaptiveCount) || 10, questionFilter: null } : undefined,
@@ -439,6 +482,12 @@ export default function StaffTests() {
                                         </div>
                                     </div>
                                 )}
+                                {f.proctoringEnabled && (
+                                    <label className="flex items-start gap-2 pt-1 text-sm text-slate-700 dark:text-zinc-300">
+                                        <Checkbox className="mt-0.5" checked={f.proctoringReviewOnly} onCheckedChange={(v) => set({ proctoringReviewOnly: !!v })} />
+                                        <span>Review only &mdash; record violations with snapshots for staff, but never auto-submit or lock the student</span>
+                                    </label>
+                                )}
                             </div>
                         </div>
 
@@ -556,48 +605,65 @@ export default function StaffTests() {
                                             </TableRow>
                                         </TableHeader>
                                         <TableBody>
-                                            {(testAnalytics.attempts || []).map((a) => (
-                                                <TableRow key={a.id} className="hover:bg-slate-50/40 dark:hover:bg-zinc-800/10">
-                                                    <TableCell>
-                                                        <p className="font-semibold text-slate-800 dark:text-zinc-200">{a.studentName}</p>
-                                                        <p className="text-xs text-slate-500">{a.studentRegNo}</p>
-                                                    </TableCell>
-                                                    <TableCell className="text-slate-800 dark:text-zinc-200 font-medium">
-                                                        {a.score} / {a.totalScore}
-                                                    </TableCell>
-                                                    <TableCell className="capitalize">
-                                                        <span className={cn(
-                                                            "rounded-full px-2 py-0.5 text-xs font-bold",
-                                                            a.result === "passed" ? "bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" :
-                                                            a.result === "failed" ? "bg-red-50 dark:bg-red-500/10 text-red-650 dark:text-red-400" :
-                                                            "bg-slate-100 dark:bg-zinc-800 text-slate-600 dark:text-zinc-300"
-                                                        )}>
-                                                            {a.result || "completed"}
-                                                        </span>
-                                                    </TableCell>
-                                                    <TableCell>
-                                                        <span className={cn(
-                                                            "font-medium",
-                                                            a.violationCount > 0 ? "text-amber-600 dark:text-amber-400 font-semibold" : "text-slate-500 dark:text-zinc-500"
-                                                        )}>
-                                                            {a.violationCount}
-                                                        </span>
-                                                    </TableCell>
-                                                    <TableCell className="text-xs text-slate-500">
-                                                        {a.completedAt ? new Date(a.completedAt).toLocaleString() : "—"}
-                                                    </TableCell>
-                                                    <TableCell className="text-right">
-                                                        <Button 
-                                                            variant="ghost" 
-                                                            size="sm" 
-                                                            className="text-red-500 font-semibold cursor-pointer hover:bg-red-50 dark:hover:bg-red-950/20"
-                                                            onClick={() => handleResetAttempt(a.id, testAnalytics.test)}
-                                                        >
-                                                            Reset Attempt
-                                                        </Button>
-                                                    </TableCell>
-                                                </TableRow>
-                                            ))}
+                                            {(testAnalytics.attempts || []).map((a) => {
+                                                const rows = a.violations || [];
+                                                return (
+                                                    <TableRow key={a.id} className="hover:bg-slate-50/40 dark:hover:bg-zinc-800/10">
+                                                            <TableCell>
+                                                                <p className="font-semibold text-slate-800 dark:text-zinc-200">{a.studentName}</p>
+                                                                <p className="text-xs text-slate-500">{a.studentRegNo}</p>
+                                                            </TableCell>
+                                                            <TableCell className="text-slate-800 dark:text-zinc-200 font-medium">
+                                                                {a.score} / {a.totalScore}
+                                                            </TableCell>
+                                                            <TableCell className="capitalize">
+                                                                <span className={cn(
+                                                                    "rounded-full px-2 py-0.5 text-xs font-bold",
+                                                                    a.result === "passed" ? "bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" :
+                                                                    a.result === "failed" ? "bg-red-50 dark:bg-red-500/10 text-red-650 dark:text-red-400" :
+                                                                    "bg-slate-100 dark:bg-zinc-800 text-slate-600 dark:text-zinc-300"
+                                                                )}>
+                                                                    {a.result || "completed"}
+                                                                </span>
+                                                            </TableCell>
+                                                            <TableCell>
+                                                                {rows.length > 0 ? (
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => setViolationReportAttempt(a)}
+                                                                        className="inline-flex cursor-pointer items-center gap-1.5 rounded-full bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-700 transition-colors hover:bg-amber-100 dark:bg-amber-500/10 dark:text-amber-400 dark:hover:bg-amber-500/20"
+                                                                    >
+                                                                        <AlertTriangle className="h-3 w-3" />
+                                                                        {rows.length}
+                                                                        <Eye className="h-3 w-3" />
+                                                                    </button>
+                                                                ) : (
+                                                                    <span className="text-slate-500 dark:text-zinc-500">0</span>
+                                                                )}
+                                                            </TableCell>
+                                                            <TableCell className="text-xs text-slate-500">
+                                                                {a.completedAt ? new Date(a.completedAt).toLocaleString() : "—"}
+                                                            </TableCell>
+                                                            <TableCell className="text-right">
+                                                                <div className="flex justify-end gap-1">
+                                                                    {rows.length > 0 && (
+                                                                        <Button variant="ghost" size="sm" className="cursor-pointer" onClick={() => setViolationReportAttempt(a)}>
+                                                                            <Eye className="h-4 w-4" /> Report
+                                                                        </Button>
+                                                                    )}
+                                                                    <Button
+                                                                        variant="ghost"
+                                                                        size="sm"
+                                                                        className="text-red-500 font-semibold cursor-pointer hover:bg-red-50 dark:hover:bg-red-950/20"
+                                                                        onClick={() => handleResetAttempt(a.id, testAnalytics.test)}
+                                                                    >
+                                                                        Reset Attempt
+                                                                    </Button>
+                                                                </div>
+                                                            </TableCell>
+                                                        </TableRow>
+                                                );
+                                            })}
                                             {!(testAnalytics.attempts || []).length && (
                                                 <TableRow>
                                                     <TableCell colSpan={6} className="py-6 text-center text-sm text-slate-500">No attempts completed yet.</TableCell>
@@ -609,6 +675,76 @@ export default function StaffTests() {
                             </div>
                         </div>
                     )}
+                </DialogContent>
+            </Dialog>
+
+            {/* Violation report popup */}
+            <Dialog open={violationReportAttempt !== null} onOpenChange={(open) => { if (!open) setViolationReportAttempt(null); }}>
+                <DialogContent className="max-h-[90vh] max-w-4xl overflow-y-auto">
+                    <DialogHeader>
+                        <DialogTitle>Violation Report</DialogTitle>
+                        <DialogDescription>
+                            {violationReportAttempt?.studentName || "Student"}
+                            {violationReportAttempt?.studentRegNo ? ` · ${violationReportAttempt.studentRegNo}` : ""}
+                            {" · "}
+                            {(violationReportAttempt?.violations || []).length} recorded event{(violationReportAttempt?.violations || []).length === 1 ? "" : "s"}
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-3 pt-2">
+                        <div className="grid gap-3 md:grid-cols-2">
+                            {(violationReportAttempt?.violations || []).map((v, i) => (
+                                <div key={i} className="flex gap-3 rounded-lg border border-slate-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900/60">
+                                    {v.cameraFrameUrl ? (
+                                        <img
+                                            src={v.cameraFrameUrl}
+                                            alt={`Violation snapshot: ${violationLabel(v.type)}`}
+                                            className="h-24 w-32 shrink-0 rounded-md border border-slate-200 object-cover dark:border-zinc-700"
+                                        />
+                                    ) : (
+                                        <div className="flex h-24 w-32 shrink-0 flex-col items-center justify-center gap-1 rounded-md border border-dashed border-slate-300 text-slate-400 dark:border-zinc-700 dark:text-zinc-600">
+                                            <Camera className="h-5 w-5" />
+                                            <span className="text-[10px]">No snapshot</span>
+                                        </div>
+                                    )}
+                                    <div className="min-w-0 flex-1">
+                                        <div className="flex items-center gap-2">
+                                            <p className="truncate text-sm font-semibold text-slate-800 dark:text-zinc-100">{violationLabel(v.type)}</p>
+                                            <span className={cn("shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] font-medium capitalize", severityClass(v.severity))}>
+                                                {v.severity || "medium"}
+                                            </span>
+                                        </div>
+                                        <p className="mt-1 text-xs text-slate-600 dark:text-zinc-400">{v.description}</p>
+                                        <p className="mt-1 text-[11px] text-slate-400 dark:text-zinc-500">
+                                            {v.timestamp ? new Date(v.timestamp).toLocaleString() : ""}
+                                        </p>
+                                    </div>
+                                </div>
+                            ))}
+                            {!(violationReportAttempt?.violations || []).length && (
+                                <p className="text-sm text-slate-500 dark:text-zinc-500">No violations recorded for this attempt.</p>
+                            )}
+                        </div>
+                        <p className="text-[11px] text-slate-400 dark:text-zinc-500">
+                            Snapshots are stored privately and served as short-lived signed links.
+                            A missing snapshot means image archiving (Supabase Storage) is not configured.
+                        </p>
+                        <div className="flex justify-end gap-2 pt-1">
+                            {violationReportAttempt && (
+                                <Button
+                                    variant="outline"
+                                    className="text-red-500 font-semibold cursor-pointer"
+                                    onClick={() => {
+                                        const target = violationReportAttempt;
+                                        setViolationReportAttempt(null);
+                                        handleResetAttempt(target.id, testAnalytics?.test);
+                                    }}
+                                >
+                                    Reset Attempt
+                                </Button>
+                            )}
+                            <Button variant="outline" onClick={() => setViolationReportAttempt(null)}>Close</Button>
+                        </div>
+                    </div>
                 </DialogContent>
             </Dialog>
         </div>
@@ -631,6 +767,7 @@ function emptyForm() {
         proctoringEnabled: true,
         proctoringMax: 5,
         proctoringAuto: true,
+        proctoringReviewOnly: true,
         proctoringInterval: 20,
         adaptiveCount: 10,
     };

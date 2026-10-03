@@ -19,6 +19,15 @@ Endpoints:
 import base64
 import os
 import sys
+from pathlib import Path
+
+# Running this file directly (`python api/proctoring_api.py`) puts `AIML/api` on
+# sys.path instead of the project root, which breaks the lazy
+# `from face_detection...` imports inside the route handlers. Anchor the
+# project root so both `python -m api.proctoring_api` and direct execution work.
+_PROJECT_ROOT = str(Path(__file__).resolve().parents[1])
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
 
 from flask import Flask, jsonify, request
 from flask_cors import CORS
@@ -49,7 +58,12 @@ def _get_face_monitor(attempt_id: str):
 
 
 def _get_test_config(attempt_id: str) -> dict:
-    return {"maxViolations": 5, "autoSubmit": True}
+    import os
+
+    return {
+        "maxViolations": int(os.environ.get("PROCTORING_MAX_VIOLATIONS", "5")),
+        "autoSubmit": os.environ.get("PROCTORING_AUTO_SUBMIT", "true").lower() == "true",
+    }
 
 
 def _decode_image(b64: str):
@@ -69,14 +83,58 @@ def _decode_image(b64: str):
 
 @app.route("/health", methods=["GET"])
 def health():
-    from face_detection.utils.config import FACE_DETECTION_ENABLED, FACE_RECOGNITION_ENABLED
+    from face_detection.utils.config import (
+        BLINK_ENABLED,
+        FACE_DETECTION_ENABLED,
+        FACE_RECOGNITION_ENABLED,
+        GAZE_ENABLED,
+        HEAD_POSE_ENABLED,
+        LANDMARK_DETECTOR_ENABLED,
+        MEDIAPIPE_ENABLED,
+    )
     return jsonify({
         "status": "ok",
         "service": "proctoring-api",
         "engines": len(_engines),
         "face_detection_enabled": FACE_DETECTION_ENABLED,
         "face_recognition_enabled": FACE_RECOGNITION_ENABLED,
+        "landmarks_enabled": LANDMARK_DETECTOR_ENABLED and MEDIAPIPE_ENABLED,
+        "head_pose_enabled": HEAD_POSE_ENABLED,
+        "gaze_enabled": GAZE_ENABLED,
+        "blink_enabled": BLINK_ENABLED,
     })
+
+
+@app.route("/capabilities", methods=["GET"])
+def capabilities():
+    """Report which analysis backends and models are actually loaded."""
+    from face_detection.inference.attention_analyzer import AttentionAnalyzer
+    from face_detection.inference.blink_detector import BlinkDetector
+    from face_detection.inference.face_detector import FaceDetector
+    from face_detection.inference.gaze_estimator import GazeEstimator
+    from face_detection.inference.head_pose import HeadPoseEstimator
+    from face_detection.inference.landmark_detector import FacialLandmarkDetector
+    from face_detection.inference.yolo_face_detector import YOLOFaceDetector
+
+    if "capabilities_probe" not in _engines:
+        detector = FaceDetector()
+        landmarks = detector.landmark_detector or FacialLandmarkDetector()
+        yolo = YOLOFaceDetector()
+        _engines["capabilities_probe"] = {
+            "detector_backend": detector.backend_name,
+            "detector_fallback_enabled": detector._allow_yolo_fallback,
+            "landmark_backend": landmarks.backend_name,
+            "landmark_model": str(landmarks.model_path),
+            "landmark_model_present": landmarks.model_path.exists(),
+            "head_pose_enabled": HeadPoseEstimator().enabled,
+            "gaze_enabled": GazeEstimator().enabled,
+            "blink_enabled": BlinkDetector().enabled,
+            "attention_enabled": AttentionAnalyzer().enabled,
+            "yolo_face_available": yolo.available,
+            "yolo_face_backend": yolo.backend_name,
+        }
+
+    return jsonify({"capabilities": _engines["capabilities_probe"]})
 
 
 @app.route("/analyze", methods=["POST"])
@@ -227,10 +285,27 @@ def enroll_frame():
     if frame is None:
         return jsonify({"error": "Could not decode image"}), 400
 
+    from face_detection.utils.config import REFERENCE_CAPTURE_FRAMES
+
     monitor = _get_face_monitor(attempt_id)
 
     if not hasattr(monitor, "_enrollment_embeddings") or not hasattr(monitor, "enroll_start"):
         return jsonify({"error": "Face monitor not available"}), 500
+
+    # Enrollment is a multi-frame session: the client calls this repeatedly
+    # until the reference is ready. Restarting the batch on every call pinned
+    # `captured` at 1 so enrollment never completed. An already-enrolled
+    # attempt is idempotent; /reset starts a fresh session.
+    if monitor.is_enrolled:
+        return jsonify({
+            "status": "ready",
+            "captured": REFERENCE_CAPTURE_FRAMES,
+            "required_frames": REFERENCE_CAPTURE_FRAMES,
+            "face_detected": True,
+            "face_count": 1,
+            "quality": "good",
+            "message": "Face already registered for this assessment.",
+        })
 
     if not monitor._enrollment_embeddings:
         monitor.enroll_start()
@@ -308,6 +383,15 @@ def monitor():
         "violations": result["violations"],
         "violation_count": result["violation_count"],
         "should_auto_submit": result["should_auto_submit"],
+        "metrics": result["metrics"],
+        "person_count": result.get("person_count", 0),
+        "devices": result.get("devices", []),
+        "device_detected": result.get("device_detected", False),
+        "identity_blocked": result.get("identity_blocked", False),
+        "identity_status": result.get("identity_status", "checking"),
+        "identity_block_reason": result.get("identity_block_reason"),
+        "identity_block_seconds": result.get("identity_block_seconds", 0.0),
+        "info_logs": result["info_logs"],
     })
 
 
@@ -323,6 +407,35 @@ def reset():
         _engines[fm_key].reset()
         del _engines[fm_key]
     return jsonify({"status": "reset", "attemptId": attempt_id})
+
+
+@app.route("/enroll-reset", methods=["POST"])
+def enroll_reset():
+    """Discard any partial enrollment so a new one can be captured.
+
+    /reset drops the whole monitor, which is heavier than needed when only the
+    enrollment batch should be cleared.
+    """
+    data = request.get_json(force=True)
+    attempt_id = data.get("attemptId", "default")
+    monitor_inst = _get_face_monitor(attempt_id)
+    monitor_inst.enroll_start()
+    monitor_inst._reference_embedding = None
+    monitor_inst._reference_captured = False
+    return jsonify({"status": "reset", "attemptId": attempt_id})
+
+
+@app.route("/state", methods=["POST"])
+def state():
+    """Return the full proctoring state for an attempt, including info logs."""
+    data = request.get_json(force=True)
+    attempt_id = data.get("attemptId", "default")
+    monitor_inst = _get_face_monitor(attempt_id)
+    return jsonify({
+        "attemptId": attempt_id,
+        "face_registered": monitor_inst.is_enrolled,
+        "state": monitor_inst.get_state(),
+    })
 
 
 if __name__ == "__main__":

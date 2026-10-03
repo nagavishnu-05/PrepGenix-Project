@@ -7,6 +7,7 @@ const path = require("path");
 const { execFile } = require("child_process");
 const { col, toId, id } = require("../db");
 const { authenticate } = require("../middleware/auth");
+const storage = require("../lib/storage");
 
 const router = express.Router();
 
@@ -16,6 +17,7 @@ const ANALYZE_SCRIPT = path.join(__dirname, "..", "..", "..", "AIML", "scripts",
 const VIOLATION_TYPES = {
   MULTIPLE_PERSONS: "MULTIPLE_PERSONS",
   ELECTRONIC_DEVICE: "ELECTRONIC_DEVICE",
+  PHONE_DETECTED: "PHONE_DETECTED",
   CANDIDATE_NOT_VISIBLE: "CANDIDATE_NOT_VISIBLE",
   CAMERA_DISABLED: "CAMERA_DISABLED",
   CAMERA_ERROR: "CAMERA_ERROR",
@@ -46,6 +48,7 @@ const SEVERITY = {
   multiple_faces: "high",
   MULTIPLE_PERSONS: "high",
   ELECTRONIC_DEVICE: "high",
+  PHONE_DETECTED: "high",
   CANDIDATE_NOT_VISIBLE: "medium",
   CAMERA_DISABLED: "high",
   phone_detected: "high",
@@ -108,6 +111,26 @@ async function withAttempt(attemptId, fn) {
   return fn(attempt);
 }
 
+/**
+ * Attach short-lived signed URLs for every stored frame on a violation list.
+ *
+ * Reads both the new `cameraFramePath` (Supabase `bucket/key`) and the legacy
+ * `cameraFrame` (inline base64) so documents written before the migration keep
+ * rendering. Base64 blobs are never returned to the browser as a substitute for
+ * a signed URL - if Supabase is unconfigured the URL is simply null.
+ */
+async function withFrameUrls(violations) {
+  if (!violations.length) return violations;
+
+  const paths = violations.map((v) => v.cameraFramePath).filter(Boolean);
+  const urls = paths.length ? await storage.resolveUrls(paths) : {};
+
+  return violations.map((v) => ({
+    ...toId(v),
+    cameraFrameUrl: v.cameraFramePath ? urls[v.cameraFramePath] || null : null,
+  }));
+}
+
 async function enforceLimits(attemptId, config, triggerType = null) {
   const count = await col("violations").countDocuments({ attemptId });
   const attempt = await col("attempts").findOne({ _id: id(attemptId) });
@@ -116,9 +139,14 @@ async function enforceLimits(attemptId, config, triggerType = null) {
   }
 
   const maxViolations = config?.maxViolations ?? 1;
-  const autoSubmit = config?.autoSubmit !== false;
+  // Review-only by default. Violations are recorded for staff review, but the
+  // attempt is NOT auto-submitted or locked unless the test explicitly opts out
+  // of review mode. This lets every AI-detected violation be captured with a
+  // snapshot without interrupting the student mid-test.
+  const reviewOnly = config?.reviewOnly !== false;
+  const autoSubmit = config?.autoSubmit === true;
 
-  if (count >= maxViolations && autoSubmit) {
+  if (!reviewOnly && count >= maxViolations && autoSubmit) {
     const reasonCode = triggerType ? triggerType.toUpperCase().replace(/ /g, "_") : "PROCTORING_VIOLATION";
     const now = new Date();
     await col("attempts").updateOne(
@@ -130,7 +158,7 @@ async function enforceLimits(attemptId, config, triggerType = null) {
     return { autoSubmitted: true, result: "cheated", cheatingReason: reasonCode };
   }
 
-  if (count >= maxViolations) {
+  if (!reviewOnly && count >= maxViolations) {
     await col("attempts").updateOne(
       { _id: attempt._id },
       { $set: { violations: count, reviewRequired: true, status: "flagged", lastSeenAt: new Date(), updatedAt: new Date() } }
@@ -144,7 +172,7 @@ async function enforceLimits(attemptId, config, triggerType = null) {
   return { autoSubmitted: false };
 }
 
-// POST /api/proctoring/attempt/:attemptId/register-face  (student) -> store reference face image on attempt
+// POST /api/proctoring/attempt/:attemptId/register-face  (student) -> store reference face in Supabase
 router.post("/attempt/:attemptId/register-face", authenticate, async (req, res) => {
   try {
     const { image } = req.body;
@@ -154,12 +182,29 @@ router.post("/attempt/:attemptId/register-face", authenticate, async (req, res) 
     const attempt = await col("attempts").findOne({ _id: id(attemptId) });
     if (!attempt) return res.status(404).json({ error: "Attempt not found" });
 
-    await col("attempts").updateOne(
-      { _id: attempt._id },
-      { $set: { referenceFaceImage: image, faceRegistered: true, updatedAt: new Date() } }
-    );
+    // Biometric data goes to Supabase Storage, never into a Mongo document.
+    // Archival must not gate enrollment: the identity reference already lives
+    // in the AIML monitor, and a missing/failed upload should not strand the
+    // student on the capture screen.
+    let referenceFacePath = null;
+    let warning = null;
+    try {
+      referenceFacePath = await storage.uploadImagePath({
+        image,
+        bucket: storage.REFERENCE_BUCKET,
+        scope: `reference/${attempt._id}`,
+        contentType: "image/jpeg",
+      });
+      if (!referenceFacePath) warning = "Supabase Storage is not configured; reference face was not archived.";
+    } catch (err) {
+      warning = `Reference face could not be archived: ${err.message}`;
+    }
 
-    res.json({ success: true, message: "Reference face stored on attempt" });
+    const update = { faceRegistered: true, updatedAt: new Date() };
+    if (referenceFacePath) update.referenceFacePath = referenceFacePath;
+    await col("attempts").updateOne({ _id: attempt._id }, { $set: update, $unset: { referenceFaceImage: "" } });
+
+    res.json({ success: true, message: "Reference face registered", referenceFacePath, warning });
   } catch (err) {
     res.status(500).json({ error: `Failed to store reference face: ${err.message}` });
   }
@@ -176,12 +221,23 @@ router.post("/report", authenticate, async (req, res) => {
     if (!validTypes.includes(normalizedType)) {
       console.warn(`Unknown violation type: ${type}, treating as generic violation`);
     }
+
+    let cameraFramePath;
+    if (cameraFrame) {
+      cameraFramePath = await storage.uploadImagePath({
+        image: cameraFrame,
+        bucket: storage.FRAME_BUCKET,
+        scope: `violations/${attemptId}`,
+        contentType: "image/jpeg",
+      });
+    }
+
     const result = await col("violations").insertOne({
       attemptId: String(attemptId),
       type,
       severity: severity || SEVERITY[type] || "medium",
       description: description || type,
-      cameraFrame: cameraFrame || undefined,
+      cameraFramePath: cameraFramePath || undefined,
       audioSample: audioSample || undefined,
       analysis: analysis || undefined,
       metadata: metadata || undefined,
@@ -214,7 +270,7 @@ router.post("/analyze", authenticate, async (req, res) => {
     if (!attempt) return res.status(404).json({ error: "Attempt not found" });
 
     const analysis = { image: null, audio: null, violations: [] };
-    let latestFrame = null;
+    let latestFramePath = null;
 
     if (image) {
       let tmp = null;
@@ -226,7 +282,15 @@ router.post("/analyze", authenticate, async (req, res) => {
       } finally {
         if (tmp) fs.rmSync(tmp, { force: true });
       }
-      latestFrame = image;
+      // Upload once and reuse the path for both the attempt snapshot and any
+      // violation records. Previously a full base64 JPEG was written into
+      // `attempts.latestFrame` on every single analyze call.
+      latestFramePath = await storage.uploadImagePath({
+        image,
+        bucket: storage.FRAME_BUCKET,
+        scope: `attempts/${attemptId}`,
+        contentType: "image/jpeg",
+      });
       const img = analysis.image;
       if (img && !img.error) {
         if (img.multipleFaces) {
@@ -261,7 +325,7 @@ router.post("/analyze", authenticate, async (req, res) => {
         severity: SEVERITY[v.type] || "medium",
         description: v.description,
         confidence: v.confidence || undefined,
-        cameraFrame: ["multiple_faces", "no_face", "phone_detected"].includes(v.type) ? latestFrame : undefined,
+        cameraFramePath: ["multiple_faces", "no_face", "phone_detected"].includes(v.type) ? latestFramePath : undefined,
         analysis: { image: analysis.image, audio: analysis.audio },
         timestamp: new Date(),
       });
@@ -271,9 +335,9 @@ router.post("/analyze", authenticate, async (req, res) => {
     const set = {
       lastSeenAt: new Date(),
       latestAnalysis: analysis,
-      ...(latestFrame ? { latestFrame } : {}),
+      ...(latestFramePath ? { latestFramePath } : {}),
     };
-    await col("attempts").updateOne({ _id: attempt._id }, { $set: set });
+    await col("attempts").updateOne({ _id: attempt._id }, { $set: set, $unset: { latestFrame: "" } });
 
     let autoResult = { autoSubmitted: false };
     for (const v of flagged) {
@@ -300,7 +364,7 @@ router.get("/attempt/:attemptId", authenticate, async (req, res) => {
   try {
     const attemptId = req.params.attemptId;
     const violations = await col("violations").find({ attemptId }).sort({ timestamp: -1 }).toArray();
-    res.json(violations.map(toId));
+    res.json(await withFrameUrls(violations));
   } catch {
     res.status(500).json({ error: "Failed to fetch violations" });
   }
@@ -319,15 +383,28 @@ router.get("/test/:testId", authenticate, async (req, res) => {
     const byAttempt = new Map();
     for (const v of violations) {
       const list = byAttempt.get(v.attemptId) || [];
-      list.push(toId(v));
+      list.push(v);
       byAttempt.set(v.attemptId, list);
     }
+
+    const all = violations.map((v) => v.cameraFramePath).filter(Boolean);
+    const urls = all.length ? await storage.resolveUrls(all) : {};
+
     res.json(
-      attempts.map((a) => ({
-        ...toId(a),
-        violationCount: (byAttempt.get(a._id.toString()) || []).length,
-        violations: byAttempt.get(a._id.toString()) || [],
-      }))
+      await Promise.all(
+        attempts.map(async (a) => {
+          const attemptViolations = byAttempt.get(a._id.toString()) || [];
+          const withUrls = attemptViolations.map((v) => ({
+            ...toId(v),
+            cameraFrameUrl: v.cameraFramePath ? urls[v.cameraFramePath] || null : null,
+          }));
+          return {
+            ...toId(a),
+            violationCount: withUrls.length,
+            violations: withUrls,
+          };
+        })
+      )
     );
   } catch {
     res.status(500).json({ error: "Failed to fetch test violations" });
@@ -341,6 +418,9 @@ router.post("/attempt/:attemptId/reset", authenticate, async (req, res) => {
     const attempt = await col("attempts").findOne({ _id: id(req.params.attemptId) });
     if (!attempt) return res.status(404).json({ error: "Attempt not found" });
 
+    // A hard-locked attempt ("disqualified") is reopened for the candidate;
+    // completed attempts stay completed but have their violation log cleared.
+    const reopen = attempt.status !== "completed";
     await col("violations").deleteMany({ attemptId: attempt._id.toString() });
     const resetAttempt = await col("attempts").findOneAndUpdate(
       { _id: attempt._id },
@@ -348,12 +428,28 @@ router.post("/attempt/:attemptId/reset", authenticate, async (req, res) => {
         $set: {
           violations: 0,
           latestAnalysis: null,
-          latestFrame: null,
           lastSeenAt: new Date(),
           reviewRequired: false,
-          status: attempt.status === "completed" ? "completed" : "in_progress",
+          status: reopen ? "in_progress" : "completed",
+          ...(reopen
+            ? {
+                result: null,
+                disqualified: false,
+                disqualifyReason: null,
+                cheatingReason: null,
+                cheatingTimestamp: null,
+                autoSubmitted: false,
+                // Fresh clock + finalize flag so a retake is not immediately
+                // expired again and records its own performance entry.
+                startedAt: new Date(),
+                completedAt: null,
+                timedOut: false,
+                perfFinalized: false,
+              }
+            : {}),
           updatedAt: new Date(),
         },
+        $unset: { latestFrame: "", latestFramePath: "" },
       },
       { returnDocument: "after" }
     );
@@ -373,6 +469,7 @@ router.get("/live", authenticate, async (req, res) => {
       attempts.map(async (a) => {
         const latest = await col("violations").find({ attemptId: a._id.toString() }).sort({ timestamp: -1 }).limit(1).toArray();
         const test = await col("tests").findOne({ _id: id(a.testId) });
+        const [latestViolation] = await withFrameUrls(latest);
         return {
           ...toId(a),
           status: a.status === "flagged" ? "flagged" : "in_progress",
@@ -380,7 +477,8 @@ router.get("/live", authenticate, async (req, res) => {
           violationCount: a.violations || 0,
           testTitle: a.testTitle || test?.title,
           durationMin: test?.durationMin || a.durationMin || 30,
-          latestViolation: latest.length ? toId(latest[0]) : null,
+          latestFrameUrl: a.latestFramePath ? await storage.signedUrl(a.latestFramePath) : null,
+          latestViolation: latestViolation || null,
         };
       })
     );

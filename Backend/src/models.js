@@ -87,6 +87,7 @@ const models = {
       enabled: "boolean",
       maxViolations: "number",
       autoSubmit: "boolean",
+      reviewOnly: "boolean",
       snapshotIntervalSec: "number",
       fullscreenRequired: "boolean"
     },
@@ -103,10 +104,13 @@ const models = {
     mode: "fixed | adaptive",
     studentRegNo: "string",
     studentName: "string",
-    status: "in_progress | completed | cheated",
+    status: "in_progress | completed | cheated | disqualified | flagged",
     score: "number",
     totalScore: "number",
     totalQuestions: "number",
+    durationMin: "number",
+    timedOut: "boolean",
+    perfFinalized: "boolean",
     passingScore: "number",
     result: "passed | failed | disqualified | cheated | null",
     answers: [
@@ -135,8 +139,11 @@ const models = {
     violations: "number",
     lastSeenAt: "Date | null",
     latestAnalysis: "object | null",
-    latestFrame: "string | null",
-    referenceFaceImage: "string | null",
+    // Image bytes live in Supabase Storage; these hold "bucket/key" object
+    // paths only. Legacy `latestFrame` / `referenceFaceImage` base64 fields are
+    // unset as documents are rewritten.
+    latestFramePath: "string | null",
+    referenceFacePath: "string | null",
     faceRegistered: "boolean",
     proctoring: "object",
     createdAt: "Date",
@@ -150,7 +157,9 @@ const models = {
     severity: "low | medium | high",
     description: "string",
     confidence: "number | null",
-    cameraFrame: "string | null",
+    // "bucket/key" path into Supabase Storage. Read it through the API, which
+    // returns a short-lived `cameraFrameUrl`; never store image bytes here.
+    cameraFramePath: "string | null",
     audioSample: "string | null",
     analysis: "object | null",
     metadata: "object | null",

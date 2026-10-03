@@ -236,8 +236,8 @@ export default function StaffReports() {
                                                                         </div>
                                                                         <div className="flex shrink-0 items-center gap-3">
                                                                             <span className="text-xs text-slate-500 dark:text-zinc-500">{new Date(v.timestamp).toLocaleString()}</span>
-                                                                            {v.cameraFrame && (
-                                                                                <img src={`data:image/jpeg;base64,${v.cameraFrame}`} alt="frame" className="h-16 rounded border border-slate-200 dark:border-zinc-800" />
+                                                                            {v.cameraFrameUrl && (
+                                                                                <img src={v.cameraFrameUrl} alt="frame" className="h-16 rounded border border-slate-200 dark:border-zinc-800" />
                                                                             )}
                                                                         </div>
                                                                     </div>

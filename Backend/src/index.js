@@ -46,6 +46,21 @@ async function main() {
   try {
     await connectDB();
     console.log("Connected to database");
+
+    // Image assets live in Supabase Storage; MongoDB holds only object paths.
+    // Failure here is non-fatal so the rest of the API still boots.
+    try {
+      const storage = require("./lib/storage");
+      if (storage.isConfigured()) {
+        const { skipped, created } = await storage.ensureBuckets();
+        console.log(created && created.length ? `Created Supabase buckets: ${created.join(", ")}` : "Supabase buckets ready");
+      } else {
+        console.warn("Supabase Storage not configured (SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY) - image uploads disabled");
+      }
+    } catch (error) {
+      console.error("Supabase Storage bootstrap failed (image uploads disabled):", error.message);
+    }
+
     const server = app.listen(PORT, () => {
       console.log(`Server running on port ${PORT}`);
     });

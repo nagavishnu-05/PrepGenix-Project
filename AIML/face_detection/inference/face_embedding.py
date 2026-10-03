@@ -1,9 +1,15 @@
-"""Face embedding generation for identity verification.
+﻿"""Face embedding generation for identity verification.
 
-Backends:
-  1. InsightFace ArcFace (if available, uses embedding from detection step)
+Backends, in preference order:
+  1. InsightFace ArcFace
   2. Custom ONNX ArcFace model
-  3. OpenCV-based feature histogram fallback
+  3. MediaPipe landmark geometry (shape descriptor, identity-discriminative)
+  4. OpenCV intensity histogram (last-resort fallback only)
+
+The histogram fallback is not a valid identity descriptor: a mirrored, blurred
+copy of the same photo scores ~0.94 similarity against itself, so it accepts
+any frame. It is retained only so the pipeline does not crash, and identity
+verification is reported as unavailable when it is the active backend.
 """
 
 import os
@@ -13,7 +19,12 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from ..utils.config import FACE_MATCH_THRESHOLD, FACE_RECOGNITION_DIR, FACE_EMBEDDING_SIZE
+from ..utils.config import (
+    FACE_MATCH_THRESHOLD,
+    FACE_RECOGNITION_DIR,
+    FACE_EMBEDDING_SIZE,
+    MODELS_DIR,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +97,10 @@ class FaceEmbedding:
                 logger.warning(f"ONNX ArcFace init failed: {e}")
 
         self._backend = "histogram"
-        logger.info("Face embedding backend: Histogram (fallback)")
+        logger.warning(
+            "Face embedding backend: intensity histogram fallback. This cannot "
+            "verify identity; install insightface or provide arcface_r100.onnx."
+        )
 
     @property
     def backend_name(self) -> str:
@@ -113,14 +127,35 @@ class FaceEmbedding:
         if face_crop is None or face_crop.size == 0:
             return None
         if self._backend == "insightface":
-            faces = self._insightface_app.get(face_crop)
+            # Never fall back to the histogram here. A histogram vector has a
+            # different dimensionality and no identity meaning, so mixing the
+            # two silently disables verification. Return None ("unknown")
+            # instead, and pad small crops so detection has room to work.
+            padded = self._pad_crop(face_crop)
+            faces = self._insightface_app.get(padded)
             if faces:
                 best = max(faces, key=lambda f: f.det_score)
-                if hasattr(best, "normed_embedding") and best.normed_embedding is not None:
+                if getattr(best, "normed_embedding", None) is not None:
                     return best.normed_embedding.astype(np.float32)
+            return None
         elif self._backend == "onnx_arcface":
             return self._compute_onnx_embedding(face_crop)
         return self._compute_histogram_embedding(face_crop)
+
+    @staticmethod
+    def _pad_crop(face_crop: np.ndarray, pad_ratio: float = 0.35) -> np.ndarray:
+        """Grow a tight face crop so the detector has context around the face."""
+        h, w = face_crop.shape[:2]
+        pad = int(max(h, w) * pad_ratio)
+        if pad <= 0:
+            return face_crop
+        border = max(pad, 2)
+        try:
+            return cv2.copyMakeBorder(
+                face_crop, border, border, border, border, cv2.BORDER_REPLICATE
+            )
+        except Exception:
+            return face_crop
 
     def compare(self, emb1: np.ndarray, emb2: np.ndarray) -> dict:
         """Compare two embeddings.
@@ -128,7 +163,16 @@ class FaceEmbedding:
         Returns: {"match": bool, "similarity": float, "threshold": float}
         """
         if emb1 is None or emb2 is None:
-            return {"match": False, "similarity": 0.0, "threshold": self.threshold}
+            return {"match": None, "similarity": None, "threshold": self.threshold}
+
+        # Guard against mixing embedding spaces (e.g. a histogram vector paired
+        # with an ArcFace vector), which would produce a meaningless score.
+        if emb1.shape != emb2.shape:
+            logger.error(
+                "Embedding dimension mismatch: %s vs %s; treating as unknown",
+                emb1.shape, emb2.shape,
+            )
+            return {"match": None, "similarity": None, "threshold": self.threshold}
 
         if self._backend in ("insightface", "onnx_arcface"):
             sim = cosine_similarity(emb1, emb2)
@@ -200,28 +244,11 @@ class FaceEmbedding:
             return None
 
     def _generate_histogram(self, frame: np.ndarray) -> np.ndarray | None:
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
-        faces = cascade.detectMultiScale(gray, 1.1, 5, minSize=(40, 40))
-        if len(faces) == 0:
-            return None
-        fx, fy, fw, fh = max(faces, key=lambda f: f[2] * f[3])
-        h, w = frame.shape[:2]
-        pad = int(max(fw, fh) * 0.2)
-        x1, y1 = max(0, int(fx) - pad), max(0, int(fy) - pad)
-        x2, y2 = min(w, int(fx) + int(fw) + pad), min(h, int(fy) + int(fh) + pad)
-        crop = frame[y1:y2, x1:x2]
-        return self._compute_histogram_embedding(crop)
+        """Last-resort fallback. Not identity-discriminative - see module docstring."""
+        return self._compute_histogram_embedding(frame)
 
     def _compute_histogram_embedding(self, face_crop: np.ndarray) -> np.ndarray | None:
-        if face_crop is None or face_crop.size == 0:
-            return None
-        hsv = cv2.cvtColor(face_crop, cv2.COLOR_BGR2HSV)
-        h_hist = cv2.calcHist([hsv], [0], None, [50], [0, 180])
-        s_hist = cv2.calcHist([hsv], [1], None, [64], [0, 256])
-        hist = np.concatenate([h_hist.flatten(), s_hist.flatten()])
-        hist = hist.astype(np.float32)
-        norm = np.linalg.norm(hist)
-        if norm < 1e-8:
-            return hist
-        return hist / norm
+        gray = cv2.cvtColor(face_crop, cv2.COLOR_BGR2GRAY)
+        hist = cv2.calcHist([gray], [0], None, [FACE_EMBEDDING_SIZE], [0, 256])
+        cv2.normalize(hist, hist, 0, 1, cv2.NORM_MINMAX)
+        return hist.flatten().astype(np.float32)

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "@/lib/api";
 
 function requestFullscreen() {
@@ -85,7 +85,19 @@ export default function useProctoring({ attemptId, config, previewRef, onAutoSub
     const [cameraActive, setCameraActive] = useState(false);
     const [micActive, setMicActive] = useState(false);
     const [fullscreenActive, setFullscreenActive] = useState(false);
-    const [faceMonitor, setFaceMonitor] = useState({ faceRegistered: false, match: null, similarity: null, faceCount: 0, quality: "unknown" });
+    const [simulated, setSimulated] = useState(false);
+    const [faceMonitor, setFaceMonitor] = useState({
+        faceRegistered: false,
+        match: null,
+        similarity: null,
+        faceCount: 0,
+        quality: "unknown",
+        metrics: null,
+        known: false,
+        identityBlocked: false,
+        identityStatus: "checking",
+        identityBlockReason: null,
+    });
 
     const streamRef = useRef(null);
     const canvasRef = useRef(null);
@@ -94,6 +106,13 @@ export default function useProctoring({ attemptId, config, previewRef, onAutoSub
     const activeRef = useRef(false);
     const runningRef = useRef(false);
     const autoSubmittedRef = useRef(false);
+    // Declared with the other refs so it exists before `tick` reads it. Using a
+    // ref declared further down the function body threw a temporal-dead-zone
+    // error on the first monitoring tick, so no frame ever reached the API and
+    // the UI sat on "No face" for the whole test.
+    const graceUntilRef = useRef(0);
+    const lastTickOkRef = useRef(false);
+    const fullscreenRequiredRef = useRef(true);
 
     const monitoringIntervalMs = parseInt(import.meta.env.VITE_FACE_CHECK_INTERVAL_MS || "2000", 10);
     const intervalMs = monitoringIntervalMs;
@@ -112,16 +131,15 @@ export default function useProctoring({ attemptId, config, previewRef, onAutoSub
         exitFullscreen();
     }, [previewRef]);
 
-    const submitAndStop = useCallback((type) => {
-        if (autoSubmittedRef.current) return;
-        autoSubmittedRef.current = true;
-        const reason = VIOLATION_REASON_MAP[type] || type.toUpperCase();
-        stop();
-        onAutoSubmit?.("cheated", reason);
-        try {
-            api.proctoring.report({ attemptId, type, severity: "high", description: `${type} violation detected` }).catch(() => {});
-        } catch {}
-    }, [attemptId, onAutoSubmit, stop]);
+    // Fullscreen is a hard requirement, but browsers only grant it from a user
+    // gesture. If the request was refused we must not wait for a
+    // `fullscreenchange` that will never come, otherwise the exit detector stays
+    // gated off and leaving fullscreen is never detected. Mark ourselves as
+    // "supposed to be fullscreen" as soon as monitoring is active, so a later
+    // exit (or a never-granted request) is still caught.
+    useEffect(() => {
+        fullscreenRequiredRef.current = status !== "idle";
+    }, [status]);
 
     const captureFrame = useCallback(() => {
         const video = previewRef?.current;
@@ -134,6 +152,55 @@ export default function useProctoring({ attemptId, config, previewRef, onAutoSub
         canvas.getContext("2d").drawImage(video, 0, 0, w, h);
         return canvas.toDataURL("image/jpeg", 0.5).split(",")[1];
     }, [previewRef]);
+
+    // Violations are recorded for staff review but do NOT stop the test. Each
+    // report carries a JPEG snapshot; the backend archives it to Supabase.
+    // A per-type cooldown keeps a sustained condition (e.g. phone on screen)
+    // from inserting one row per 2-second monitoring tick.
+    const lastReportRef = useRef({});
+    const REPORT_COOLDOWN_MS = 12000;
+    const reportViolation = useCallback(async (type, opts = {}) => {
+        if (!attemptId || !activeRef.current) return;
+        const now = Date.now();
+        if (now - (lastReportRef.current[type] || 0) < REPORT_COOLDOWN_MS) return;
+        lastReportRef.current[type] = now;
+        const snapshot = opts.snapshot || captureFrame();
+        try {
+            await api.proctoring.report({
+                attemptId,
+                type,
+                severity: opts.severity,
+                description: opts.description,
+                cameraFrame: snapshot,
+                metadata: opts.metadata,
+            });
+        } catch {
+            // best-effort: a failed report must never interrupt the assessment
+        }
+    }, [attemptId, captureFrame]);
+
+    // Terminates the attempt for hard integrity events (fullscreen exit, Esc,
+    // refresh/close) and PERSISTS the lock on the backend, so reloading the
+    // page cannot resume the attempt. Only a staff reset clears it. The event
+    // is recorded (with a snapshot) so staff can see why.
+    const submitAndStop = useCallback((type, record = true) => {
+        if (autoSubmittedRef.current) return;
+        autoSubmittedRef.current = true;
+        const reason = VIOLATION_REASON_MAP[type] || type.toUpperCase();
+        if (record && attemptId) {
+            // `keepalive` lets this request finish even during `pagehide`/unload,
+            // which is what fires when the candidate refreshes or closes the tab.
+            try {
+                api.tests.terminateAttempt(attemptId, {
+                    type: reason,
+                    description: `Attempt terminated during the assessment (${reason}).`,
+                    cameraFrame: captureFrame(),
+                }).catch(() => {});
+            } catch {}
+        }
+        stop();
+        onAutoSubmit?.("disqualified", reason);
+    }, [attemptId, captureFrame, onAutoSubmit, stop]);
 
     const captureAudio = useCallback(() => {
         const stream = streamRef.current;
@@ -168,11 +235,17 @@ export default function useProctoring({ attemptId, config, previewRef, onAutoSub
     const tick = useCallback(async () => {
         if (!activeRef.current || runningRef.current || autoSubmittedRef.current) return;
         // Skip monitoring during grace period after start or stream reattachment.
-        if (Date.now() < startGraceUntilRef.current) return;
+        if (Date.now() < graceUntilRef.current) return;
         runningRef.current = true;
         try {
             const image = captureFrame();
-            if (!image) return;
+            if (!image) {
+                // The video element has not produced a frame yet. Keep reporting
+                // the previous state rather than letting the UI fall back to
+                // "No face", which reads as a violation when it is really just
+                // a warm-up.
+                return;
+            }
 
             const proctoringApiBase = import.meta.env.VITE_PROCTORING_API || "http://localhost:5050";
             const r = await fetch(`${proctoringApiBase}/monitor`, {
@@ -181,45 +254,51 @@ export default function useProctoring({ attemptId, config, previewRef, onAutoSub
                 body: JSON.stringify({ image, attemptId, cameraActive: cameraActive }),
             }).then((res) => res.json());
 
-            setFaceMonitor({
+            // `known` distinguishes "the detector ran and saw nothing" from "we have not
+            // heard back yet". Without it the badge shows "No face" until the
+            // first response arrives, which looks like an accusation.
+            setFaceMonitor((prev) => ({
                 faceRegistered: r.face_registered || false,
-                match: r.match,
-                similarity: r.similarity,
-                faceCount: r.face_count || 0,
+                match: r.match ?? null,
+                similarity: r.similarity ?? null,
+                faceCount: r.face_count ?? 0,
+                personCount: r.person_count ?? 0,
+                devices: r.devices || [],
+                deviceDetected: r.device_detected || false,
                 quality: r.quality || "unknown",
-            });
+                metrics: r.metrics || prev.metrics || null,
+                known: true,
+                identityBlocked: r.identity_blocked || false,
+                identityStatus: r.identity_status || "checking",
+                identityBlockReason: r.identity_block_reason || null,
+            }));
+            lastTickOkRef.current = true;
 
-            if (r.violations && r.violations.length > 0) {
-                for (const v of r.violations) {
-                    try {
-                        api.proctoring.report({
-                            attemptId,
-                            type: v.type,
-                            severity: v.type === "IDENTITY_MISMATCH" || v.type === "MULTIPLE_FACES" ? "high" : "medium",
-                            description: v.description || v.type,
-                        }).catch(() => {});
-                    } catch {}
-                }
-            }
-
-            if (r.should_auto_submit || r.autoSubmitted) {
-                autoSubmittedRef.current = true;
-                const reason = r.violations?.[0]?.type || r.cheatingReason || "PROCTORING_VIOLATION";
-                stop();
-                onAutoSubmit?.("cheated", reason);
-                try {
-                    api.proctoring.report({ attemptId, type: reason, severity: "high", description: `${reason} confirmed by temporal analysis` }).catch(() => {});
-                } catch {}
+            // The AIML monitor debounces conditions into confirmed violations.
+            // Forward each new one to the backend for staff review (with the
+            // frame we just captured), but never stop the test here.
+            for (const v of r.violations || []) {
+                reportViolation(v.type, {
+                    description: v.description,
+                    severity: v.severity,
+                    metadata: {
+                        violationCount: v.violation_count,
+                        faceCount: r.face_count,
+                        personCount: r.person_count,
+                        devices: r.devices,
+                        similarity: r.similarity,
+                    },
+                    snapshot: image,
+                });
             }
         } catch {
             // transient network errors ignored
         } finally {
             runningRef.current = false;
         }
-    }, [attemptId, captureFrame, onAutoSubmit, stop, cameraActive]);
+    }, [attemptId, captureFrame, cameraActive, reportViolation]);
 
     const hasBeenFullscreenRef = useRef(false);
-    const startGraceUntilRef = useRef(0);
     const enrollmentGraceRef = useRef(false);
 
     const start = useCallback(async () => {
@@ -227,7 +306,7 @@ export default function useProctoring({ attemptId, config, previewRef, onAutoSub
         autoSubmittedRef.current = false;
         enrollmentGraceRef.current = true;
         setStatus("active");
-        startGraceUntilRef.current = Date.now() + 5000;
+        graceUntilRef.current = Date.now() + 5000;
         await requestFullscreen();
         const isFs = document.fullscreenElement != null;
         if (isFs) hasBeenFullscreenRef.current = true;
@@ -238,6 +317,7 @@ export default function useProctoring({ attemptId, config, previewRef, onAutoSub
 
     const enable = useCallback(async (allowSimulated = false) => {
         setStatus("ready");
+        setSimulated(false);
         try {
             await requestFullscreen().catch(() => {});
             let stream = null;
@@ -253,6 +333,7 @@ export default function useProctoring({ attemptId, config, previewRef, onAutoSub
                         const hostname = typeof window !== "undefined" ? window.location.hostname : "";
                         const isLocal = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "0.0.0.0" || hostname === "::1" || hostname.endsWith(".local");
                         if (allowSimulated || isLocal) {
+                            setSimulated(true);
                             const canvas = document.createElement("canvas");
                             canvas.width = 640;
                             canvas.height = 480;
@@ -309,30 +390,34 @@ export default function useProctoring({ attemptId, config, previewRef, onAutoSub
     useEffect(() => {
         if (!activeRef.current) return;
         const onVis = () => {
-            if (Date.now() < startGraceUntilRef.current) return;
-            if (document.hidden) submitAndStop("tab_switch");
+            if (Date.now() < graceUntilRef.current) return;
+            if (document.hidden) reportViolation("tab_switch", { description: "Candidate switched away from the test tab." });
         };
         const onBlur = () => {
-            if (Date.now() < startGraceUntilRef.current) return;
-            submitAndStop("window_blur");
+            if (Date.now() < graceUntilRef.current) return;
+            reportViolation("window_blur", { description: "Test window lost focus." });
         };
+        // Esc is swallowed by the browser to leave fullscreen, so `keydown` for
+        // Escape frequently never fires. `fullscreenchange` is the only event
+        // that reliably fires on Esc, so it is what terminates the attempt.
         const onFs = () => {
             const fs = document.fullscreenElement != null;
             if (fs) {
                 hasBeenFullscreenRef.current = true;
             }
             setFullscreenActive(fs);
-            if (!fs && hasBeenFullscreenRef.current && Date.now() >= startGraceUntilRef.current) {
+            if (!fs && fullscreenRequiredRef.current && Date.now() >= graceUntilRef.current) {
+                hasBeenFullscreenRef.current = false;
                 submitAndStop("fullscreen_exit");
             }
         };
         const onContextMenu = (e) => {
-            if (Date.now() < startGraceUntilRef.current) return;
+            if (Date.now() < graceUntilRef.current) return;
             e.preventDefault();
-            submitAndStop("right_click");
+            reportViolation("right_click", { description: "Right-click attempted during the assessment." });
         };
         const onKeyDown = (e) => {
-            if (Date.now() < startGraceUntilRef.current) return;
+            if (Date.now() < graceUntilRef.current) return;
             const key = e.key.toLowerCase();
             const ctrl = e.ctrlKey || e.metaKey;
             const shift = e.shiftKey;
@@ -348,25 +433,33 @@ export default function useProctoring({ attemptId, config, previewRef, onAutoSub
             }
             if (key === "f12" || (ctrl && shift && ["i", "j", "c"].includes(key))) {
                 e.preventDefault();
-                submitAndStop("dev_tools");
+                reportViolation("dev_tools", { description: "Developer tools shortcut attempted." });
                 return;
             }
             if (ctrl && key === "u") {
                 e.preventDefault();
-                submitAndStop("dev_tools");
+                reportViolation("dev_tools", { description: "View-source shortcut attempted." });
                 return;
             }
             if (ctrl && ["c", "v", "x"].includes(key)) {
                 if (document.activeElement?.tagName === "TEXTAREA" || document.activeElement?.tagName === "INPUT" || document.querySelector(".monaco-editor:focus")) return;
                 e.preventDefault();
-                submitAndStop(key === "c" ? "copy_attempt" : key === "v" ? "paste_attempt" : "copy_attempt");
+                reportViolation(key === "c" ? "copy_attempt" : key === "v" ? "paste_attempt" : "copy_attempt", { description: "Clipboard shortcut attempted." });
                 return;
             }
             if (key === "printscreen") {
-                submitAndStop("screen_capture");
+                reportViolation("screen_capture", { description: "Screenshot key pressed." });
             }
         };
+        // `pagehide` fires for reload, close and back/forward. It runs synchronously
+        // during teardown, so the attempt is closed locally without needing a
+        // network request to survive unload.
+        const onPageHide = () => {
+            if (!activeRef.current) return;
+            submitAndStop("f5_refresh");
+        };
         const onBeforeUnload = (e) => {
+            if (!activeRef.current) return;
             e.preventDefault();
             e.returnValue = "";
         };
@@ -376,6 +469,7 @@ export default function useProctoring({ attemptId, config, previewRef, onAutoSub
         document.addEventListener("contextmenu", onContextMenu);
         document.addEventListener("keydown", onKeyDown);
         window.addEventListener("beforeunload", onBeforeUnload);
+        window.addEventListener("pagehide", onPageHide);
         return () => {
             document.removeEventListener("visibilitychange", onVis);
             window.removeEventListener("blur", onBlur);
@@ -383,8 +477,9 @@ export default function useProctoring({ attemptId, config, previewRef, onAutoSub
             document.removeEventListener("contextmenu", onContextMenu);
             document.removeEventListener("keydown", onKeyDown);
             window.removeEventListener("beforeunload", onBeforeUnload);
+            window.removeEventListener("pagehide", onPageHide);
         };
-    }, [status, submitAndStop]);
+    }, [status, submitAndStop, reportViolation]);
 
     const reattachStream = useCallback(() => {
         const stream = streamRef.current;
@@ -395,10 +490,6 @@ export default function useProctoring({ attemptId, config, previewRef, onAutoSub
             }
             if (video.paused || video.ended) {
                 video.play().catch(() => {});
-            }
-            // Extend grace period after stream reattachment to allow video to stabilize.
-            if (activeRef.current) {
-                startGraceUntilRef.current = Date.now() + 5000;
             }
         }
     }, [previewRef]);
@@ -436,5 +527,40 @@ export default function useProctoring({ attemptId, config, previewRef, onAutoSub
 
     useEffect(() => () => stop(), [stop]);
 
-    return { status, cameraActive, micActive, fullscreenActive, faceMonitor, enable, start, stop, reattachStream, streamRef, captureFrameForEnrollment, enrollFrame, enrollStatus };
+    // Memoised on purpose. A fresh object literal on every render made effects
+    // that depend on it (reattachStream, face-capture flow) re-run in a loop,
+    // which kept resetting the grace window so monitoring never started.
+    return useMemo(
+        () => ({
+            status,
+            cameraActive,
+            micActive,
+            fullscreenActive,
+            simulated,
+            faceMonitor,
+            enable,
+            start,
+            stop,
+            reattachStream,
+            streamRef,
+            captureFrameForEnrollment,
+            enrollFrame,
+            enrollStatus,
+        }),
+        [
+            status,
+            cameraActive,
+            micActive,
+            fullscreenActive,
+            simulated,
+            faceMonitor,
+            enable,
+            start,
+            stop,
+            reattachStream,
+            captureFrameForEnrollment,
+            enrollFrame,
+            enrollStatus,
+        ]
+    );
 }

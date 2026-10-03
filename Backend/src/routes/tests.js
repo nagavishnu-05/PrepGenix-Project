@@ -6,6 +6,7 @@ const path = require("path");
 const multer = require("multer");
 const { col, toId, id } = require("../db");
 const { authenticate } = require("../middleware/auth");
+const storage = require("../lib/storage");
 const { initialState, advanceState, classifyResult, pickAdaptiveQuestion } = require("../adaptive");
 const { gradeSubmission } = require("../judge");
 const { pushAptitude, pushCoding } = require("../perf");
@@ -28,6 +29,7 @@ const PROCTOR_DEFAULT = {
   enabled: true,
   maxViolations: 1,
   autoSubmit: true,
+  reviewOnly: true,
   snapshotIntervalSec: 20,
 };
 
@@ -37,6 +39,9 @@ function normalizeProctoring(body) {
     enabled: p.enabled !== false,
     maxViolations: Math.max(1, Number(p.maxViolations) || 1),
     autoSubmit: p.autoSubmit !== false,
+    // Default to review-only: record violations for staff without locking the
+    // student out mid-test. Opt out explicitly to reinstate auto-submit.
+    reviewOnly: p.reviewOnly !== false,
     snapshotIntervalSec: Math.max(5, Number(p.snapshotIntervalSec) || 20),
   };
 }
@@ -91,6 +96,24 @@ async function getQuestionById(idStr) {
   return q;
 }
 
+function attemptDurationMin(attempt) {
+  return Math.max(1, Number(attempt?.durationMin) || 30);
+}
+
+// A running attempt's deadline is measured from `startedAt`. The client timer
+// enforces the same limit, but the server is the source of truth: an overdue
+// attempt is finalized on read instead of being offered as "Resume Test" and
+// then rejecting the next answer with "Attempt already completed".
+async function expireIfOverdue(attempt) {
+  if (!attempt || attempt.status !== "in_progress") return attempt;
+  const startedMs = attempt.startedAt ? new Date(attempt.startedAt).getTime() : Date.now();
+  const deadline = startedMs + attemptDurationMin(attempt) * 60 * 1000;
+  if (Date.now() < deadline) return attempt;
+  await finalizeAttempt(attempt);
+  await col("attempts").updateOne({ _id: attempt._id }, { $set: { timedOut: true } });
+  return (await col("attempts").findOne({ _id: attempt._id })) || attempt;
+}
+
 // GET /api/tests  (staff sees all; students see assigned only)
 router.get("/", authenticate, async (req, res) => {
   try {
@@ -101,10 +124,19 @@ router.get("/", authenticate, async (req, res) => {
       const assigned = all.filter((t) => isAssigned(t, student));
       const testsWithStatus = await Promise.all(
         assigned.map(async (t) => {
-          const attempt = await col("attempts").findOne(
-            { testId: t._id.toString(), studentRegNo: student.regNo },
-            { sort: { createdAt: -1 } }
-          );
+          const attemptDocs = await col("attempts")
+            .find({ testId: t._id.toString(), studentRegNo: student.regNo })
+            .sort({ createdAt: 1 })
+            .toArray();
+          // Surface an unfinished attempt first so duplicate historical records
+          // cannot hide a resumable session behind a stale "completed" badge.
+          // An overdue attempt is finalized here so it is never shown as
+          // resumable (which then failed on the next answer).
+          let attempt =
+            attemptDocs.find((a) => a.status === "in_progress" || a.status === "flagged") ||
+            attemptDocs[attemptDocs.length - 1] ||
+            null;
+          if (attempt) attempt = await expireIfOverdue(attempt);
           return {
             ...toId(t),
             _count: { questions: t.mode === "fixed" ? (t.fixedQuestionIds || []).length : t.adaptive?.totalQuestions },
@@ -392,24 +424,34 @@ router.delete("/attempts/:attemptId", authenticate, async (req, res) => {
     if (req.user.role !== "staff") return res.status(403).json({ error: "Staff Coordinator only" });
     const attemptId = req.params.attemptId;
     const attempt = await col("attempts").findOne({ _id: id(attemptId) });
-    if (attempt) {
-      const studentRegNo = attempt.studentRegNo;
-      const testId = attempt.testId;
-      await Promise.all([
-        col("attempts").deleteOne({ _id: id(attemptId) }),
-        col("violations").deleteMany({ attemptId }),
-        col("performances", "perf").updateOne(
-          { regNo: studentRegNo },
-          { 
-            $pull: { 
-              aptitude: { testId },
-              coding: { testId }
-            } 
+    if (!attempt) return res.status(404).json({ error: "Attempt not found" });
+
+    const studentRegNo = attempt.studentRegNo;
+    const testId = attempt.testId;
+
+    // A student may have accumulated duplicate attempts for the same test
+    // (e.g. a double-start race). Reset must clear every twin, otherwise the
+    // leftover record keeps the student stuck on "already completed".
+    const siblings = await col("attempts")
+      .find({ testId, studentRegNo }, { projection: { _id: 1 } })
+      .toArray();
+    const siblingIds = siblings.map((a) => a._id.toString());
+
+    await Promise.all([
+      col("attempts").deleteMany({ testId, studentRegNo }),
+      col("violations").deleteMany({ attemptId: { $in: siblingIds } }),
+      col("performances", "perf").updateOne(
+        { regNo: studentRegNo },
+        {
+          $pull: {
+            aptitude: { testId },
+            coding: { testId }
           }
-        )
-      ]);
-    }
-    res.json({ message: "Student attempt reset successfully" });
+        }
+      )
+    ]);
+
+    res.json({ message: "Student attempt reset successfully", removed: siblingIds.length });
   } catch (err) {
     res.status(500).json({ error: "Failed to reset attempt: " + err.message });
   }
@@ -429,16 +471,27 @@ router.post("/:id/start", authenticate, async (req, res) => {
       await syncAimlQuestions().catch(e => console.error("AIML sync failed at start:", e));
     }
 
-    const existing = await col("attempts").findOne(
-      { testId: test._id.toString(), studentRegNo: student.regNo },
+    const attemptFilter = { testId: test._id.toString(), studentRegNo: student.regNo };
+
+    // Prefer an unfinished attempt so a stale duplicate can never masquerade as
+    // "already completed". Without this, a double-start race leaves one
+    // in_progress and one completed record, and the newest (completed) one wins.
+    const active = await col("attempts").findOne(
+      { ...attemptFilter, status: { $in: ["in_progress", "flagged"] } },
       { sort: { createdAt: -1 } }
     );
+    if (active) return res.json(toId(active));
+
+    const existing = await col("attempts").findOne(attemptFilter, { sort: { createdAt: -1 } });
     if (existing) {
       if (existing.status === "completed") {
         return res.json({ ...toId(existing), alreadyCompleted: true });
       }
       if (existing.status === "cheated") {
         return res.status(403).json({ error: "This attempt was terminated due to a proctoring violation.", cheatingReason: existing.cheatingReason, status: "cheated" });
+      }
+      if (existing.status === "disqualified") {
+        return res.status(403).json({ error: "This attempt was terminated by proctoring. A staff coordinator must reset it before you can retake the test.", status: "disqualified", disqualifyReason: existing.disqualifyReason });
       }
       return res.json(toId(existing));
     }
@@ -450,6 +503,7 @@ router.post("/:id/start", authenticate, async (req, res) => {
       mode: test.mode,
       studentRegNo: student.regNo,
       studentName: student.name,
+      durationMin: Number(test.durationMin) || 30,
       status: "in_progress",
       score: 0,
       totalScore: 0,
@@ -493,6 +547,91 @@ router.post("/:id/start", authenticate, async (req, res) => {
   }
 });
 
+const TERMINAL_ATTEMPT_STATUSES = ["completed", "cheated", "disqualified"];
+
+// POST /api/tests/attempts/:attemptId/terminate  (student)
+// Hard-locks an attempt when the candidate leaves the proctored session (Esc,
+// fullscreen exit, refresh/close). The attempt is persisted as "disqualified"
+// so a page reload cannot resume it; only a staff reset clears the lock.
+router.post("/attempts/:attemptId/terminate", authenticate, async (req, res) => {
+  try {
+    const attempt = await col("attempts").findOne({ _id: id(req.params.attemptId) });
+    if (!attempt) return res.status(404).json({ error: "Attempt not found" });
+    if (req.user.role === "student" && attempt.studentRegNo !== req.user.username) {
+      return res.status(403).json({ error: "Access denied" });
+    }
+
+    // Idempotent: repeated exits / a reload firing `pagehide` twice must not
+    // create duplicate violation rows or performance entries.
+    if (TERMINAL_ATTEMPT_STATUSES.includes(attempt.status)) {
+      return res.json({ ...toId(attempt), alreadyTerminated: true });
+    }
+
+    const { type, description, cameraFrame } = req.body || {};
+    const reasonCode = String(type || "PROCTORING_EXIT").toUpperCase().replace(/ /g, "_");
+
+    let cameraFramePath;
+    if (cameraFrame) {
+      try {
+        cameraFramePath = await storage.uploadImagePath({
+          image: cameraFrame,
+          bucket: storage.FRAME_BUCKET,
+          scope: `violations/${attempt._id}`,
+          contentType: "image/jpeg",
+        });
+      } catch {
+        // Snapshot archiving is best-effort; the lock must not depend on it.
+      }
+    }
+
+    await col("violations").insertOne({
+      attemptId: attempt._id.toString(),
+      type: reasonCode,
+      severity: "high",
+      description: description || `Attempt terminated: ${reasonCode}`,
+      cameraFramePath: cameraFramePath || undefined,
+      metadata: { terminated: true },
+      timestamp: new Date(),
+    });
+    const violationCount = await col("violations").countDocuments({ attemptId: attempt._id.toString() });
+
+    const now = new Date();
+    await col("attempts").updateOne(
+      { _id: attempt._id },
+      {
+        $set: {
+          status: "disqualified",
+          result: "disqualified",
+          disqualified: true,
+          disqualifyReason: reasonCode,
+          cheatingReason: reasonCode,
+          cheatingTimestamp: now,
+          violations: violationCount,
+          completedAt: now,
+          updatedAt: now,
+        },
+      }
+    );
+
+    const perfEntry = {
+      testId: attempt.testId,
+      testTitle: attempt.testTitle,
+      score: 0,
+      total: attempt.totalScore,
+      result: "disqualified",
+      mode: attempt.mode,
+      percentage: 0,
+    };
+    if (attempt.type === "coding") await pushCoding(attempt.studentRegNo, perfEntry);
+    else await pushAptitude(attempt.studentRegNo, perfEntry);
+
+    const updated = await col("attempts").findOne({ _id: attempt._id });
+    res.json({ ...toId(updated), terminated: true, violationCount });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to terminate attempt: " + err.message });
+  }
+});
+
 async function disqualifyAttempt(attempt, reason = "Exited fullscreen mode") {
   const now = new Date();
   await col("attempts").updateOne(
@@ -528,6 +667,14 @@ async function finalizeAttempt(attempt) {
   const status = result === "cheated" ? "cheated" : "completed";
   await col("attempts").updateOne({ _id: attempt._id }, { $set: { status, result, completedAt: new Date() } });
 
+  // Record exactly one performance entry per attempt even if two requests
+  // (client timer, server expiry, question completion) finalize concurrently.
+  const claim = await col("attempts").updateOne(
+    { _id: attempt._id, perfFinalized: { $ne: true } },
+    { $set: { perfFinalized: true } }
+  );
+  if (claim.modifiedCount === 0) return { status, result };
+
   const perfEntry = {
     testId: attempt.testId,
     testTitle: attempt.testTitle,
@@ -545,11 +692,12 @@ async function finalizeAttempt(attempt) {
 // GET /api/tests/attempts/:attemptId  -> attempt detail (student own or staff)
 router.get("/attempts/:attemptId", authenticate, async (req, res) => {
   try {
-    const attempt = await col("attempts").findOne({ _id: id(req.params.attemptId) });
+    let attempt = await col("attempts").findOne({ _id: id(req.params.attemptId) });
     if (!attempt) return res.status(404).json({ error: "Attempt not found" });
     if (req.user.role === "student" && attempt.studentRegNo !== req.user.username) {
       return res.status(403).json({ error: "Access denied" });
     }
+    attempt = await expireIfOverdue(attempt);
     res.json(toId(attempt));
   } catch {
     res.status(500).json({ error: "Failed to fetch attempt" });
@@ -559,10 +707,11 @@ router.get("/attempts/:attemptId", authenticate, async (req, res) => {
 // GET /api/tests/attempts/:attemptId/question  -> next question to display
 router.get("/attempts/:attemptId/question", authenticate, async (req, res) => {
   try {
-    const attempt = await col("attempts").findOne({ _id: id(req.params.attemptId) });
+    let attempt = await col("attempts").findOne({ _id: id(req.params.attemptId) });
     if (!attempt) return res.status(404).json({ error: "Attempt not found" });
     if (attempt.studentRegNo !== req.user.username) return res.status(403).json({ error: "Access denied" });
-    if (attempt.status === "completed") {
+    attempt = await expireIfOverdue(attempt);
+    if (attempt.status === "completed" || attempt.status === "cheated" || attempt.status === "disqualified") {
       return res.json({ finished: true, result: attempt.result });
     }
     if (attempt.status === "flagged" || attempt.reviewRequired) {
@@ -619,10 +768,11 @@ router.get("/attempts/:attemptId/question", authenticate, async (req, res) => {
 // POST /api/tests/attempts/:attemptId/answer
 router.post("/attempts/:attemptId/answer", authenticate, async (req, res) => {
   try {
-    const attempt = await col("attempts").findOne({ _id: id(req.params.attemptId) });
+    let attempt = await col("attempts").findOne({ _id: id(req.params.attemptId) });
     if (!attempt) return res.status(404).json({ error: "Attempt not found" });
     if (attempt.studentRegNo !== req.user.username) return res.status(403).json({ error: "Access denied" });
-    if (attempt.status === "completed") return res.status(400).json({ error: "Attempt already completed" });
+    attempt = await expireIfOverdue(attempt);
+    if (attempt.status === "completed" || attempt.status === "cheated" || attempt.status === "disqualified") return res.status(400).json({ error: "Attempt already completed" });
     if (attempt.status === "flagged" || attempt.reviewRequired) {
       return res.status(423).json({ error: "This attempt is paused pending staff review" });
     }
@@ -734,12 +884,21 @@ router.post("/attempts/:attemptId/answer", authenticate, async (req, res) => {
 // POST /api/tests/attempts/:attemptId/finish
 router.post("/attempts/:attemptId/finish", authenticate, async (req, res) => {
   try {
-    const attempt = await col("attempts").findOne({ _id: id(req.params.attemptId) });
+    let attempt = await col("attempts").findOne({ _id: id(req.params.attemptId) });
     if (!attempt) return res.status(404).json({ error: "Attempt not found" });
     if (req.user.role === "student" && attempt.studentRegNo !== req.user.username) return res.status(403).json({ error: "Access denied" });
-    if (attempt.status === "completed") return res.json({ finished: true, result: attempt.result, attempt: toId(attempt) });
+    if (attempt.status === "completed" || attempt.status === "cheated" || attempt.status === "disqualified") {
+      return res.json({ finished: true, result: attempt.result, attempt: toId(attempt) });
+    }
+    // If the deadline already passed, finalize through the overdue path so the
+    // attempt is tagged `timedOut`, matching server-side expiry.
+    attempt = await expireIfOverdue(attempt);
+    if (attempt.status !== "in_progress" && attempt.status !== "flagged") {
+      return res.json({ finished: true, result: attempt.result, attempt: toId(attempt) });
+    }
     const finalized = await finalizeAttempt(attempt);
-    res.json({ finished: true, result: finalized.result, attempt: toId(finalized) });
+    const full = await col("attempts").findOne({ _id: attempt._id });
+    res.json({ finished: true, result: finalized.result, attempt: toId(full) });
   } catch {
     res.status(500).json({ error: "Failed to finish attempt" });
   }

@@ -23,7 +23,10 @@ export default function StudentTests() {
     }, []);
 
     const act = async (t) => {
-        if (t.attempt?.status === "in_progress") {
+        const status = t.attempt?.status;
+        if (status === "in_progress" || status === "flagged" || status === "disqualified") {
+            // In-progress resumes; flagged/disqualified open the locked /
+            // terminated screen, which explains that staff must reset it.
             navigate(`/student/take/${t.attempt.id}`);
         } else if (!t.attempt) {
             navigate(`/student/take/${t.id}?new=1`);
@@ -67,8 +70,16 @@ export default function StudentTests() {
                                     <span className="flex items-center gap-1 rounded-md bg-slate-100 dark:bg-zinc-800/70 px-2 py-1"><Clock className="h-3 w-3" />{t.durationMin} min</span>
                                 </div>
                                 <div className="mt-5">
-                                    <Button className="w-full" variant={t.attempt?.status === "completed" ? "outline" : "default"} onClick={() => act(t)}>
-                                        {!t.attempt ? "Start Test" : t.attempt.status === "in_progress" ? "Resume Test" : "View Result"}
+                                    <Button className="w-full" variant={t.attempt?.status === "in_progress" || !t.attempt ? "default" : "outline"} onClick={() => act(t)}>
+                                        {!t.attempt
+                                            ? "Start Test"
+                                            : t.attempt.status === "in_progress"
+                                                ? "Resume Test"
+                                                : t.attempt.status === "flagged"
+                                                    ? "Locked — Awaiting Staff Reset"
+                                                    : t.attempt.status === "disqualified"
+                                                        ? "Terminated — View Details"
+                                                        : "View Result"}
                                     </Button>
                                 </div>
                             </CardContent>

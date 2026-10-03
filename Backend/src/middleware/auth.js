@@ -10,10 +10,11 @@ const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 const JWT_SECRET = process.env.JWT_SECRET || "codeassess-dev-secret-change-in-production";
 function authenticate(req, res, next) {
     const authHeader = req.headers.authorization;
-    if (!authHeader?.startsWith("Bearer ")) {
+    const hasHeader = authHeader?.startsWith("Bearer ");
+    const token = hasHeader ? authHeader.split(" ")[1] : null;
+    if (!token) {
         return res.status(401).json({ error: "Authentication required" });
     }
-    const token = authHeader.split(" ")[1];
     try {
         const payload = jsonwebtoken_1.default.verify(token, JWT_SECRET);
         req.user = payload;

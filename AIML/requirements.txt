@@ -8,3 +8,7 @@ onnxruntime>=1.16
 scikit-learn>=1.3
 pillow>=10.0
 matplotlib>=3.7
+mediapipe>=0.10
+# Required for real identity verification. Without it FaceEmbedding falls back
+# to an intensity histogram, which matches any frame and verifies nothing.
+insightface>=0.7

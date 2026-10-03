@@ -1,21 +1,33 @@
 """Modern face detector with multiple backend support.
 
 Backends (tried in order):
-  1. InsightFace (RetinaFace ONNX via onnxruntime) if available
-  2. OpenCV DNN (Caffe SSD) if model file exists
-  3. OpenCV Haar Cascade (always available, fallback)
+  1. MediaPipe Face Landmarker (short-range detector + landmarks, multi-face)
+  2. InsightFace (RetinaFace ONNX via onnxruntime) if available
+  3. OpenCV DNN (Caffe SSD) if model file exists
+  4. OpenCV Haar Cascade (always available, fallback)
 
 All backends return the same interface.
 """
 
-import os
 import logging
+import os
 from pathlib import Path
 
 import cv2
 import numpy as np
 
-from ..utils.config import FACE_DETECTION_CONFIDENCE, MIN_FACE_SIZE_PX, FACE_DETECTOR_DIR
+from ..utils.config import (
+    FACE_DETECTION_CONFIDENCE,
+    FACE_DETECTOR_BACKEND,
+    FACE_DETECTOR_DIR,
+    MEDIAPIPE_ENABLED,
+    MIN_FACE_SIZE_PX,
+    YOLO_FACE_DIFFICULT_MIN_BRIGHTNESS,
+    YOLO_FACE_DIFFICULT_MIN_SIZE,
+    YOLO_FACE_FALLBACK_ENABLED,
+)
+from .landmark_detector import FacialLandmarkDetector
+from .yolo_face_detector import YOLOFaceDetector
 
 logger = logging.getLogger(__name__)
 
@@ -26,20 +38,51 @@ try:
 except ImportError:
     pass
 
+_BACKEND_ALIASES = {
+    "mediapipe": "mediapipe",
+    "mp": "mediapipe",
+    "insightface": "insightface",
+    "opencv_dnn": "opencv_dnn",
+    "dnn": "opencv_dnn",
+    "ssd": "opencv_dnn",
+    "haar": "haar_cascade",
+    "haar_cascade": "haar_cascade",
+    "cascade": "haar_cascade",
+}
+
 
 class FaceDetector:
     """Production face detector that auto-selects the best available backend."""
 
-    def __init__(self, confidence_threshold: float | None = None):
+    def __init__(
+        self,
+        confidence_threshold: float | None = None,
+        backend: str | None = None,
+        use_landmarks: bool = True,
+        allow_yolo_fallback: bool | None = None,
+    ):
         self.confidence = confidence_threshold or FACE_DETECTION_CONFIDENCE
+        self._requested_backend = _BACKEND_ALIASES.get((backend or FACE_DETECTOR_BACKEND or "auto").strip().lower())
+        self._use_landmarks = use_landmarks
+        self._allow_yolo_fallback = YOLO_FACE_FALLBACK_ENABLED if allow_yolo_fallback is None else allow_yolo_fallback
         self._backend = None
         self._insightface_app = None
         self._cascade = None
         self._cvnet = None
+        self._landmark_detector = None
+        self._yolo = None
         self._init_backend()
 
     def _init_backend(self):
-        if INSIGHTFACE_AVAILABLE:
+        if self._use_landmarks and self._requested_backend in (None, "mediapipe") and MEDIAPIPE_ENABLED:
+            detector = FacialLandmarkDetector()
+            if detector.backend_name == "mediapipe":
+                self._landmark_detector = detector
+                self._backend = "mediapipe"
+                logger.info("Face detector backend: MediaPipe Face Landmarker")
+                return
+
+        if self._requested_backend in (None, "insightface") and INSIGHTFACE_AVAILABLE:
             try:
                 providers = ["CPUExecutionProvider"]
                 if os.environ.get("USE_GPU", "false").lower() == "true":
@@ -57,16 +100,17 @@ class FaceDetector:
             except Exception as e:
                 logger.warning(f"InsightFace init failed, trying fallback: {e}")
 
-        ssd_path = FACE_DETECTOR_DIR / "opencv_face_detector_uint8.pb"
-        ssd_cfg = FACE_DETECTOR_DIR / "opencv_face_detector.pbtxt"
-        if ssd_path.exists() and ssd_cfg.exists():
-            try:
-                self._cvnet = cv2.dnn.readNetFromTensorflow(str(ssd_path), str(ssd_cfg))
-                self._backend = "opencv_dnn"
-                logger.info("Face detector backend: OpenCV DNN (SSD)")
-                return
-            except Exception as e:
-                logger.warning(f"OpenCV DNN init failed: {e}")
+        if self._requested_backend in (None, "opencv_dnn"):
+            ssd_path = FACE_DETECTOR_DIR / "opencv_face_detector_uint8.pb"
+            ssd_cfg = FACE_DETECTOR_DIR / "opencv_face_detector.pbtxt"
+            if ssd_path.exists() and ssd_cfg.exists():
+                try:
+                    self._cvnet = cv2.dnn.readNetFromTensorflow(str(ssd_path), str(ssd_cfg))
+                    self._backend = "opencv_dnn"
+                    logger.info("Face detector backend: OpenCV DNN (SSD)")
+                    return
+                except Exception as e:
+                    logger.warning(f"OpenCV DNN init failed: {e}")
 
         cascade_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
         self._cascade = cv2.CascadeClassifier(cascade_path)
@@ -77,6 +121,10 @@ class FaceDetector:
     def backend_name(self) -> str:
         return self._backend or "unknown"
 
+    @property
+    def landmark_detector(self) -> FacialLandmarkDetector | None:
+        return self._landmark_detector
+
     def detect(self, frame: np.ndarray) -> dict:
         """Detect faces in an image.
 
@@ -85,25 +133,96 @@ class FaceDetector:
                 "faces": [{"bbox": [x1,y1,x2,y2], "confidence": float, "landmarks": ...}],
                 "face_count": int,
                 "face_present": bool,
-                "multiple_faces": bool
+                "multiple_faces": bool,
+                "backend": str,
+                "conditions": str
             }
         """
         if frame is None or frame.size == 0:
             return self._empty_result()
 
-        if self._backend == "insightface":
-            return self._detect_insightface(frame)
+        if self._backend == "mediapipe":
+            result = self._detect_mediapipe(frame)
+        elif self._backend == "insightface":
+            result = self._detect_insightface(frame)
         elif self._backend == "opencv_dnn":
-            return self._detect_opencv_dnn(frame)
+            result = self._detect_opencv_dnn(frame)
         else:
-            return self._detect_haar(frame)
+            result = self._detect_haar(frame)
+
+        conditions = self._assess_conditions(frame, result)
+        result["conditions"] = conditions
+
+        if result["face_count"] == 0 and self._allow_yolo_fallback and conditions in ("difficult", "extreme"):
+            merged = self._detect_yolo_fallback(frame, conditions)
+            if merged["face_count"] > 0:
+                return merged
+
+        return result
 
     def detect_best_face(self, frame: np.ndarray) -> dict | None:
         """Return the single highest-confidence face, or None."""
         result = self.detect(frame)
         if not result["faces"]:
             return None
-        return max(result["faces"], key=lambda f: f["confidence"])
+        return max(result["faces"], key=lambda f: f["confidence"] * ((f["bbox"][2] - f["bbox"][0]) * (f["bbox"][3] - f["bbox"][1])))
+
+    def _assess_conditions(self, frame: np.ndarray, result: dict) -> str:
+        """Classify capture conditions to decide if a fallback detector is worthwhile."""
+        h, w = frame.shape[:2]
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        brightness = float(np.mean(gray))
+        if brightness < YOLO_FACE_DIFFICULT_MIN_BRIGHTNESS * 0.55:
+            return "extreme"
+
+        largest = 0
+        for f in result["faces"]:
+            bw = f["bbox"][2] - f["bbox"][0]
+            bh = f["bbox"][3] - f["bbox"][1]
+            largest = max(largest, int(np.sqrt(max(0, bw * bh))))
+
+        frame_diag = float(np.hypot(h, w))
+        if largest == 0:
+            return "difficult"
+        if largest < YOLO_FACE_DIFFICULT_MIN_SIZE or largest < frame_diag * 0.06:
+            return "difficult"
+        if brightness < YOLO_FACE_DIFFICULT_MIN_BRIGHTNESS:
+            return "difficult"
+        return "normal"
+
+    def _detect_yolo_fallback(self, frame: np.ndarray, conditions: str) -> dict:
+        if self._yolo is None:
+            self._yolo = YOLOFaceDetector()
+        if not self._yolo.available:
+            return self._empty_result()
+        result = self._yolo.detect(frame)
+        if result["face_count"] == 0:
+            return self._empty_result()
+        result["backend"] = "yolov8"
+        result["conditions"] = conditions
+        result["fallback"] = True
+        return result
+
+    def _detect_mediapipe(self, frame: np.ndarray) -> dict:
+        landmark_result = self._landmark_detector.detect(frame)
+        faces = []
+        for det in landmark_result["faces"]:
+            faces.append(
+                {
+                    "bbox": det["bbox"],
+                    "confidence": round(float(det["confidence"]), 4),
+                    "landmarks": det["landmarks"],
+                    "embedding": None,
+                    "landmark_count": det["landmark_count"],
+                }
+            )
+        return {
+            "faces": faces,
+            "face_count": len(faces),
+            "face_present": len(faces) >= 1,
+            "multiple_faces": len(faces) > 1,
+            "backend": "mediapipe",
+        }
 
     def _detect_insightface(self, frame: np.ndarray) -> dict:
         try:
@@ -124,6 +243,7 @@ class FaceDetector:
                 "face_count": len(detections),
                 "face_present": len(detections) >= 1,
                 "multiple_faces": len(detections) > 1,
+                "backend": "insightface",
             }
         except Exception as e:
             logger.error(f"InsightFace detection error: {e}")
@@ -155,6 +275,7 @@ class FaceDetector:
             "face_count": len(detections),
             "face_present": len(detections) >= 1,
             "multiple_faces": len(detections) > 1,
+            "backend": "opencv_dnn",
         }
 
     def _detect_haar(self, frame: np.ndarray) -> dict:
@@ -181,7 +302,15 @@ class FaceDetector:
             "face_count": len(detections),
             "face_present": len(detections) >= 1,
             "multiple_faces": len(detections) > 1,
+            "backend": "haar_cascade",
         }
 
     def _empty_result(self) -> dict:
-        return {"faces": [], "face_count": 0, "face_present": False, "multiple_faces": False}
+        return {
+            "faces": [],
+            "face_count": 0,
+            "face_present": False,
+            "multiple_faces": False,
+            "backend": self.backend_name,
+            "conditions": "unknown",
+        }

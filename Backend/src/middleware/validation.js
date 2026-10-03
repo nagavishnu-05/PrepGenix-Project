@@ -38,6 +38,7 @@ exports.createTestSchema = zod_1.z.object({
     proctoringEnabled: zod_1.z.boolean().default(true),
     maxViolations: zod_1.z.number().min(1).max(20).default(1),
     autoSubmit: zod_1.z.boolean().default(true),
+    reviewOnly: zod_1.z.boolean().default(true),
     startDate: zod_1.z.string().optional(),
     endDate: zod_1.z.string().optional(),
 });

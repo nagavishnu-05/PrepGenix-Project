@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent } from "@/components/ui/card";
 import { CodeEditor } from "@/components/assessment/code-editor";
+import FaceAttentionOverlay from "@/components/assessment/face-attention-overlay";
 import { DifficultyBadge, SimpleProgress } from "@/components/portal/primitives";
 import { StatusBadge } from "@/components/portal/status-badge";
 import { cn } from "@/lib/utils";
@@ -52,9 +53,12 @@ export default function TakeTest() {
     const [enrollProgress, setEnrollProgress] = useState({ captured: 0, required: 5 });
     const startAtRef = useRef(Date.now());
     const durationRef = useRef(30 * 60);
+    const pausedTotalRef = useRef(0);
+    const pausedSinceRef = useRef(null);
     const previewRef = useRef(null);
     const faceCanvasRef = useRef(null);
     const enrollIntervalRef = useRef(null);
+    const didInitRef = useRef(null);
 
     const proctored = attempt?.proctoring?.enabled !== false;
 
@@ -76,6 +80,34 @@ export default function TakeTest() {
 
     const proctoringApiBase = import.meta.env.VITE_PROCTORING_API || "http://localhost:5050";
 
+    // While the registered candidate is not verified (different person, extra
+    // person, or no face), the assessment is blocked and the clock is paused.
+    // As soon as the enrolled face returns, the gate lifts automatically.
+    const identityBlocked = proctored && !proctoring.simulated && !!proctoring.faceMonitor?.identityBlocked;
+
+    // Single source of truth for the face badge so the top bar and the camera
+    // PIP footer cannot show contradictory text (e.g. "Verified" next to
+    // "No face") when the underlying fields update between renders.
+    const faceMonitor = proctoring.faceMonitor;
+    const faceStatus = !faceMonitor?.known
+        ? { label: "Starting", tone: "border-slate-300 bg-slate-100 text-slate-600 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300" }
+        : (faceMonitor.faceCount ?? 0) === 0
+            ? { label: "No face", tone: "border-amber-500/30 bg-amber-500/10 text-amber-500" }
+            : faceMonitor.match === false
+                ? { label: "Mismatch", tone: "border-red-500/30 bg-red-500/10 text-red-400" }
+                : faceMonitor.match === true
+                    ? { label: "Verified", tone: "border-emerald-500/30 bg-emerald-500/10 text-emerald-400" }
+                    : { label: "Face OK", tone: "border-slate-300 bg-slate-100 text-slate-600 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300" };
+
+    useEffect(() => {
+        if (identityBlocked) {
+            if (pausedSinceRef.current == null) pausedSinceRef.current = Date.now();
+        } else if (pausedSinceRef.current != null) {
+            pausedTotalRef.current += Date.now() - pausedSinceRef.current;
+            pausedSinceRef.current = null;
+        }
+    }, [identityBlocked]);
+
     useEffect(() => {
         if (faceCaptureState !== "pending") return;
         let cancelled = false;
@@ -88,17 +120,35 @@ export default function TakeTest() {
     useEffect(() => {
         if (faceCaptureState !== "pending" || !proctored) return;
         proctoring.reattachStream();
-    }, [faceCaptureState, proctored, proctoring]);
+    }, [faceCaptureState, proctored, proctoring.reattachStream]);
+
+    // Start a clean enrollment batch once per attempt. This must NOT run
+    // between captures: wiping the batch after each frame pinned the
+    // progress counter at 1/5 and enrollment never finished.
+    const enrollSessionKey = `${attempt?.id || "none"}:${attempt?.studentId || "none"}`;
+    useEffect(() => {
+        if (!proctored || !attempt?.id) return;
+        let cancelled = false;
+        setEnrollProgress({ captured: 0, required: 5 });
+        fetch(`${proctoringApiBase}/enroll-reset`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ attemptId: attempt.id }),
+        }).catch(() => {});
+        return () => { cancelled = true; };
+    }, [enrollSessionKey, proctored]);
 
     // Reattach camera stream when transitioning from enrollment to test view.
     // The video element changes between screens, so the stream must be re-bound.
+    // Depends on `reattachStream` directly rather than the whole `proctoring`
+    // object, which used to re-fire on every render.
     useEffect(() => {
         if (faceCaptureState !== "done" || !proctored) return;
         const timer = setTimeout(() => {
             proctoring.reattachStream();
         }, 300);
         return () => clearTimeout(timer);
-    }, [faceCaptureState, proctored, proctoring]);
+    }, [faceCaptureState, proctored, proctoring.reattachStream]);
 
     const captureFace = useCallback(async () => {
         if (faceCaptureState === "capturing") return;
@@ -129,7 +179,15 @@ export default function TakeTest() {
             setEnrollProgress({ captured: enrollResult.captured || 0, required: enrollResult.required_frames || 5 });
 
             if (enrollResult.status === "ready") {
-                await api.proctoring.registerFace(attempt.id, imageBase64);
+                // Archiving the reference image is best-effort. The identity
+                // reference is already registered in the proctoring service, so
+                // a storage failure must not block the student from starting.
+                try {
+                    const registered = await api.proctoring.registerFace(attempt.id, imageBase64);
+                    if (registered?.warning) console.warn(registered.warning);
+                } catch (regErr) {
+                    console.warn("Reference face archival failed (non-fatal):", regErr.message);
+                }
                 setFaceCaptureState("done");
                 return;
             }
@@ -186,6 +244,13 @@ export default function TakeTest() {
     }, []);
 
     useEffect(() => {
+        // React StrictMode double-invokes effects in development. Starting the
+        // attempt twice created duplicate attempt documents (one orphaned
+        // in_progress + one completed), which then blocked retakes with
+        // "already completed". Guard by URL key so a real navigation still runs.
+        const initKey = `${attemptId}|${isNew}`;
+        if (didInitRef.current === initKey) return;
+        didInitRef.current = initKey;
         (async () => {
             try {
                 let att;
@@ -193,9 +258,13 @@ export default function TakeTest() {
                     att = await api.tests.start(attemptId);
                 } else {
                     att = await api.tests.attempt(attemptId);
-                    if (att.status === "completed" || att.status === "cheated") {
+                    if (att.status === "completed" || att.status === "cheated" || att.status === "disqualified") {
                         setFinished(true);
-                        setResult(att.result);
+                        setResult(att.result || att.status);
+                        setAttempt(att);
+                        return;
+                    }
+                    if (att.status === "flagged" || att.reviewRequired) {
                         setAttempt(att);
                         return;
                     }
@@ -222,7 +291,9 @@ export default function TakeTest() {
     useEffect(() => {
         if (!attempt || finished) return;
         const iv = setInterval(() => {
-            const left = Math.round(durationRef.current - (Date.now() - startAtRef.current) / 1000);
+            const now = Date.now();
+            const paused = pausedTotalRef.current + (pausedSinceRef.current != null ? now - pausedSinceRef.current : 0);
+            const left = Math.round(durationRef.current - (now - startAtRef.current - paused) / 1000);
             setTimeLeft(Math.max(0, left));
             if (left <= 0) {
                 clearInterval(iv);
@@ -230,6 +301,7 @@ export default function TakeTest() {
                 api.tests.finish(attempt.id).then((f) => {
                     setFinished(true);
                     setResult(f.result);
+                    if (f.attempt) setAttempt(f.attempt);
                 }).catch(() => {});
             }
         }, 1000);
@@ -238,7 +310,7 @@ export default function TakeTest() {
     }, [attempt, finished]);
 
     const handleSubmit = async () => {
-        if (!question || feedback || submitting) return;
+        if (identityBlocked || !question || feedback || submitting) return;
         setSubmitting(true);
         setError("");
         try {
@@ -268,6 +340,7 @@ export default function TakeTest() {
     };
 
     const handleFinish = async () => {
+        if (identityBlocked) return;
         if (!confirm("Submit the test now?")) return;
         proctoring.stop();
         try {
@@ -303,10 +376,10 @@ export default function TakeTest() {
     if (error && !attempt) {
         return (
             <div className="mx-auto max-w-xl">
-                <Card className="border-zinc-800 bg-zinc-900/40">
+                <Card className="border-slate-200 bg-white dark:border-zinc-800 dark:bg-zinc-900/40">
                     <CardContent className="flex flex-col items-center gap-4 py-12 text-center">
                         <XCircle className="h-10 w-10 text-red-400" />
-                        <p className="text-sm text-zinc-300">{error}</p>
+                        <p className="text-sm text-slate-700 dark:text-zinc-300">{error}</p>
                         <Button variant="outline" onClick={() => navigate("/student/tests")}>Back to tests</Button>
                     </CardContent>
                 </Card>
@@ -319,6 +392,7 @@ export default function TakeTest() {
         const correctCount = answers.filter((a) => a.correct).length;
         const isDisqualified = result === "disqualified" || attempt?.disqualified;
         const isCheated = result === "cheated" || attempt?.status === "cheated";
+        const isTimedOut = !!attempt?.timedOut && !isCheated && !isDisqualified;
 
         const cheatingReasonLabels = {
             FULLSCREEN_EXIT: "You exited fullscreen mode during the test.",
@@ -352,59 +426,67 @@ export default function TakeTest() {
 
         return (
             <div className="mx-auto max-w-2xl">
-                <Card className={cn("border-zinc-800 bg-zinc-900/40", isCheated && "border-red-500/30")}>
+                <Card className={cn("border-slate-200 bg-white dark:border-zinc-800 dark:bg-zinc-900/40", isCheated && "border-red-500/30")}>
                     <CardContent className="flex flex-col items-center gap-4 py-14 text-center">
-                        <div className={cn("flex h-16 w-16 items-center justify-center rounded-full", isCheated ? "bg-red-500/20 text-red-400 border border-red-500/30" : isDisqualified ? "bg-red-500/20 text-red-400 border border-red-500/30" : "bg-gradient-to-br from-violet-600 to-indigo-600 text-white")}>
-                            {isCheated || isDisqualified ? <ShieldAlert className="h-8 w-8" /> : <CheckCircle2 className="h-8 w-8" />}
+                        <div className={cn("flex h-16 w-16 items-center justify-center rounded-full", isCheated || isDisqualified ? "bg-red-500/20 text-red-400 border border-red-500/30" : isTimedOut ? "bg-amber-500/20 text-amber-500 border border-amber-500/30" : "bg-gradient-to-br from-violet-600 to-indigo-600 text-white")}>
+                            {isCheated || isDisqualified ? <ShieldAlert className="h-8 w-8" /> : isTimedOut ? <Clock className="h-8 w-8" /> : <CheckCircle2 className="h-8 w-8" />}
                         </div>
-                        <h2 className="text-2xl font-bold text-white">
-                            {isCheated ? "Exam Automatically Submitted" : isDisqualified ? "Test Terminated & Disqualified" : "Test completed"}
+                        <h2 className="text-2xl font-bold text-slate-900 dark:text-white">
+                            {isCheated ? "Exam Automatically Submitted" : isDisqualified ? "Test Terminated & Disqualified" : isTimedOut ? "Time Expired" : "Test completed"}
                         </h2>
+                        {isTimedOut && (
+                            <div className="max-w-md rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-700 dark:text-amber-300">
+                                <p className="font-semibold">The time limit for this test was reached.</p>
+                                <p className="mt-1 text-xs text-amber-600/80 dark:text-amber-300/80">
+                                    Your saved answers were submitted automatically when the timer expired.
+                                </p>
+                            </div>
+                        )}
                         {isCheated && (
-                            <div className="max-w-md rounded-xl border border-red-500/30 bg-red-500/10 p-5 text-sm text-red-300 space-y-3">
+                            <div className="max-w-md rounded-xl border border-red-500/30 bg-red-500/10 p-5 text-sm text-red-700 dark:text-red-300 space-y-3">
                                 <p className="font-semibold">Your examination has been terminated due to a proctoring violation.</p>
                                 <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-3">
-                                    <p className="text-xs font-semibold uppercase tracking-wide text-red-400">Reason</p>
-                                    <p className="mt-1 text-sm text-red-300">{cheatingLabel}</p>
+                                    <p className="text-xs font-semibold uppercase tracking-wide text-red-600 dark:text-red-400">Reason</p>
+                                    <p className="mt-1 text-sm text-red-700 dark:text-red-300">{cheatingLabel}</p>
                                 </div>
                                 {cheatingReason && (
                                     <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-3">
-                                        <p className="text-xs font-semibold uppercase tracking-wide text-red-400">Violation Code</p>
-                                        <p className="mt-1 font-mono text-xs text-red-300">{cheatingReason}</p>
+                                        <p className="text-xs font-semibold uppercase tracking-wide text-red-600 dark:text-red-400">Violation Code</p>
+                                        <p className="mt-1 font-mono text-xs text-red-700 dark:text-red-300">{cheatingReason}</p>
                                     </div>
                                 )}
                                 {attempt?.cheatingTimestamp && (
-                                    <p className="text-xs text-red-300/70">Detected at: {new Date(attempt.cheatingTimestamp).toLocaleString()}</p>
+                                    <p className="text-xs text-red-600/80 dark:text-red-300/70">Detected at: {new Date(attempt.cheatingTimestamp).toLocaleString()}</p>
                                 )}
-                                <p className="text-xs text-red-300/70">Status: <span className="font-semibold text-red-400">CHEATED</span></p>
+                                <p className="text-xs text-red-600/80 dark:text-red-300/70">Status: <span className="font-semibold text-red-400">CHEATED</span></p>
                             </div>
                         )}
                         {isDisqualified && !isCheated && (
-                            <div className="max-w-md rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-300">
+                            <div className="max-w-md rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-700 dark:text-red-300">
                                 <p className="font-semibold">Full Screen Violation</p>
-                                <p className="mt-1 text-xs text-red-300/80">
+                                <p className="mt-1 text-xs text-red-600/80 dark:text-red-300/80">
                                     You exited fullscreen mode during the test. Per proctoring policies, your test attempt was immediately terminated and removed.
                                 </p>
                             </div>
                         )}
                         {result && <StatusBadge value={isCheated ? "cheated" : result} className="px-4 py-1 text-base" />}
                         {attempt?.violations > 0 && !isDisqualified && !isCheated && (
-                            <p className="flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-sm text-amber-400">
+                            <p className="flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-sm text-amber-700 dark:text-amber-400">
                                 <AlertTriangle className="h-4 w-4" /> {attempt.violations} proctoring violation{attempt.violations === 1 ? "" : "s"} recorded
                             </p>
                         )}
                         <div className="mt-2 grid w-full max-w-sm grid-cols-3 gap-3">
-                            <div className="rounded-lg border border-zinc-800 bg-zinc-950/40 p-3">
-                                <p className="text-2xl font-bold text-white">{isCheated || isDisqualified ? 0 : attempt?.score ?? 0}</p>
-                                <p className="text-xs text-zinc-500">Score</p>
+                            <div className="rounded-lg border border-slate-200 bg-slate-50 dark:border-zinc-800 dark:bg-zinc-950/40 p-3">
+                                <p className="text-2xl font-bold text-slate-900 dark:text-white">{isCheated || isDisqualified ? 0 : attempt?.score ?? 0}</p>
+                                <p className="text-xs text-slate-500 dark:text-zinc-500">Score</p>
                             </div>
-                            <div className="rounded-lg border border-zinc-800 bg-zinc-950/40 p-3">
-                                <p className="text-2xl font-bold text-white">{attempt?.totalScore ?? 0}</p>
-                                <p className="text-xs text-zinc-500">Total</p>
+                            <div className="rounded-lg border border-slate-200 bg-slate-50 dark:border-zinc-800 dark:bg-zinc-950/40 p-3">
+                                <p className="text-2xl font-bold text-slate-900 dark:text-white">{attempt?.totalScore ?? 0}</p>
+                                <p className="text-xs text-slate-500 dark:text-zinc-500">Total</p>
                             </div>
-                            <div className="rounded-lg border border-zinc-800 bg-zinc-950/40 p-3">
-                                <p className="text-2xl font-bold text-white">{isCheated || isDisqualified ? 0 : correctCount}</p>
-                                <p className="text-xs text-zinc-500">Correct</p>
+                            <div className="rounded-lg border border-slate-200 bg-slate-50 dark:border-zinc-800 dark:bg-zinc-950/40 p-3">
+                                <p className="text-2xl font-bold text-slate-900 dark:text-white">{isCheated || isDisqualified ? 0 : correctCount}</p>
+                                <p className="text-xs text-slate-500 dark:text-zinc-500">Correct</p>
                             </div>
                         </div>
                         <div className="mt-4 flex gap-3">
@@ -434,11 +516,11 @@ export default function TakeTest() {
                         <div className="flex h-16 w-16 items-center justify-center rounded-full bg-red-500/15 text-red-400">
                             <ShieldAlert className="h-8 w-8" />
                         </div>
-                        <h2 className="text-2xl font-bold text-white">Attempt Paused for Staff Review</h2>
-                        <p className="text-sm text-zinc-300">
+                        <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Attempt Paused for Staff Review</h2>
+                        <p className="text-sm text-slate-600 dark:text-zinc-300">
                             A proctoring violation was detected on this attempt. The test is locked until the staff coordinator reviews and resets it.
                         </p>
-                        <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-xs text-red-300">
+                        <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-xs text-red-700 dark:text-red-300">
                             {attempt?.violations || 0} violation{(attempt?.violations || 0) === 1 ? "" : "s"} recorded.
                         </div>
                         <Button variant="outline" onClick={() => navigate("/student/tests")}>Back to tests</Button>
@@ -451,22 +533,22 @@ export default function TakeTest() {
     if (proctored && proctoring.status !== "active") {
         return (
             <div className="mx-auto max-w-lg">
-                <Card className="border-zinc-800 bg-zinc-900/40">
+                <Card className="border-slate-200 bg-white dark:border-zinc-800 dark:bg-zinc-900/40">
                     <CardContent className="flex flex-col items-center gap-4 py-10 text-center">
                         <div className="flex h-16 w-16 items-center justify-center rounded-full bg-gradient-to-br from-amber-500 to-red-600">
                             <ShieldAlert className="h-8 w-8 text-white" />
                         </div>
-                        <h2 className="text-2xl font-bold text-white">Proctored test</h2>
-                        <p className="text-sm text-zinc-400">
-                            {attempt.testTitle} is monitored. You must enable your <span className="font-medium text-zinc-200">camera</span>,{" "}
-                            <span className="font-medium text-zinc-200">microphone</span>, and <span className="font-medium text-zinc-200">fullscreen</span> to continue.
+                        <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Proctored test</h2>
+                        <p className="text-sm text-slate-600 dark:text-zinc-400">
+                            {attempt.testTitle} is monitored. You must enable your <span className="font-medium text-slate-800 dark:text-zinc-200">camera</span>,{" "}
+                            <span className="font-medium text-slate-800 dark:text-zinc-200">microphone</span>, and <span className="font-medium text-slate-800 dark:text-zinc-200">fullscreen</span> to continue.
                             Any violation of the proctoring rules will result in immediate test submission and disqualification.
                         </p>
 
                         {proctoring.status === "ready" && (
-                            <div className="w-full overflow-hidden rounded-xl border border-zinc-800 bg-zinc-950">
+                            <div className="w-full overflow-hidden rounded-xl border border-slate-200 bg-slate-100 dark:border-zinc-800 dark:bg-zinc-950">
                                 <video ref={previewRef} autoPlay playsInline muted className="h-52 w-full object-cover" />
-                                <div className="flex items-center justify-between px-3 py-2 text-xs text-zinc-400">
+                                <div className="flex items-center justify-between px-3 py-2 text-xs text-slate-500 dark:text-zinc-400">
                                     <span className="flex items-center gap-1.5"><Camera className="h-3.5 w-3.5 text-emerald-400" /> Camera on</span>
                                     <span className="flex items-center gap-1.5"><Mic className="h-3.5 w-3.5 text-emerald-400" /> Mic on</span>
                                 </div>
@@ -475,7 +557,7 @@ export default function TakeTest() {
 
                         {proctoring.status === "denied" && (
                             <div className="w-full space-y-2">
-                                <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
+                                <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
                                     Hardware camera or microphone permission was denied or unavailable on this device.
                                 </p>
                             </div>
@@ -512,48 +594,48 @@ export default function TakeTest() {
         const capturePct = enrollProgress.required > 0 ? Math.round((enrollProgress.captured / enrollProgress.required) * 100) : 0;
         return (
             <div className="mx-auto max-w-lg">
-                <Card className="border-zinc-800 bg-zinc-900/40">
+                <Card className="border-slate-200 bg-white dark:border-zinc-800 dark:bg-zinc-900/40">
                     <CardContent className="flex flex-col items-center gap-4 py-10 text-center">
                         <div className="flex h-16 w-16 items-center justify-center rounded-full bg-gradient-to-br from-violet-500 to-indigo-600">
                             <ScanFace className="h-8 w-8 text-white" />
                         </div>
-                        <h2 className="text-2xl font-bold text-white">Face Enrollment</h2>
-                        <p className="text-sm text-zinc-400">
+                        <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Face Enrollment</h2>
+                        <p className="text-sm text-slate-600 dark:text-zinc-400">
                             Position your face inside the camera frame. We'll capture multiple frames to create a reliable identity reference.
                         </p>
 
-                        <div className="w-full overflow-hidden rounded-xl border border-zinc-800 bg-zinc-950">
+                        <div className="w-full overflow-hidden rounded-xl border border-slate-200 bg-slate-100 dark:border-zinc-800 dark:bg-zinc-950">
                             <video ref={previewRef} autoPlay playsInline muted className="h-52 w-full object-cover" />
-                            <div className="flex items-center justify-center gap-1.5 px-3 py-2 text-xs text-zinc-400">
+                            <div className="flex items-center justify-center gap-1.5 px-3 py-2 text-xs text-slate-500 dark:text-zinc-400">
                                 <Camera className="h-3.5 w-3.5 text-emerald-400" /> Camera active
                             </div>
                         </div>
 
                         {faceCaptureState !== "pending" && faceCaptureState !== "error" && (
                             <div className="w-full space-y-2">
-                                <div className="flex justify-between text-xs text-zinc-400">
+                                <div className="flex justify-between text-xs text-slate-500 dark:text-zinc-400">
                                     <span>Capturing face...</span>
                                     <span>{enrollProgress.captured} / {enrollProgress.required}</span>
                                 </div>
-                                <div className="h-2 w-full overflow-hidden rounded-full bg-zinc-800">
+                                <div className="h-2 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-zinc-800">
                                     <div
                                         className="h-full rounded-full bg-gradient-to-r from-violet-500 to-indigo-500 transition-all duration-300"
                                         style={{ width: `${capturePct}%` }}
                                     />
                                 </div>
-                                <p className="text-center text-xs text-zinc-500">Keep your face visible and steady</p>
+                                <p className="text-center text-xs text-slate-500 dark:text-zinc-400">Keep your face visible and steady</p>
                             </div>
                         )}
 
                         {faceCaptureState === "error" && faceCaptureError && (
-                            <div className="w-full rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
+                            <div className="w-full rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
                                 <AlertTriangle className="mr-1 inline h-3.5 w-3.5" />
                                 {faceCaptureError}
                             </div>
                         )}
 
                         {faceCaptureState === "pending" && faceCaptureError && (
-                            <div className="w-full rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-xs text-blue-300">
+                            <div className="w-full rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-xs text-blue-700 dark:text-blue-300">
                                 {faceCaptureError}
                             </div>
                         )}
@@ -595,19 +677,15 @@ export default function TakeTest() {
                             {proctoring.cameraActive ? <Video className="h-3.5 w-3.5" /> : <VideoOff className="h-3.5 w-3.5" />}
                             Cam
                         </span>
-                        <span className={cn("flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs",
-                            proctoring.faceMonitor?.match === true ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-400" :
-                            proctoring.faceMonitor?.match === false ? "border-red-500/30 bg-red-500/10 text-red-400" :
-                            "border-zinc-700 bg-zinc-800 text-zinc-300"
-                        )}>
+                        <span className={cn("flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs", faceStatus.tone)}>
                             <ScanFace className="h-3.5 w-3.5" />
-                            {proctoring.faceMonitor?.match === true ? "Verified" : proctoring.faceMonitor?.match === false ? "Mismatch" : "Face"}
+                            {faceStatus.label}
                         </span>
                         <span className={cn("flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs", proctoring.micActive ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-400" : "border-red-500/30 bg-red-500/10 text-red-400")}>
                             {proctoring.micActive ? <Mic className="h-3.5 w-3.5" /> : <MicOff className="h-3.5 w-3.5" />}
                             Mic
                         </span>
-                        <span className={cn("flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs", proctoring.fullscreenActive ? "border-zinc-700 bg-zinc-800 text-zinc-300" : "border-red-500/30 bg-red-500/10 text-red-400")}>
+                        <span className={cn("flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs", proctoring.fullscreenActive ? "border-slate-300 bg-slate-100 text-slate-600 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300" : "border-red-500/30 bg-red-500/10 text-red-400")}>
                             <Maximize2 className="h-3.5 w-3.5" />
                             {proctoring.fullscreenActive ? "Fullscreen" : "Not fullscreen"}
                         </span>
@@ -629,7 +707,7 @@ export default function TakeTest() {
                             <div className="mb-4 flex flex-wrap items-center gap-3">
                                 <span className="rounded-lg bg-slate-200 px-3 py-1 text-xs font-medium text-slate-700 dark:bg-zinc-800 dark:text-zinc-300">Question {questionIndex + 1}</span>
                                 <DifficultyBadge difficulty={question.difficulty} />
-                                <span className="rounded-lg bg-zinc-800/70 px-3 py-1 text-xs text-zinc-400">
+                                <span className="rounded-lg bg-slate-100 px-3 py-1 text-xs text-slate-600 dark:bg-zinc-800/70 dark:text-zinc-400">
                                     {question.type === "coding" ? `Coding • ${question.language}` : question.format === "mcq" ? "MCQ" : question.format === "fillup" ? "Fill in the blank" : "Code Snippet"}
                                 </span>
                                 {adaptive && (
@@ -647,21 +725,21 @@ export default function TakeTest() {
                                 <div className="mt-4 space-y-3">
                                     {question.constraints?.length > 0 && (
                                         <div>
-                                            <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Constraints</p>
-                                            <ul className="mt-1 list-inside list-disc text-sm text-zinc-300">
+                                            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-zinc-500">Constraints</p>
+                                            <ul className="mt-1 list-inside list-disc text-sm text-slate-700 dark:text-zinc-300">
                                                 {question.constraints.map((c, i) => <li key={i}>{c}</li>)}
                                             </ul>
                                         </div>
                                     )}
-                                    {question.inputFormat && <p className="text-sm text-zinc-300"><span className="font-semibold text-zinc-400">Input: </span>{question.inputFormat}</p>}
-                                    {question.outputFormat && <p className="text-sm text-zinc-300"><span className="font-semibold text-zinc-400">Output: </span>{question.outputFormat}</p>}
+                                    {question.inputFormat && <p className="text-sm text-slate-700 dark:text-zinc-300"><span className="font-semibold text-slate-500 dark:text-zinc-400">Input: </span>{question.inputFormat}</p>}
+                                    {question.outputFormat && <p className="text-sm text-slate-700 dark:text-zinc-300"><span className="font-semibold text-slate-500 dark:text-zinc-400">Output: </span>{question.outputFormat}</p>}
                                     {(question.examples || []).map((ex, i) => (
-                                        <div key={i} className="rounded-lg border border-zinc-800 bg-zinc-950/50 p-3">
-                                            <p className="text-xs font-semibold text-zinc-400">Example {i + 1}</p>
-                                            <pre className="mt-1 text-sm text-zinc-200">
-                                                <span className="text-zinc-500">Input:</span> {ex.input}
+                                        <div key={i} className="rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-zinc-800 dark:bg-zinc-950/50">
+                                            <p className="text-xs font-semibold text-slate-500 dark:text-zinc-400">Example {i + 1}</p>
+                                            <pre className="mt-1 text-sm text-slate-800 dark:text-zinc-200">
+                                                <span className="text-slate-400 dark:text-zinc-500">Input:</span> {ex.input}
                                                 {"\n"}
-                                                <span className="text-zinc-500">Output:</span> {ex.output}
+                                                <span className="text-slate-400 dark:text-zinc-500">Output:</span> {ex.output}
                                             </pre>
                                         </div>
                                     ))}
@@ -672,7 +750,7 @@ export default function TakeTest() {
                                 <div
                                     className={cn(
                                         "mt-4 flex items-start gap-2 rounded-lg border p-3 text-sm",
-                                        feedback.correct ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300" : "border-red-500/30 bg-red-500/10 text-red-300"
+                                        feedback.correct ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "border-red-500/30 bg-red-500/10 text-red-700 dark:text-red-300"
                                     )}
                                 >
                                     {feedback.correct ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" /> : <XCircle className="mt-0.5 h-4 w-4 shrink-0" />}
@@ -702,10 +780,10 @@ export default function TakeTest() {
                 </div>
 
                 <div className="flex flex-col gap-5 pb-20">
-                    <Card className="border-zinc-800 bg-zinc-900/40">
+                    <Card className="border-slate-200 bg-white dark:border-zinc-800 dark:bg-zinc-900/40">
                         <CardContent className="p-5">
                             <div className="mb-4 flex items-center justify-between">
-                                <p className="text-sm font-medium text-zinc-400">
+                                <p className="text-sm font-medium text-slate-500 dark:text-zinc-400">
                                     {question.format === "mcq" ? "Choose one option" : question.type === "coding" ? "Write your code" : "Type your answer"}
                                 </p>
                             </div>
@@ -716,7 +794,7 @@ export default function TakeTest() {
                                         <select
                                             value={language}
                                             onChange={(e) => setLanguage(e.target.value)}
-                                            className="rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-1.5 text-sm text-zinc-200 focus:outline-none focus:ring-2 focus:ring-violet-500"
+                                            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200"
                                         >
                                             <option value="python">Python</option>
                                             <option value="javascript">JavaScript</option>
@@ -725,10 +803,10 @@ export default function TakeTest() {
                                             <Play className="h-3.5 w-3.5" /> {running ? "Running..." : "Run sample"}
                                         </Button>
                                     </div>
-                                    <div className="h-72 overflow-hidden rounded-lg border border-zinc-800">
+                                    <div className="h-72 overflow-hidden rounded-lg border border-slate-200 dark:border-zinc-800">
                                         <CodeEditor language={language} value={code} onChange={setCode} />
                                     </div>
-                                    {runOutput && <pre className="max-h-32 overflow-auto rounded-lg border border-zinc-800 bg-zinc-950 p-3 text-xs text-zinc-300">{runOutput}</pre>}
+                                    {runOutput && <pre className="max-h-32 overflow-auto rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-300">{runOutput}</pre>}
                                 </div>
                             ) : question.format === "mcq" ? (
                                 <div className="space-y-2">
@@ -741,7 +819,7 @@ export default function TakeTest() {
                                                 answer === i ? "border-violet-500 bg-violet-600/10 text-violet-800 dark:text-violet-200" : "border-slate-200 bg-white text-slate-700 hover:border-slate-300 dark:border-zinc-800 dark:bg-zinc-950/40 dark:text-zinc-300 dark:hover:border-zinc-700"
                                             )}
                                         >
-                                            <span className={cn("flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-xs font-semibold", answer === i ? "border-violet-400 bg-violet-500 text-white" : "border-zinc-700 text-zinc-400")}>
+                                            <span className={cn("flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-xs font-semibold", answer === i ? "border-violet-400 bg-violet-500 text-white" : "border-slate-300 text-slate-500 dark:border-zinc-700 dark:text-zinc-400")}>
                                                 {String.fromCharCode(65 + i)}
                                             </span>
                                             <span className="whitespace-pre-wrap">{opt}</span>
@@ -766,7 +844,7 @@ export default function TakeTest() {
 
                             {feedback && attempt?.totalScore > 0 && (
                                 <div className="mt-4">
-                                    <div className="mb-1 flex justify-between text-xs text-zinc-500">
+                                    <div className="mb-1 flex justify-between text-xs text-slate-500 dark:text-zinc-500">
                                         <span>Score</span>
                                         <span>{attempt.score}/{attempt.totalScore}</span>
                                     </div>
@@ -781,19 +859,50 @@ export default function TakeTest() {
             {/* Camera PIP */}
             {proctored && proctoring.status === "active" && (
                 <div className="absolute bottom-4 right-4 z-10 w-44 overflow-hidden rounded-xl border border-zinc-700 bg-zinc-900 shadow-2xl">
-                    <video ref={previewRef} autoPlay playsInline muted className="h-28 w-full object-cover" />
+                    <div className="relative">
+                        <video ref={previewRef} autoPlay playsInline muted className="h-28 w-full object-cover" />
+                        <FaceAttentionOverlay metrics={proctoring.faceMonitor?.metrics} width={176} height={112} />
+                    </div>
                     <div className="flex items-center justify-between px-2 py-1 text-[10px] text-zinc-400">
                         <span className="flex items-center gap-1">
                             <span className={cn("h-1.5 w-1.5 rounded-full", proctoring.cameraActive ? "bg-emerald-400" : "bg-red-500")} />
-                            {proctoring.faceMonitor?.match === true && <span className="text-emerald-400">Verified</span>}
-                            {proctoring.faceMonitor?.match === false && <span className="text-red-400">Mismatch</span>}
-                            {proctoring.faceMonitor?.match === null && proctoring.faceMonitor?.faceCount > 0 && <span>Face OK</span>}
-                            {(!proctoring.faceMonitor || proctoring.faceMonitor?.faceCount === 0) && <span className="text-amber-400">No face</span>}
+                            <span>{faceStatus.label}</span>
                         </span>
                         <span className="truncate">
-                            {proctoring.faceMonitor?.faceCount > 0 ? `${proctoring.faceMonitor.faceCount} face${proctoring.faceMonitor.faceCount === 1 ? "" : "s"}` : "no face"}
+                            {!faceMonitor?.known
+                                ? "starting"
+                                : (faceMonitor.faceCount ?? 0) > 0
+                                    ? `${faceMonitor.faceCount} face${faceMonitor.faceCount === 1 ? "" : "s"}`
+                                    : "no face"}
                         </span>
                     </div>
+                </div>
+            )}
+
+            {/* Identity gate: blocks the test until the enrolled face is verified */}
+            {identityBlocked && (
+                <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/80 p-4 backdrop-blur-sm">
+                    <Card className="w-full max-w-md border-amber-500/40 bg-white dark:bg-zinc-900">
+                        <CardContent className="flex flex-col items-center gap-4 py-10 text-center">
+                            <div className="flex h-16 w-16 items-center justify-center rounded-full bg-amber-500/15 text-amber-500">
+                                <ScanFace className="h-8 w-8" />
+                            </div>
+                            <h2 className="text-xl font-bold text-slate-900 dark:text-white">
+                                Identity verification required
+                            </h2>
+                            <p className="text-sm text-slate-600 dark:text-zinc-300">
+                                {proctoring.faceMonitor?.identityBlockReason ||
+                                    "The registered candidate is not verified on camera."}
+                            </p>
+                            <div className="flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+                                <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                                Answering is blocked and the timer is paused until verification succeeds.
+                            </div>
+                            <p className="text-xs text-slate-400 dark:text-zinc-500">
+                                Waiting for the registered candidate to return to the camera...
+                            </p>
+                        </CardContent>
+                    </Card>
                 </div>
             )}
         </div>

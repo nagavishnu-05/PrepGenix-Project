@@ -9,6 +9,7 @@ import { Switch } from "@/components/ui/switch";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { useAuthStore } from "@/store/auth-store";
+import { useUIStore } from "@/store/ui-store";
 import { formatDate } from "@/lib/utils";
 export default function ProfilePage() {
     const { user } = useAuthStore();
@@ -16,7 +17,9 @@ export default function ProfilePage() {
     const [email, setEmail] = useState(user?.email || "");
     const [phone, setPhone] = useState("");
     const [notifications, setNotifications] = useState(true);
-    const [darkMode, setDarkMode] = useState(true);
+    const theme = useUIStore((s) => s.theme);
+    const setTheme = useUIStore((s) => s.setTheme);
+    const darkMode = theme === "dark";
     const initials = user?.name
         ? user.name
             .split(" ")
@@ -170,7 +173,7 @@ export default function ProfilePage() {
                       Use dark theme across the platform
                     </p>
                   </div>
-                  <Switch checked={darkMode} onCheckedChange={setDarkMode}/>
+                  <Switch checked={darkMode} onCheckedChange={(v) => setTheme(v ? "dark" : "light")}/>
                 </div>
               </CardContent>
             </Card>

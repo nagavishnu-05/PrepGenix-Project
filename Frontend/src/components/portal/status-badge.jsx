@@ -13,6 +13,9 @@ const VARIANTS = {
     scheduled: "border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-500/30 dark:bg-blue-500/15 dark:text-blue-400",
     cancelled: "border-slate-300 bg-slate-100 text-slate-500 dark:border-zinc-600 dark:bg-zinc-800/60 dark:text-zinc-400",
     pending: "border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-500/30 dark:bg-blue-500/15 dark:text-blue-400",
+    flagged: "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/15 dark:text-amber-400",
+    cheated: "border-red-200 bg-red-50 text-red-700 dark:border-red-500/30 dark:bg-red-500/15 dark:text-red-400",
+    disqualified: "border-red-200 bg-red-50 text-red-700 dark:border-red-500/30 dark:bg-red-500/15 dark:text-red-400",
 };
 
 export function StatusBadge({ value, fallback = "—", className }) {

@@ -407,8 +407,8 @@ export default function LiveMonitoring() {
                                                                     <span className="text-slate-550 dark:text-zinc-500">{new Date(v.timestamp).toLocaleString()}</span>
                                                                 </div>
                                                                 <p className="mt-1 text-xs text-slate-605 dark:text-zinc-400">{v.description}</p>
-                                                                {v.cameraFrame && (
-                                                                    <img src={`data:image/jpeg;base64,${v.cameraFrame}`} alt="violation frame" className="mt-2 h-24 rounded border border-slate-200 dark:border-zinc-800" />
+                                                                {v.cameraFrameUrl && (
+                                                                    <img src={v.cameraFrameUrl} alt="violation frame" className="mt-2 h-24 rounded border border-slate-200 dark:border-zinc-800" />
                                                                 )}
                                                             </div>
                                                         ))
