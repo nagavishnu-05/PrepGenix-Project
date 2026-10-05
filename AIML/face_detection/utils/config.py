@@ -14,7 +14,23 @@ FACE_DETECTION_ENABLED = os.environ.get("FACE_DETECTION_ENABLED", "true").lower(
 FACE_RECOGNITION_ENABLED = os.environ.get("FACE_RECOGNITION_ENABLED", "true").lower() == "true"
 
 FACE_DETECTION_CONFIDENCE = float(os.environ.get("FACE_DETECTION_CONFIDENCE", "0.50"))
-FACE_MATCH_THRESHOLD = float(os.environ.get("FACE_MATCH_THRESHOLD", "0.30"))
+# Calibrated on the full official LFW protocol (6000 pairs, buffalo_sc pack):
+# AUC 0.997, EER 0.8-0.9%, and 0.25 is the highest threshold holding the
+# false-accusation rate near 0.1% while keeping ~99% of genuine matches. On
+# degraded (blur/dim/JPEG) copies it stays at 0.249. Higher values reject real
+# candidates on webcam-quality frames; lower values start accepting impostors.
+FACE_MATCH_THRESHOLD = float(os.environ.get("FACE_MATCH_THRESHOLD", "0.25"))
+# RetinaFace input size. 640 is accurate but costs ~1.7s per frame on CPU,
+# which shows up directly as popup latency. 320 keeps detection in the tens of
+# milliseconds while still resolving webcam-sized faces.
+FACE_DETECT_SIZE = int(os.environ.get("FACE_DETECT_SIZE", "320"))
+
+# InsightFace model pack. "buffalo_sc" ships the lighter SCRFD-500m detector and
+# w600k_mbf recognition head, which run ~3-4x faster than buffalo_l on CPU at
+# comparable LFW accuracy. Local packs under models/insightface/<pack> are used
+# without downloading; anything else falls back to the insightface cache.
+FACE_MODEL_PACK = os.environ.get("FACE_MODEL_PACK", "buffalo_sc").strip().lower()
+INSIGHTFACE_MODEL_ROOT = MODELS_DIR / "insightface"
 
 FACE_DETECTOR_BACKEND = os.environ.get("FACE_DETECTOR_BACKEND", "auto").strip().lower()
 MEDIAPIPE_ENABLED = os.environ.get("MEDIAPIPE_ENABLED", "true").lower() == "true"
@@ -45,10 +61,10 @@ YUNET_MIN_SIZE_PX = int(os.environ.get("YUNET_MIN_SIZE_PX", "24"))
 LANDMARK_CROP_PADDING = float(os.environ.get("LANDMARK_CROP_PADDING", "0.6"))
 
 YOLO_FACE_ENABLED = os.environ.get("YOLO_FACE_ENABLED", "true").lower() == "true"
-YOLO_FACE_MODEL = os.environ.get("YOLO_FACE_MODEL", "yolov8n-face.pt")
+YOLO_FACE_MODEL = os.environ.get("YOLO_FACE_MODEL", "yolov8n-face-300w-lp.pt")
 YOLO_FACE_WEIGHTS = os.environ.get(
     "YOLO_FACE_WEIGHTS",
-    str(MODELS_DIR / "face_detection" / os.environ.get("YOLO_FACE_MODEL", "yolov8n-face.pt")),
+    str(MODELS_DIR / "face_detection" / YOLO_FACE_MODEL),
 )
 YOLO_FACE_CONFIDENCE = float(os.environ.get("YOLO_FACE_CONFIDENCE", "0.35"))
 YOLO_FACE_FALLBACK_ENABLED = os.environ.get("YOLO_FACE_FALLBACK_ENABLED", "true").lower() == "true"
@@ -105,11 +121,26 @@ NO_FACE_ABSENCE_GRACE_SECONDS = float(os.environ.get("NO_FACE_ABSENCE_GRACE_SECO
 HEAD_TURNED_CONFIRMATION_FRAMES = int(os.environ.get("HEAD_TURNED_CONFIRMATION_FRAMES", "5"))
 EYES_CLOSED_CONFIRMATION_FRAMES = int(os.environ.get("EYES_CLOSED_CONFIRMATION_FRAMES", "3"))
 
+# Face identity and presence are confirmed by *time*, not by a frame count.
+# A fixed frame count makes the warning delay depend entirely on how fast the
+# client polls: at a 2s interval "3 frames" is a 6 second warning. These
+# windows keep the delay constant regardless of polling cadence, and the
+# sample minimum stops a single bad inference from triggering anything.
+IDENTITY_MISMATCH_CONFIRM_SECONDS = float(os.environ.get("IDENTITY_MISMATCH_CONFIRM_SECONDS", "0.8"))
+IDENTITY_MISMATCH_MIN_SAMPLES = int(os.environ.get("IDENTITY_MISMATCH_MIN_SAMPLES", "2"))
+MULTIPLE_FACE_CONFIRM_SECONDS = float(os.environ.get("MULTIPLE_FACE_CONFIRM_SECONDS", "0.8"))
+MULTIPLE_FACE_MIN_SAMPLES = int(os.environ.get("MULTIPLE_FACE_MIN_SAMPLES", "2"))
+NO_FACE_CONFIRM_SECONDS = float(os.environ.get("NO_FACE_CONFIRM_SECONDS", "0.6"))
+NO_FACE_MIN_SAMPLES = int(os.environ.get("NO_FACE_MIN_SAMPLES", "2"))
+# The scene/object detector runs on its own, slower cadence. Phone detection is
+# the most expensive signal per frame and does not need to run at face rate.
+SCENE_DETECTION_EVERY_N_CYCLES = int(os.environ.get("SCENE_DETECTION_EVERY_N_CYCLES", "2"))
+
 # Attention conditions must persist for at least this long (seconds) before
 # they can be confirmed, on top of the consecutive-frame count. A quick glance
 # or a single head turn therefore never registers as a violation.
-GAZE_HOLD_SECONDS = float(os.environ.get("GAZE_HOLD_SECONDS", "2.0"))
-HEAD_TURNED_HOLD_SECONDS = float(os.environ.get("HEAD_TURNED_HOLD_SECONDS", "2.0"))
+GAZE_HOLD_SECONDS = float(os.environ.get("GAZE_HOLD_SECONDS", "3.0"))
+HEAD_TURNED_HOLD_SECONDS = float(os.environ.get("HEAD_TURNED_HOLD_SECONDS", "5.0"))
 
 ATTENTION_ANALYZER_ENABLED = os.environ.get("ATTENTION_ANALYZER_ENABLED", "true").lower() == "true"
 ATTENTION_METRICS_IN_RESPONSE = os.environ.get("ATTENTION_METRICS_IN_RESPONSE", "true").lower() == "true"

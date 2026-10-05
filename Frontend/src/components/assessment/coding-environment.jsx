@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
-import { AlertTriangle, Send, Maximize, Minimize, RotateCcw, Play, Sparkles, } from "lucide-react";
+import { AlertTriangle, Send, Maximize, Minimize, RotateCcw, Play, Sparkles, Braces } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
@@ -78,16 +78,30 @@ export function CodingEnvironment({ testId }) {
         if (!currentQuestion || !code.trim())
             return;
         setIsRunning(true);
+        const store = useTestStore.getState();
+        store.setOutput("");
+        store.setRunResult(null);
         try {
-            const result = await api.submissions.run({
-                code,
-                language,
-                input: currentQuestion.testCases[0]?.input || "",
-            });
-            useTestStore.getState().setOutput(result.output);
+            const examples = (currentQuestion.examples || []).slice(0, 10).map((example) => ({
+                input: String(example.input ?? ""),
+                expectedOutput: String(example.output ?? ""),
+            }));
+            const testCases = examples.length
+                ? examples
+                : (currentQuestion.testCases || []).filter((testCase) => !testCase.isHidden).slice(0, 10).map((testCase) => ({
+                    input: String(testCase.input ?? ""),
+                    expectedOutput: String(testCase.expectedOutput ?? ""),
+                }));
+            const result = testCases.length
+                ? await api.judge.runTests(code, language, testCases)
+                : await api.judge.run(code, language, "");
+            useTestStore.getState().setRunResult(result);
+            useTestStore.getState().setOutput(result.output || result.stdout || "");
         }
-        catch {
-            useTestStore.getState().setOutput("Error: Execution failed");
+        catch (error) {
+            const message = error instanceof Error ? error.message : "Execution failed";
+            useTestStore.getState().setOutput(`Execution failed: ${message}`);
+            useTestStore.getState().setRunResult({ status: "error", error: message, testCases: [] });
         }
         finally {
             setIsRunning(false);
@@ -135,12 +149,18 @@ export function CodingEnvironment({ testId }) {
               <Timer totalSeconds={(currentTest?.duration ?? 60) * 60} onTimeUp={handleTimeUp}/>
 
               <Select value={language} onValueChange={setLanguage}>
-                <SelectTrigger className="w-36 h-8 text-xs">
-                  <SelectValue />
+                <SelectTrigger className="h-9 w-44 border-zinc-700 bg-zinc-950/80 text-xs shadow-inner transition-colors hover:border-violet-500/70 focus:ring-violet-500/40">
+                  <span className="flex min-w-0 items-center gap-2">
+                    <Braces className="h-3.5 w-3.5 shrink-0 text-violet-400"/>
+                    <span className="truncate"><SelectValue placeholder="Select language"/></span>
+                  </span>
                 </SelectTrigger>
-                <SelectContent>
-                  {SUPPORTED_LANGUAGES.filter((lang) => currentTest?.allowedLanguages.includes(lang.id)).map((lang) => (<SelectItem key={lang.id} value={lang.id} className="text-xs">
-                      {lang.name} {lang.version}
+                <SelectContent className="border-zinc-700 bg-zinc-900 text-zinc-100 shadow-xl">
+                  {SUPPORTED_LANGUAGES.filter((lang) => currentTest?.allowedLanguages.includes(lang.id)).map((lang) => (<SelectItem key={lang.id} value={lang.id} className="cursor-pointer text-xs focus:bg-violet-500/15 focus:text-violet-100">
+                      <span className="flex w-full items-center justify-between gap-6">
+                        <span>{lang.name}</span>
+                        <span className="text-[10px] text-zinc-500">{lang.version}</span>
+                      </span>
                     </SelectItem>))}
                 </SelectContent>
               </Select>
@@ -217,7 +237,7 @@ export function CodingEnvironment({ testId }) {
 
               {/* Console Panel (bottom portion) */}
               <div className="border-t border-zinc-800 bg-zinc-900/50 overflow-hidden" style={{ height: `${consoleHeight}%` }}>
-                <ConsolePanel />
+                <ConsolePanel question={currentQuestion} />
               </div>
             </div>
           </div>

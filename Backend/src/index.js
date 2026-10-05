@@ -61,6 +61,8 @@ async function main() {
       console.error("Supabase Storage bootstrap failed (image uploads disabled):", error.message);
     }
 
+    require("./lib/snapshot-retention").startSnapshotCleanup();
+
     const server = app.listen(PORT, () => {
       console.log(`Server running on port ${PORT}`);
     });

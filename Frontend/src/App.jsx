@@ -9,6 +9,7 @@ import StudentTests from "@/pages/student/StudentTests";
 import TakeTest from "@/pages/student/TakeTest";
 import StudentInterviews from "@/pages/student/StudentInterviews";
 import StudentReport from "@/pages/student/StudentReport";
+import StudentRankings from "@/pages/student/StudentRankings";
 import SettingsPage from "@/pages/Settings";
 
 import StaffDashboard from "@/pages/staff/StaffDashboard";
@@ -65,6 +66,7 @@ export function App() {
                 <Route path="settings" element={<SettingsPage />} />
                 <Route path="profile" element={<Navigate to="/student/settings" replace />} />
                 <Route path="report" element={<StudentReport />} />
+                <Route path="rankings" element={<StudentRankings />} />
             </Route>
 
             <Route path="/staff" element={<RequireRole role="staff"><PortalLayout /></RequireRole>}>

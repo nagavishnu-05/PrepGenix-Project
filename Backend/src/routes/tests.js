@@ -117,6 +117,7 @@ async function expireIfOverdue(attempt) {
 // GET /api/tests  (staff sees all; students see assigned only)
 router.get("/", authenticate, async (req, res) => {
   try {
+    res.set("Cache-Control", "no-store, no-cache, must-revalidate, private");
     if (req.user.role === "student") {
       const student = await getStudent(req);
       if (!student) return res.status(404).json({ error: "Student profile not found" });
@@ -408,12 +409,27 @@ router.delete("/:id", authenticate, async (req, res) => {
   try {
     if (req.user.role !== "staff") return res.status(403).json({ error: "Staff Coordinator only" });
     const testId = req.params.id;
+    const deletedTest = await col("tests").deleteOne({ _id: id(testId) });
+    if (!deletedTest.deletedCount) return res.status(404).json({ error: "Test not found" });
+
+    const attempts = await col("attempts").find({ testId }).project({ _id: 1 }).toArray();
+    const attemptIds = attempts.map((attempt) => attempt._id.toString());
     await Promise.all([
       col("attempts").deleteMany({ testId }),
-      col("tests").deleteOne({ _id: id(testId) }),
+      attemptIds.length ? col("violations").deleteMany({ attemptId: { $in: attemptIds } }) : Promise.resolve(),
+      col("performances", "perf").updateMany(
+        {
+          $or: [
+            { aptitude: { $elemMatch: { testId } } },
+            { coding: { $elemMatch: { testId } } },
+          ],
+        },
+        { $pull: { aptitude: { testId }, coding: { testId } } }
+      ),
     ]);
     res.json({ message: "Test deleted" });
-  } catch {
+  } catch (error) {
+    console.error("Failed to delete test:", error);
     res.status(500).json({ error: "Failed to delete test" });
   }
 });
@@ -864,17 +880,17 @@ router.post("/attempts/:attemptId/answer", authenticate, async (req, res) => {
     }
 
     res.json({
-      correct,
-      correctAnswer: q.type === "coding" ? undefined : q.answer,
-      passed,
-      total,
-      points: pointsEarned,
       finished,
       result,
-      adaptive: attempt.adaptive,
-      judge: judgeResult
-        ? { passed: judgeResult.passed, total: judgeResult.total, executionTime: judgeResult.executionTime, failedCases: judgeResult.results.filter((r) => !r.passed).slice(0, 3) }
-        : undefined,
+      ...(q.type === "coding"
+        ? {
+            passed,
+            total,
+            judge: judgeResult
+              ? { passed: judgeResult.passed, total: judgeResult.total, executionTime: judgeResult.executionTime, failedCases: judgeResult.results.filter((r) => !r.passed).slice(0, 3) }
+              : undefined,
+          }
+        : {}),
     });
   } catch (err) {
     res.status(500).json({ error: `Answer submission failed: ${err.message}` });

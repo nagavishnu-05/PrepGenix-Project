@@ -20,6 +20,7 @@ export const useTestStore = create((set) => ({
     code: "",
     language: "python",
     output: "",
+    runResult: null,
     isRunning: false,
     isSubmitting: false,
     violations: [],
@@ -34,7 +35,9 @@ export const useTestStore = create((set) => ({
         return {
             currentQuestion: question,
             language: lang,
-            code: question?.starterCode?.[lang] || defaultStarter
+            code: question?.starterCode?.[lang] || defaultStarter,
+            output: "",
+            runResult: null,
         };
     }),
     setCode: (code) => set({ code }),
@@ -57,6 +60,7 @@ export const useTestStore = create((set) => ({
         };
     }),
     setOutput: (output) => set({ output }),
+    setRunResult: (runResult) => set({ runResult }),
     setIsRunning: (running) => set({ isRunning: running }),
     setIsSubmitting: (submitting) => set({ isSubmitting: submitting }),
     addViolation: (violation) => set((state) => ({ violations: [...state.violations, violation] })),

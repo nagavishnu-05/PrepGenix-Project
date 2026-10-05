@@ -103,10 +103,6 @@ export default function FaceAttentionOverlay({ metrics, width = 176, height = 13
     return (
         <div className="pointer-events-none absolute inset-0">
             <canvas ref={canvasRef} style={{ width: `${width}px`, height: `${height}px` }} className="absolute inset-0" />
-            <div className="absolute bottom-1 left-1 flex items-center gap-1 rounded bg-black/60 px-1.5 py-0.5 text-[9px]">
-                <span className={`h-1.5 w-1.5 rounded-full ${state.dot}`} />
-                <span className={state.text}>{state.label}</span>
-            </div>
         </div>
     );
 }

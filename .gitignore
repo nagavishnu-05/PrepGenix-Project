@@ -69,3 +69,4 @@ AIML/models/places365/
 *.keras
 __pycache__/
 .ipynb_checkpoints/
+AIML/data/validation/lfw_embeddings.json

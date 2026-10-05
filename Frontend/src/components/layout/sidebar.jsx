@@ -14,11 +14,13 @@ import {
     GraduationCap,
     FileText,
     RadioTower,
+    Trophy,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/store/auth-store";
 import { useUIStore } from "@/store/ui-store";
 import { Separator } from "@/components/ui/separator";
+import { getAvatarImage } from "@/lib/avatar-options";
 
 const NAV = {
     student: [
@@ -26,6 +28,7 @@ const NAV = {
         { label: "My Tests", href: "/student/tests", icon: ClipboardList },
         { label: "Interviews", href: "/student/interviews", icon: Video },
         { label: "My Report", href: "/student/report", icon: BarChart3 },
+        { label: "Rankings", href: "/student/rankings", icon: Trophy },
         { label: "Settings", href: "/student/settings", icon: Settings },
     ],
     staff: [
@@ -70,7 +73,7 @@ export function Sidebar() {
                 </div>
                 {sidebarOpen && (
                     <div className="min-w-0">
-                        <p className="truncate text-sm font-bold text-slate-900 dark:text-white">Placement Portal</p>
+                        <p className="truncate text-sm font-bold text-slate-900 dark:text-white">PrepGenix</p>
                         <p className="truncate text-xs text-slate-500 dark:text-zinc-500">{roleLabel}</p>
                     </div>
                 )}
@@ -105,8 +108,10 @@ export function Sidebar() {
             <div className="p-3">
                 {sidebarOpen && (
                     <div className="mb-3 flex items-center gap-3 rounded-lg bg-slate-100 dark:bg-zinc-900 p-3">
-                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-200 dark:bg-zinc-800 text-sm font-semibold text-violet-600 dark:text-violet-400">
-                            {(user?.name || "?").slice(0, 1).toUpperCase()}
+                        <div className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full bg-slate-200 text-lg font-semibold text-violet-600 dark:bg-zinc-800 dark:text-violet-400">
+                            {getAvatarImage(user?.avatar)
+                                ? <img src={getAvatarImage(user?.avatar)} alt="" className="h-full w-full object-cover" />
+                                : (user?.name || "?").slice(0, 1).toUpperCase()}
                         </div>
                         <div className="min-w-0">
                             <p className="truncate text-sm font-medium text-slate-900 dark:text-zinc-200">{user?.name}</p>

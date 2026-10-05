@@ -3,11 +3,25 @@
 Supports identity violations (no face, multiple faces, impersonation) and
 attention violations (looking away, prolonged head turn, prolonged eye closure),
 plus non-punitive face-absence logging beyond a grace period.
+
+Presence and identity are confirmed by elapsed time rather than by a frame count.
+A frame count silently ties the warning delay to the client's polling cadence, so
+"3 frames" is a 6 second warning at a 2s poll and an instant warning at 500ms.
 """
 
 import os
 import time
 from collections import deque
+from face_detection.utils.config import (
+    IDENTITY_MISMATCH_CONFIRM_SECONDS,
+    IDENTITY_MISMATCH_MIN_SAMPLES,
+    MULTIPLE_FACE_CONFIRM_SECONDS,
+    MULTIPLE_FACE_MIN_SAMPLES,
+    GAZE_HOLD_SECONDS,
+    HEAD_TURNED_HOLD_SECONDS,
+    NO_FACE_CONFIRM_SECONDS,
+    NO_FACE_MIN_SAMPLES,
+)
 
 VIOLATION_TYPES = [
     "NO_FACE",
@@ -31,11 +45,8 @@ INFO_LOG_TYPES = [
     "CANDIDATE_LOST_TRACK",
 ]
 
-NO_FACE_CONFIRM = int(os.environ.get("NO_FACE_CONFIRMATION_FRAMES", "5"))
-MULTIPLE_FACE_CONFIRM = int(os.environ.get("MULTIPLE_FACE_CONFIRMATION_FRAMES", "3"))
 MULTIPLE_PERSON_CONFIRM = int(os.environ.get("MULTIPLE_PERSON_CONFIRMATION_FRAMES", "3"))
 DEVICE_CONFIRM = int(os.environ.get("DEVICE_CONFIRMATION_FRAMES", "2"))
-IDENTITY_CONFIRM = int(os.environ.get("IDENTITY_MISMATCH_CONFIRMATION_FRAMES", "3"))
 CAMERA_CONFIRM = int(os.environ.get("CAMERA_DISABLED_CONFIRMATION_FRAMES", "2"))
 LOOKING_AWAY_CONFIRM = int(os.environ.get("GAZE_CONFIRMATION_FRAMES", "5"))
 HEAD_TURNED_CONFIRM = int(os.environ.get("HEAD_TURNED_CONFIRMATION_FRAMES", "5"))
@@ -54,6 +65,53 @@ _ATTENTION_VIOLATION_SEVERITY = {
 }
 
 
+class Sustained:
+    """Confirms a boolean condition that must persist for a span of time.
+
+    The condition fires once it has been true for `seconds` *and* at least
+    `min_samples` consecutive observations agree, so one bad inference is never
+    enough but a slow polling client does not stretch the delay.
+    """
+
+    def __init__(self, seconds: float, min_samples: int = 1, name: str = ""):
+        self.seconds = max(0.0, float(seconds))
+        self.min_samples = max(1, int(min_samples))
+        self.name = name
+        self._since: float | None = None
+        self._samples = 0
+        self.confirmed = False
+
+    def update(self, active: bool) -> bool:
+        now = time.time()
+        if active:
+            if self._since is None:
+                self._since = now
+                self._samples = 0
+            self._samples += 1
+            self.confirmed = (
+                self._samples >= self.min_samples and (now - self._since) >= self.seconds
+            )
+        else:
+            self._since = None
+            self._samples = 0
+            self.confirmed = False
+        return self.confirmed
+
+    def reset(self) -> None:
+        self._since = None
+        self._samples = 0
+        self.confirmed = False
+
+    def snapshot(self) -> dict:
+        return {
+            "name": self.name,
+            "active": self._since is not None,
+            "samples": self._samples,
+            "required_seconds": self.seconds,
+            "confirmed": self.confirmed,
+        }
+
+
 class ViolationManager:
     """Tracks violations with temporal debouncing.
 
@@ -69,15 +127,28 @@ class ViolationManager:
         self._confirmed_violations: list[dict] = []
         self._info_logs: list[dict] = []
 
-        self._no_face_frames: deque[bool] = deque(maxlen=NO_FACE_CONFIRM)
-        self._multiple_face_frames: deque[bool] = deque(maxlen=MULTIPLE_FACE_CONFIRM)
         self._multiple_person_frames: deque[bool] = deque(maxlen=MULTIPLE_PERSON_CONFIRM)
         self._device_frames: deque[bool] = deque(maxlen=DEVICE_CONFIRM)
-        self._identity_mismatch_frames: deque[bool] = deque(maxlen=IDENTITY_CONFIRM)
         self._camera_frames: deque[bool] = deque(maxlen=CAMERA_CONFIRM)
-        self._looking_away_frames: deque[bool] = deque(maxlen=LOOKING_AWAY_CONFIRM)
-        self._head_turned_frames: deque[bool] = deque(maxlen=HEAD_TURNED_CONFIRM)
+        self._looking_away_signal = Sustained(
+            GAZE_HOLD_SECONDS, LOOKING_AWAY_CONFIRM, name="looking_away"
+        )
+        self._head_turned_signal = Sustained(
+            HEAD_TURNED_HOLD_SECONDS, HEAD_TURNED_CONFIRM, name="head_turned"
+        )
         self._eyes_closed_frames: deque[bool] = deque(maxlen=EYES_CLOSED_CONFIRM)
+
+        # Time-based confirmation for the conditions the candidate is warned
+        # about mid-assessment.
+        self._no_face_signal = Sustained(
+            NO_FACE_CONFIRM_SECONDS, NO_FACE_MIN_SAMPLES, name="no_face"
+        )
+        self._multiple_face_signal = Sustained(
+            MULTIPLE_FACE_CONFIRM_SECONDS, MULTIPLE_FACE_MIN_SAMPLES, name="multiple_faces"
+        )
+        self._identity_signal = Sustained(
+            IDENTITY_MISMATCH_CONFIRM_SECONDS, IDENTITY_MISMATCH_MIN_SAMPLES, name="identity_mismatch"
+        )
 
         self._active_events: dict[str, dict] = {}
         self._cycle_count = 0
@@ -92,6 +163,7 @@ class ViolationManager:
         # above so it clears the instant the registered face returns.
         self._gate_blocked_since: float | None = None
         self._gate_reason: str | None = None
+        self._gate_status: str = "checking"
 
     def update(self, detection_result: dict) -> dict:
         """Process one monitoring cycle.
@@ -143,8 +215,7 @@ class ViolationManager:
         self._track_face_absence(detection_result, new_violations, new_info_logs, grace=False)
 
         no_face = not detection_result.get("face_present", True)
-        self._no_face_frames.append(no_face)
-        if len(self._no_face_frames) >= NO_FACE_CONFIRM and all(self._no_face_frames):
+        if self._no_face_signal.update(no_face):
             v = self._confirm_violation("NO_FACE", {
                 "description": "No face detected in camera feed.",
                 "confidence": detection_result.get("similarity"),
@@ -156,8 +227,7 @@ class ViolationManager:
 
         face_count = detection_result.get("face_count", 0)
         multiple = face_count > 1
-        self._multiple_face_frames.append(multiple)
-        if len(self._multiple_face_frames) >= MULTIPLE_FACE_CONFIRM and all(self._multiple_face_frames):
+        if self._multiple_face_signal.update(multiple):
             v = self._confirm_violation("MULTIPLE_FACES", {
                 "description": f"Multiple faces detected ({face_count} people).",
                 "face_count": face_count,
@@ -200,18 +270,20 @@ class ViolationManager:
 
         match = detection_result.get("match")
         if match is False:
-            self._identity_mismatch_frames.append(True)
-            self._no_face_frames.append(False)
-            if len(self._identity_mismatch_frames) >= IDENTITY_CONFIRM and all(self._identity_mismatch_frames):
+            self._identity_signal.update(True)
+            # A visible face can never also be "no face".
+            self._no_face_signal.reset()
+            if self._identity_signal.confirmed:
                 v = self._confirm_violation("IDENTITY_MISMATCH", {
                     "description": "Identity mismatch detected. A different person may be present.",
                     "similarity": detection_result.get("similarity"),
+                    "unmatched_faces": detection_result.get("unmatched_faces"),
                     "severity": "high",
                 })
                 if v:
                     new_violations.append(v)
         else:
-            self._identity_mismatch_frames.append(False)
+            self._identity_signal.update(False)
 
         camera_active = detection_result.get("camera_active", True)
         if not camera_active:
@@ -259,6 +331,11 @@ class ViolationManager:
         """True once the buffer is full and every recent sample agreed."""
         return len(frames) == frames.maxlen and frames.maxlen > 0 and all(frames)
 
+    def _reset_identity_signals(self):
+        self._no_face_signal.reset()
+        self._multiple_face_signal.reset()
+        self._identity_signal.reset()
+
     def _clear_identity_gate(self):
         self._gate_blocked_since = None
         self._gate_reason = None
@@ -279,12 +356,17 @@ class ViolationManager:
         if grace:
             # Do not accuse a candidate during the warm-up window.
             self._clear_identity_gate()
+            self._no_face_signal.reset()
+            self._multiple_face_signal.reset()
+            self._identity_signal.reset()
+            self._gate_status = idle["identity_status"]
             return idle
         if not detection_result.get("enrolled", False):
             # No reference embedding (e.g. proctoring service restarted). There
             # is nothing to verify against, so never lock the candidate out.
             self._clear_identity_gate()
             idle["identity_status"] = "unregistered"
+            self._gate_status = "unregistered"
             return idle
 
         face_count = int(detection_result.get("face_count", 0) or 0)
@@ -293,26 +375,33 @@ class ViolationManager:
 
         status = "checking"
         reason = None
-        if self._deque_full_true(self._multiple_face_frames) and face_count > 1:
+        if self._multiple_face_signal.confirmed and face_count > 1:
             status = "multiple_faces"
             reason = (
                 f"{face_count} faces are visible on camera. Only the registered "
                 "candidate may be in frame."
             )
-        elif match is False and self._deque_full_true(self._identity_mismatch_frames):
+        elif match is False and self._identity_signal.confirmed:
             status = "mismatch"
             reason = (
                 "The face on camera does not match the registered candidate. "
                 "The registered candidate must return to continue."
             )
-        elif not face_present and self._deque_full_true(self._no_face_frames):
+        elif not face_present and self._no_face_signal.confirmed:
             status = "no_face"
             reason = (
                 "No face is visible. The registered candidate must be in front "
                 "of the camera to continue."
             )
-        elif face_count == 1 and match is True:
+        elif match is True:
             status = "verified"
+        elif face_present and match is None:
+            # A face is on camera but the embedding could not be produced (too
+            # dark, too small, too blurred). This is a coverage gap, not an
+            # accusation, so the candidate keeps working and the state says so
+            # instead of claiming to be "checking" forever.
+            status = "unverified"
+            reason = None
 
         if reason is not None:
             if self._gate_blocked_since is None or self._gate_reason != status:
@@ -323,18 +412,25 @@ class ViolationManager:
             self._clear_identity_gate()
             seconds = 0.0
 
+        self._gate_status = status
+
         return {
             "identity_blocked": reason is not None,
             "identity_status": status,
             "identity_block_reason": reason,
             "identity_block_seconds": seconds,
+            "identity_signals": {
+                "no_face": self._no_face_signal.snapshot(),
+                "multiple_faces": self._multiple_face_signal.snapshot(),
+                "identity_mismatch": self._identity_signal.snapshot(),
+            },
         }
 
     def _track_attention(self, detection_result: dict, info_logs: list[dict]) -> list[dict]:
         new_violations = []
 
         looking_away = bool(detection_result.get("looking_away", False))
-        self._looking_away_frames.append(looking_away)
+        looking_away_confirmed = self._looking_away_signal.update(looking_away)
         if looking_away:
             self._active_events["LOOKING_AWAY"] = {
                 "type": "LOOKING_AWAY",
@@ -343,7 +439,7 @@ class ViolationManager:
             }
         else:
             self._active_events.pop("LOOKING_AWAY", None)
-        if len(self._looking_away_frames) >= LOOKING_AWAY_CONFIRM and all(self._looking_away_frames):
+        if looking_away_confirmed:
             v = self._confirm_violation("LOOKING_AWAY", {
                 "description": "Candidate gaze directed away from the screen.",
                 "gaze_direction": detection_result.get("gaze_direction", "unknown"),
@@ -354,7 +450,7 @@ class ViolationManager:
                 new_violations.append(v)
 
         head_turned = bool(detection_result.get("head_turned", False))
-        self._head_turned_frames.append(head_turned)
+        head_turned_confirmed = self._head_turned_signal.update(head_turned)
         if head_turned:
             self._active_events["HEAD_TURNED_AWAY"] = {
                 "type": "HEAD_TURNED_AWAY",
@@ -363,7 +459,7 @@ class ViolationManager:
             }
         else:
             self._active_events.pop("HEAD_TURNED_AWAY", None)
-        if len(self._head_turned_frames) >= HEAD_TURNED_CONFIRM and all(self._head_turned_frames):
+        if head_turned_confirmed:
             v = self._confirm_violation("HEAD_TURNED_AWAY", {
                 "description": f"Head turned {detection_result.get('head_direction', 'away')} for an extended period.",
                 "head_direction": detection_result.get("head_direction", "unknown"),
@@ -454,16 +550,14 @@ class ViolationManager:
 
     def reset_count(self):
         self._violation_count = max(0, self._violation_count - 1)
-        self._no_face_frames.clear()
-        self._multiple_face_frames.clear()
         self._multiple_person_frames.clear()
         self._device_frames.clear()
-        self._identity_mismatch_frames.clear()
         self._camera_frames.clear()
-        self._looking_away_frames.clear()
-        self._head_turned_frames.clear()
+        self._looking_away_signal.reset()
+        self._head_turned_signal.reset()
         self._eyes_closed_frames.clear()
         self._active_events.clear()
+        self._reset_identity_signals()
         self._clear_identity_gate()
 
     def _confirm_violation(self, vtype: str, details: dict, window: float = 10.0) -> dict | None:
@@ -493,23 +587,27 @@ class ViolationManager:
             "active_events": dict(self._active_events),
             "absence_duration_seconds": round(self._absence_duration(), 2),
             "cycles": self._cycle_count,
+            "identity_status": self._gate_status,
             "identity_blocked": self._gate_blocked_since is not None,
             "identity_block_reason": self._gate_reason,
+            "identity_signals": {
+                "no_face": self._no_face_signal.snapshot(),
+                "multiple_faces": self._multiple_face_signal.snapshot(),
+                "identity_mismatch": self._identity_signal.snapshot(),
+            },
         }
 
     def reset(self):
         self._violation_count = 0
         self._confirmed_violations.clear()
         self._info_logs.clear()
-        self._no_face_frames.clear()
-        self._multiple_face_frames.clear()
         self._multiple_person_frames.clear()
         self._device_frames.clear()
-        self._identity_mismatch_frames.clear()
         self._camera_frames.clear()
-        self._looking_away_frames.clear()
-        self._head_turned_frames.clear()
+        self._looking_away_signal.reset()
+        self._head_turned_signal.reset()
         self._eyes_closed_frames.clear()
+        self._reset_identity_signals()
         self._active_events.clear()
         self._cycle_count = 0
         self._start_time = time.time()

@@ -86,7 +86,13 @@ export default function StaffTests() {
 
     const load = useCallback(() => {
         setLoading(true);
-        api.tests.list().then(setTests).catch(() => {}).finally(() => setLoading(false));
+        return api.tests.list()
+            .then(setTests)
+            .catch((error) => {
+                setTests([]);
+                alert("Failed to load tests: " + error.message);
+            })
+            .finally(() => setLoading(false));
     }, []);
 
     useEffect(() => {
@@ -222,10 +228,10 @@ export default function StaffTests() {
         try {
             await Promise.all(selectedIds.map((id) => api.tests.remove(id)));
             setSelectedIds([]);
-            load();
         } catch (e) {
             alert(e.message);
         } finally {
+            load();
             setBusy(false);
         }
     };
@@ -726,7 +732,7 @@ export default function StaffTests() {
                         </div>
                         <p className="text-[11px] text-slate-400 dark:text-zinc-500">
                             Snapshots are stored privately and served as short-lived signed links.
-                            A missing snapshot means image archiving (Supabase Storage) is not configured.
+                            Snapshots are automatically removed after four days; a missing image may also mean Supabase Storage is not configured.
                         </p>
                         <div className="flex justify-end gap-2 pt-1">
                             {violationReportAttempt && (

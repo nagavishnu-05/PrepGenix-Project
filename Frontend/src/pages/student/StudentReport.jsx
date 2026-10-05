@@ -7,7 +7,7 @@ import { StatusBadge } from "@/components/portal/status-badge";
 import { useAuthStore } from "@/store/auth-store";
 import { useUIStore } from "@/store/ui-store";
 import { api } from "@/lib/api";
-import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip } from "recharts";
+import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from "recharts";
 
 function AttemptBlocks({ title, icon: Icon, list }) {
     return (
@@ -59,14 +59,20 @@ export default function StudentReport() {
     const interviews = perf.interview || [];
     const avgPct = (arr) => (arr.length ? Math.round(arr.reduce((s, x) => s + (x.percentage ?? 0), 0) / arr.length) : 0);
 
-    const chartData = [
-        ...aptitude.map((a, idx) => ({ ...a, category: "Aptitude", date: a.completedAt ? new Date(a.completedAt).getTime() : idx })),
-        ...coding.map((a, idx) => ({ ...a, category: "Coding", date: a.completedAt ? new Date(a.completedAt).getTime() : idx }))
-    ].sort((a, b) => a.date - b.date).map((a, idx) => ({
-        index: idx + 1,
-        title: a.testTitle,
-        percentage: a.percentage ?? 0,
-        category: a.category
+    const makeChartData = (attempts) => attempts
+        .map((attempt, index) => ({
+            ...attempt,
+            date: attempt.date ? new Date(attempt.date).getTime() : index,
+        }))
+        .sort((a, b) => a.date - b.date);
+    const aptitudeTrend = makeChartData(aptitude);
+    const codingTrend = makeChartData(coding);
+    const chartData = Array.from({ length: Math.max(aptitudeTrend.length, codingTrend.length) }, (_, index) => ({
+        attempt: index + 1,
+        aptitude: aptitudeTrend[index]?.percentage ?? null,
+        aptitudeTestName: aptitudeTrend[index]?.testTitle || `Aptitude attempt ${index + 1}`,
+        coding: codingTrend[index]?.percentage ?? null,
+        codingTestName: codingTrend[index]?.testTitle || `Coding attempt ${index + 1}`,
     }));
 
     return (
@@ -98,32 +104,48 @@ export default function StudentReport() {
             </div>
 
             {chartData.length > 0 && (
-                <Card className="mb-6 border-slate-200/80 dark:border-zinc-800/80 bg-white/70 dark:bg-zinc-900/40">
+                <Card className="mb-6 border-slate-200/80 bg-white/70 dark:border-zinc-800/80 dark:bg-zinc-900/40">
                     <CardHeader>
                         <CardTitle className="text-sm font-semibold text-slate-700 dark:text-zinc-300">Overall Performance Trend</CardTitle>
                     </CardHeader>
-                    <CardContent className="h-64 pr-4">
+                    <CardContent className="h-80 pr-4">
                         <ResponsiveContainer width="100%" height="100%">
-                            <AreaChart data={chartData}>
-                                <defs>
-                                    <linearGradient id="colorPercent" x1="0" y1="0" x2="0" y2="1">
-                                        <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.4}/>
-                                        <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0}/>
-                                    </linearGradient>
-                                </defs>
+                            <LineChart data={chartData} margin={{ top: 8, right: 12, left: 0, bottom: 8 }}>
                                 <CartesianGrid strokeDasharray="3 3" className="stroke-slate-200 dark:stroke-zinc-800/40" />
-                                <XAxis dataKey="index" tick={{ fill: 'currentColor', opacity: 0.6 }} className="text-xs text-slate-500 dark:text-zinc-500" />
-                                <YAxis domain={[0, 100]} tick={{ fill: 'currentColor', opacity: 0.6 }} className="text-xs text-slate-500 dark:text-zinc-500" />
-                                <Tooltip 
-                                    contentStyle={{ 
-                                        backgroundColor: theme === "dark" ? "#18181b" : "#ffffff", 
+                                <XAxis
+                                    dataKey="attempt"
+                                    tickFormatter={(value) => `Attempt ${value}`}
+                                    tick={{ fill: "currentColor", opacity: 0.7, fontSize: 11 }}
+                                    className="text-xs text-slate-500 dark:text-zinc-500"
+                                />
+                                <YAxis domain={[0, 100]} unit="%" tick={{ fill: "currentColor", opacity: 0.6, fontSize: 11 }} className="text-xs text-slate-500 dark:text-zinc-500" />
+                                <Tooltip
+                                    labelFormatter={(value) => `Attempt ${value}`}
+                                    content={({ active, payload, label }) => active && payload?.length ? (
+                                        <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
+                                            <p className="mb-1 font-semibold text-slate-800 dark:text-zinc-100">Attempt {label}</p>
+                                            {payload.map((entry) => {
+                                                const category = entry.dataKey === "aptitude" ? "Aptitude" : "Coding";
+                                                const testName = entry.payload[`${entry.dataKey}TestName`];
+                                                return (
+                                                    <p key={entry.dataKey} style={{ color: entry.color }}>
+                                                        {category}: {testName} · {entry.value}%
+                                                    </p>
+                                                );
+                                            })}
+                                        </div>
+                                    ) : null}
+                                    contentStyle={{
+                                        backgroundColor: theme === "dark" ? "#18181b" : "#ffffff",
                                         borderColor: theme === "dark" ? "#27272a" : "#e2e8f0",
                                         borderRadius: "8px",
-                                        color: theme === "dark" ? "#f4f4f5" : "#0f172a"
-                                    }} 
+                                        color: theme === "dark" ? "#f4f4f5" : "#0f172a",
+                                    }}
                                 />
-                                <Area type="monotone" dataKey="percentage" name="Score %" stroke="#8b5cf6" strokeWidth={2.5} fillOpacity={1} fill="url(#colorPercent)" />
-                            </AreaChart>
+                                <Legend />
+                                {aptitude.length > 0 && <Line type="monotone" dataKey="aptitude" name="Aptitude" stroke="#3b82f6" strokeWidth={2.5} dot={{ r: 4 }} activeDot={{ r: 6 }} connectNulls={false} />}
+                                {coding.length > 0 && <Line type="monotone" dataKey="coding" name="Coding" stroke="#f97316" strokeWidth={2.5} dot={{ r: 4 }} activeDot={{ r: 6 }} connectNulls={false} />}
+                            </LineChart>
                         </ResponsiveContainer>
                     </CardContent>
                 </Card>

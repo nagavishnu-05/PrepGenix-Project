@@ -380,6 +380,7 @@ def monitor():
         "similarity": result["similarity"],
         "quality": result["quality"],
         "face_registered": result["face_registered"],
+        "identity_detail": result.get("identity_detail", {}),
         "violations": result["violations"],
         "violation_count": result["violation_count"],
         "should_auto_submit": result["should_auto_submit"],

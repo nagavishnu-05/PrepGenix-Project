@@ -68,7 +68,7 @@ export default function LoginPage() {
                         <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/10 backdrop-blur-sm">
                             <Shield className="h-6 w-6 text-white" />
                         </div>
-                        <span className="text-2xl font-bold text-white">Placement Portal</span>
+                        <span className="text-2xl font-bold text-white">PrepGenix</span>
                     </div>
                     <div className="mt-16 max-w-md space-y-4">
                         <h1 className="text-4xl font-bold leading-tight text-white">Assess, practice, and get placed.</h1>
@@ -97,7 +97,7 @@ export default function LoginPage() {
                         <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-violet-600 to-indigo-600">
                             <Shield className="h-7 w-7 text-white" />
                         </div>
-                        <h1 className="text-xl font-bold text-white">Placement Portal</h1>
+                        <h1 className="text-xl font-bold text-white">PrepGenix</h1>
                     </div>
 
                     <h2 className="mb-6 text-2xl font-semibold text-white">Sign in</h2>

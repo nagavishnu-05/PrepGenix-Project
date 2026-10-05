@@ -114,8 +114,10 @@ export default function useProctoring({ attemptId, config, previewRef, onAutoSub
     const lastTickOkRef = useRef(false);
     const fullscreenRequiredRef = useRef(true);
 
-    const monitoringIntervalMs = parseInt(import.meta.env.VITE_FACE_CHECK_INTERVAL_MS || "2000", 10);
-    const intervalMs = monitoringIntervalMs;
+    const monitoringIntervalMs = parseInt(import.meta.env.VITE_FACE_CHECK_INTERVAL_MS || "1000", 10);
+    const intervalMs = Number.isFinite(monitoringIntervalMs) && monitoringIntervalMs > 0
+        ? Math.max(750, monitoringIntervalMs)
+        : 1000;
 
     const stop = useCallback(() => {
         activeRef.current = false;
@@ -145,12 +147,12 @@ export default function useProctoring({ attemptId, config, previewRef, onAutoSub
         const video = previewRef?.current;
         if (!video || !video.videoWidth) return undefined;
         const canvas = canvasRef.current || (canvasRef.current = document.createElement("canvas"));
-        const w = 320;
+        const w = 480;
         const h = video.videoHeight && video.videoWidth ? Math.round((video.videoHeight / video.videoWidth) * w) : 240;
         canvas.width = w;
         canvas.height = h;
         canvas.getContext("2d").drawImage(video, 0, 0, w, h);
-        return canvas.toDataURL("image/jpeg", 0.5).split(",")[1];
+        return canvas.toDataURL("image/jpeg", 0.6).split(",")[1];
     }, [previewRef]);
 
     // Violations are recorded for staff review but do NOT stop the test. Each
@@ -306,7 +308,7 @@ export default function useProctoring({ attemptId, config, previewRef, onAutoSub
         autoSubmittedRef.current = false;
         enrollmentGraceRef.current = true;
         setStatus("active");
-        graceUntilRef.current = Date.now() + 5000;
+        graceUntilRef.current = Date.now() + 1500;
         await requestFullscreen();
         const isFs = document.fullscreenElement != null;
         if (isFs) hasBeenFullscreenRef.current = true;

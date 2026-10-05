@@ -16,7 +16,7 @@ export function ProctoringPanel({ faceMonitor }) {
             stopCamera();
         };
     }, []);
-    const faceStatus = faceMonitor?.match === true ? "verified" : faceMonitor?.match === false ? "mismatch" : faceMonitor?.faceCount > 0 ? "detected" : "none";
+    const faceStatus = !faceMonitor?.known ? "checking" : faceMonitor.match === true ? "verified" : faceMonitor.match === false ? "mismatch" : faceMonitor.faceCount > 0 ? "detected" : "none";
     return (<motion.div initial={{ opacity: 0, scale: 0.8, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} className="fixed bottom-4 right-4 z-50">
       <Card className="border-zinc-800 bg-zinc-900/95 backdrop-blur-sm shadow-2xl overflow-hidden">
         <div className="flex items-center justify-between border-b border-zinc-800 px-3 py-2">
@@ -59,6 +59,11 @@ export function ProctoringPanel({ faceMonitor }) {
                   {faceStatus === "detected" && (
                     <span className="flex items-center gap-1 text-zinc-400">
                       <ScanFace className="h-3 w-3"/> Face OK
+                    </span>
+                  )}
+                  {faceStatus === "checking" && (
+                    <span className="flex items-center gap-1 text-zinc-400">
+                      <ScanFace className="h-3 w-3"/> Checking face
                     </span>
                   )}
                   {faceStatus === "none" && (

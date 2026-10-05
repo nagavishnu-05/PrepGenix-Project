@@ -32,6 +32,10 @@ export const useAuthStore = create((set, get) => ({
         set({ user: null, token: null, isAuthenticated: false, isBooting: false });
     },
 
+    updateUser: (updates) => set((state) => ({
+        user: state.user ? { ...state.user, ...updates } : state.user,
+    })),
+
     loadUser: async () => {
         const token = localStorage.getItem("auth-token");
         if (!token) {

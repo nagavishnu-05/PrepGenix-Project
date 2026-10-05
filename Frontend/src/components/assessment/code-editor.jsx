@@ -32,9 +32,10 @@ export function CodeEditor({ language, value, onChange }) {
             setCursorPosition({ line: e.position.lineNumber, column: e.position.column });
         });
     }
-    return (<div className="flex h-full flex-col">
-      <Suspense fallback={editorFallback}>
-        <Editor height="100%" language={language} value={value} theme="vs-dark" onChange={handleChange} onMount={handleEditorDidMount} options={{
+    return (<div className="flex h-full min-h-0 flex-col">
+      <div className="min-h-0 flex-1">
+        <Suspense fallback={editorFallback}>
+          <Editor height="100%" language={language} value={value} theme="vs-dark" onChange={handleChange} onMount={handleEditorDidMount} options={{
             fontSize: 14,
             minimap: { enabled: true },
             wordWrap: "on",
@@ -58,8 +59,9 @@ export function CodeEditor({ language, value, onChange }) {
                 horizontalScrollbarSize: 8,
             },
         }}/>
-      </Suspense>
-      <div className="flex items-center justify-between border-t border-zinc-800 bg-zinc-900 px-4 py-1 text-xs text-zinc-500">
+        </Suspense>
+      </div>
+      <div className="flex shrink-0 items-center justify-between border-t border-zinc-800 bg-zinc-900 px-4 py-1 text-xs text-zinc-500">
         <div className="flex items-center gap-2">
           <Code className="h-3 w-3"/>
           <span className="capitalize">{language}</span>

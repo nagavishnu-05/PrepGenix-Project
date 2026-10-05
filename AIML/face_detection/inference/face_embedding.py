@@ -25,19 +25,14 @@ from ..utils.config import (
     FACE_EMBEDDING_SIZE,
     MODELS_DIR,
 )
+from .insightface_app import INSIGHTFACE_AVAILABLE, build_insightface_app
 
 logger = logging.getLogger(__name__)
-
-INSIGHTFACE_AVAILABLE = False
-try:
-    from insightface.app import FaceAnalysis
-    INSIGHTFACE_AVAILABLE = True
-except ImportError:
-    pass
 
 ONNX_AVAILABLE = False
 try:
     import onnxruntime as ort
+
     ONNX_AVAILABLE = ort
 except ImportError:
     pass
@@ -56,6 +51,48 @@ def l2_distance(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.linalg.norm(a - b))
 
 
+# ArcFace reference template for a 112x112 crop (right eye, left eye, nose,
+# mouth corner, other mouth corner). Aligning to it is what makes the embedding
+# comparable across framing and in-plane rotation.
+ARCFACE_TEMPLATE_112 = np.array(
+    [
+        [38.2946, 51.6963],
+        [73.5318, 51.5014],
+        [56.0252, 71.7366],
+        [41.5493, 92.3655],
+        [70.7299, 92.2041],
+    ],
+    dtype=np.float32,
+)
+
+
+def align_face_to_arcface(crop: np.ndarray, kps: np.ndarray | list, size: int = 112) -> np.ndarray | None:
+    """Warp a face crop onto the ArcFace template using its 5 keypoints.
+
+    `kps` are the eye corners, nose tip and mouth corners in *crop* pixel
+    coordinates. Doing the alignment here means the recognition model can be run
+    directly on the crop, with no second detection pass over the image.
+    """
+    if crop is None or crop.size == 0 or kps is None:
+        return None
+    src = np.asarray(kps, dtype=np.float32).reshape(-1, 2)
+    if src.shape[0] < 5:
+        return None
+    src = src[:5]
+    try:
+        matrix, _ = cv2.estimateAffinePartial2D(
+            src, ARCFACE_TEMPLATE_112[: src.shape[0]], method=cv2.LMEDS
+        )
+        if matrix is None:
+            return None
+        return cv2.warpAffine(
+            crop, matrix, (size, size), borderValue=0.0, flags=cv2.INTER_LINEAR
+        )
+    except Exception as exc:  # noqa: BLE001 - alignment is best effort
+        logger.debug("ArcFace alignment failed: %s", exc)
+        return None
+
+
 class FaceEmbedding:
     """Generate and compare face embeddings."""
 
@@ -69,18 +106,13 @@ class FaceEmbedding:
     def _init_backend(self):
         if INSIGHTFACE_AVAILABLE:
             try:
-                providers = ["CPUExecutionProvider"]
-                if os.environ.get("USE_GPU", "false").lower() == "true":
-                    providers.insert(0, "CUDAExecutionProvider")
-                app = FaceAnalysis(
-                    name="buffalo_l",
-                    providers=providers,
-                    allowed_modules=["detection", "recognition"],
-                )
+                app, pack = build_insightface_app(["detection", "recognition"])
+                if app is None:
+                    raise RuntimeError("no usable InsightFace pack")
                 app.prepare(ctx_id=0, det_size=(640, 640))
                 self._insightface_app = app
                 self._backend = "insightface"
-                logger.info("Face embedding backend: InsightFace ArcFace")
+                logger.info("Face embedding backend: InsightFace ArcFace (%s)", pack)
                 return
             except Exception as e:
                 logger.warning(f"InsightFace embedding init failed: {e}")
@@ -122,11 +154,31 @@ class FaceEmbedding:
         else:
             return self._generate_histogram(frame)
 
-    def generate_embedding_from_crop(self, face_crop: np.ndarray) -> np.ndarray | None:
-        """Generate embedding from an already-cropped face image."""
+    def generate_embedding_from_crop(
+        self,
+        face_crop: np.ndarray,
+        kps=None,
+        frame: np.ndarray | None = None,
+    ) -> np.ndarray | None:
+        """Generate embedding from an already-cropped face image.
+
+        `kps` are the 5 ArcFace keypoints (right eye, left eye, nose, mouth
+        corners) and `frame` the image those coordinates refer to, which is
+        normally the un-cropped camera frame. When both are supplied the face is
+        aligned on the full frame and pushed straight through the recognition
+        network: no second detection pass, and pixel-identical to InsightFace's
+        own alignment. Warping the crop instead loses a little accuracy to
+        interpolation at the crop origin, so it is only the fallback.
+        """
         if face_crop is None or face_crop.size == 0:
             return None
         if self._backend == "insightface":
+            if kps is not None:
+                aligned = align_face_to_arcface(frame if frame is not None else face_crop, kps)
+                if aligned is not None:
+                    emb = self._embed_recognition(aligned)
+                    if emb is not None:
+                        return emb
             # Never fall back to the histogram here. A histogram vector has a
             # different dimensionality and no identity meaning, so mixing the
             # two silently disables verification. Return None ("unknown")
@@ -141,6 +193,29 @@ class FaceEmbedding:
         elif self._backend == "onnx_arcface":
             return self._compute_onnx_embedding(face_crop)
         return self._compute_histogram_embedding(face_crop)
+
+    def _embed_recognition(self, aligned_112: np.ndarray) -> np.ndarray | None:
+        """Run only the recognition network on an already-aligned 112x112 face."""
+        try:
+            # insightface 2.x exposes loaded sessions through `models`; older
+            # releases set a `face_recognition` attribute instead.
+            session = getattr(self._insightface_app, "face_recognition", None)
+            if session is None and hasattr(self._insightface_app, "models"):
+                session = self._insightface_app.models.get("recognition")
+            if session is None or not hasattr(session, "get_feat"):
+                return None
+            batch = aligned_112.astype(np.float32)
+            # ArcFaceONNX.get_feat expects a list of HxWx3 images and does its
+            # own resize/normalisation.
+            emb = session.get_feat([batch])
+            emb = np.asarray(emb, dtype=np.float32).flatten()
+            norm = np.linalg.norm(emb)
+            if emb.size == 0 or norm < 1e-8:
+                return None
+            return (emb / norm).astype(np.float32)
+        except Exception as e:  # noqa: BLE001
+            logger.debug("InsightFace recognition-only embedding failed: %s", e)
+            return None
 
     @staticmethod
     def _pad_crop(face_crop: np.ndarray, pad_ratio: float = 0.35) -> np.ndarray:

@@ -1,12 +1,12 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useParams, useSearchParams, useNavigate } from "react-router-dom";
-import { Clock, Send, Play, CheckCircle2, XCircle, Camera, Mic, Maximize2, ShieldAlert, Video, VideoOff, MicOff, ScanFace, AlertTriangle } from "lucide-react";
+import { Clock, Send, Play, CheckCircle2, XCircle, Camera, Mic, Maximize2, ShieldAlert, Video, VideoOff, MicOff, ScanFace, AlertTriangle, Terminal, Loader2, RotateCcw, Braces, ChevronDown, Move } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent } from "@/components/ui/card";
 import { CodeEditor } from "@/components/assessment/code-editor";
 import FaceAttentionOverlay from "@/components/assessment/face-attention-overlay";
-import { DifficultyBadge, SimpleProgress } from "@/components/portal/primitives";
+import { DifficultyBadge } from "@/components/portal/primitives";
 import { StatusBadge } from "@/components/portal/status-badge";
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
@@ -21,9 +21,125 @@ function CodeBlock({ code }) {
     );
 }
 
+function formatPythonRuntimeError(stderr) {
+    const output = String(stderr || "");
+    if (!output.includes("Traceback (most recent call last):")) return output;
+
+    const frames = [...output.matchAll(/File ["'].*?["'], line (\d+)(?:, in ([^\n]+))?/g)];
+    const line = frames.at(-1)?.[1];
+    const error = output.trim().split(/\r?\n/).at(-1)?.trim();
+    const location = line ? `Runtime error on line ${line} of your code` : "Python runtime error";
+
+    return [location, error, line ? `Check line ${line} in the editor. The path shown by Python belongs to the temporary runner.` : null]
+        .filter(Boolean)
+        .join("\n\n");
+}
+
+const LANGUAGES = [
+    { key: "c", label: "C", monaco: "c" },
+    { key: "cpp", label: "C++", monaco: "cpp" },
+    { key: "java", label: "Java", monaco: "java" },
+    { key: "python", label: "Python", monaco: "python" },
+    { key: "javascript", label: "JavaScript", monaco: "javascript" },
+];
+
+const MONACO_LANGUAGE = Object.fromEntries(LANGUAGES.map((l) => [l.key, l.monaco]));
+
+const LANGUAGE_KEY = Object.fromEntries(LANGUAGES.map((l) => [l.key, l.key]));
+LANGUAGE_KEY["c++"] = "cpp";
+LANGUAGE_KEY["cplusplus"] = "cpp";
+LANGUAGE_KEY["py"] = "python";
+LANGUAGE_KEY["js"] = "javascript";
+LANGUAGE_KEY["node"] = "javascript";
+LANGUAGE_KEY["nodejs"] = "javascript";
+
+// Judge0 requires the Java entry class to be named `Main`.
 const STARTER = {
-    python: "# Write your Python solution here\nimport sys\n\ndef solve():\n    # read input from sys.stdin and print the answer\n    pass\n\nif __name__ == '__main__':\n    solve()",
-    javascript: "// Write your JavaScript solution here\nconst readline = require('readline');\n",
+    c: `#include <stdio.h>
+
+int main(void) {
+    /* Read from stdin and print the answer. */
+    int n;
+    if (scanf("%d", &n) != 1) return 0;
+
+    long long sum = 0;
+    for (int i = 0; i < n; i++) {
+        long long x;
+        if (scanf("%lld", &x) != 1) break;
+        sum += x;
+    }
+
+    printf("%lld\\n", sum);
+    return 0;
+}`,
+    cpp: `#include <iostream>
+using namespace std;
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    /* Read from stdin and print the answer. */
+    int n;
+    if (!(cin >> n)) return 0;
+
+    long long sum = 0;
+    for (int i = 0; i < n; i++) {
+        long long x;
+        if (!(cin >> x)) break;
+        sum += x;
+    }
+
+    cout << sum << "\\n";
+    return 0;
+}`,
+    java: `import java.util.Scanner;
+
+public class Main {
+    public static void main(String[] args) {
+        /* Read from stdin and print the answer. */
+        Scanner sc = new Scanner(System.in);
+        if (!sc.hasNextInt()) return;
+
+        int n = sc.nextInt();
+        long sum = 0;
+        for (int i = 0; i < n; i++) {
+            if (!sc.hasNextLong()) break;
+            sum += sc.nextLong();
+        }
+
+        System.out.println(sum);
+    }
+}`,
+    python: `# Read input from stdin and print the answer
+import sys
+
+
+def solve():
+    data = sys.stdin.read().split()
+    if not data:
+        return
+
+    n = int(data[0])
+    values = list(map(int, data[1:1 + n]))
+    print(sum(values))
+
+
+if __name__ == "__main__":
+    solve()
+`,
+    javascript: `// Read input from stdin and print the answer
+const fs = require("fs");
+
+const tokens = fs.readFileSync(0, "utf8").trim().split(/\\s+/).filter(Boolean);
+
+if (tokens.length) {
+    const n = Number(tokens[0]);
+    let sum = 0;
+    for (let i = 1; i <= n; i++) sum += Number(tokens[i]);
+    console.log(sum);
+}
+`,
 };
 
 export default function TakeTest() {
@@ -43,8 +159,11 @@ export default function TakeTest() {
     const [finished, setFinished] = useState(false);
     const [result, setResult] = useState(null);
     const [submitting, setSubmitting] = useState(false);
-    const [running, setRunning] = useState(false);
-    const [runOutput, setRunOutput] = useState("");
+const [running, setRunning] = useState(false);
+const [runResult, setRunResult] = useState(null);
+const [runError, setRunError] = useState("");
+const [codingView, setCodingView] = useState("problem");
+const [cameraPosition, setCameraPosition] = useState(null);
     const [timeLeft, setTimeLeft] = useState(null);
     const [error, setError] = useState("");
     const [cheatingReasonState, setCheatingReasonState] = useState(null);
@@ -52,11 +171,14 @@ export default function TakeTest() {
     const [faceCaptureError, setFaceCaptureError] = useState("");
     const [enrollProgress, setEnrollProgress] = useState({ captured: 0, required: 5 });
     const startAtRef = useRef(Date.now());
+const codeBuffersRef = useRef({});
     const durationRef = useRef(30 * 60);
     const pausedTotalRef = useRef(0);
     const pausedSinceRef = useRef(null);
     const previewRef = useRef(null);
     const faceCanvasRef = useRef(null);
+    const cameraPipRef = useRef(null);
+    const cameraDragRef = useRef(null);
     const enrollIntervalRef = useRef(null);
     const didInitRef = useRef(null);
 
@@ -85,9 +207,7 @@ export default function TakeTest() {
     // As soon as the enrolled face returns, the gate lifts automatically.
     const identityBlocked = proctored && !proctoring.simulated && !!proctoring.faceMonitor?.identityBlocked;
 
-    // Single source of truth for the face badge so the top bar and the camera
-    // PIP footer cannot show contradictory text (e.g. "Verified" next to
-    // "No face") when the underlying fields update between renders.
+    // Keep one face-verification verdict in the assessment header.
     const faceMonitor = proctoring.faceMonitor;
     const faceStatus = !faceMonitor?.known
         ? { label: "Starting", tone: "border-slate-300 bg-slate-100 text-slate-600 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300" }
@@ -220,14 +340,26 @@ export default function TakeTest() {
         setQuestionIndex(qr.questionIndex || 0);
         setAdaptive(qr.adaptive);
         setFeedback(null);
-        setRunOutput("");
+        setRunResult(null);
+        setRunError("");
+        setCodingView("problem");
         if (qr.question?.type === "coding") {
-            const lang = qr.question.language || "python";
+            const lang = LANGUAGE_KEY[String(qr.question.language || "python").toLowerCase()] || "python";
+            codeBuffersRef.current = {};
             setLanguage(lang);
-            setCode((prev) => (prev ? prev : STARTER[lang] || STARTER.python));
+            setCode(STARTER[lang] || STARTER.python);
         } else {
             setAnswer(qr.question?.format === "mcq" ? undefined : "");
         }
+    };
+
+    // Each language keeps its own buffer so switching C -> Java -> C does not
+    // throw away work in progress.
+    const handleLanguageChange = (next) => {
+        const lang = LANGUAGE_KEY[String(next).toLowerCase()] || next;
+        codeBuffersRef.current[language] = code;
+        setLanguage(lang);
+        setCode(codeBuffersRef.current[lang] ?? STARTER[lang] ?? "");
     };
 
     const loadNext = useCallback(async (realId) => {
@@ -354,12 +486,19 @@ export default function TakeTest() {
 
     const handleRun = async () => {
         setRunning(true);
-        setRunOutput("Running...");
+        setRunResult(null);
+        setRunError("");
         try {
-            const r = await api.judge.run(code, language, question?.examples?.[0]?.input || "");
-            setRunOutput(r.stdout || r.stderr || "(no output)");
+            const testCases = (question?.examples || []).slice(0, 10).map((example) => ({
+                input: String(example.input ?? ""),
+                expectedOutput: String(example.output ?? ""),
+            }));
+            const r = testCases.length
+                ? await api.judge.runTests(code, language, testCases)
+                : await api.judge.run(code, language, "");
+            setRunResult(r);
         } catch (e) {
-            setRunOutput("Error: " + e.message);
+            setRunError(e.message);
         } finally {
             setRunning(false);
         }
@@ -370,6 +509,230 @@ export default function TakeTest() {
         const m = Math.floor(s / 60);
         const sec = s % 60;
         return `${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
+    };
+
+    const isCoding = question?.type === "coding";
+
+    const startCameraDrag = (event) => {
+        if (event.button !== 0 || !cameraPipRef.current) return;
+        const rect = cameraPipRef.current.getBoundingClientRect();
+        cameraDragRef.current = {
+            pointerId: event.pointerId,
+            startX: event.clientX,
+            startY: event.clientY,
+            left: rect.left,
+            top: rect.top,
+        };
+        event.currentTarget.setPointerCapture(event.pointerId);
+    };
+
+    const moveCameraPip = (event) => {
+        const drag = cameraDragRef.current;
+        if (!drag || drag.pointerId !== event.pointerId || !cameraPipRef.current) return;
+        const { width, height } = cameraPipRef.current.getBoundingClientRect();
+        setCameraPosition({
+            left: Math.max(0, Math.min(window.innerWidth - width, drag.left + event.clientX - drag.startX)),
+            top: Math.max(0, Math.min(window.innerHeight - height, drag.top + event.clientY - drag.startY)),
+        });
+    };
+
+    const stopCameraDrag = (event) => {
+        if (cameraDragRef.current?.pointerId === event.pointerId) cameraDragRef.current = null;
+    };
+
+    const nudgeCameraPip = (event) => {
+        if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key) || !cameraPipRef.current) return;
+        event.preventDefault();
+        const rect = cameraPipRef.current.getBoundingClientRect();
+        const delta = event.shiftKey ? 24 : 8;
+        const left = rect.left + (event.key === "ArrowRight" ? delta : event.key === "ArrowLeft" ? -delta : 0);
+        const top = rect.top + (event.key === "ArrowDown" ? delta : event.key === "ArrowUp" ? -delta : 0);
+        setCameraPosition({
+            left: Math.max(0, Math.min(window.innerWidth - rect.width, left)),
+            top: Math.max(0, Math.min(window.innerHeight - rect.height, top)),
+        });
+    };
+
+    const renderBadges = () => (
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+            <span className="rounded-lg bg-slate-200 px-2.5 py-1 text-xs font-medium text-slate-700 dark:bg-zinc-800 dark:text-zinc-300">
+                Question {questionIndex + 1}
+            </span>
+            <DifficultyBadge difficulty={question.difficulty} />
+            <span className="rounded-lg bg-slate-100 px-2.5 py-1 text-xs text-slate-600 dark:bg-zinc-800/70 dark:text-zinc-400">
+                {isCoding ? "Coding" : question.format === "mcq" ? "MCQ" : question.format === "fillup" ? "Fill in the blank" : "Code Snippet"}
+            </span>
+            {adaptive && (
+                <span className="ml-auto rounded-lg bg-violet-500/10 px-2.5 py-1 text-xs font-medium text-violet-300">
+                    Adaptive level: {adaptive.level} ({Math.min(adaptive.askedCount, attempt?.totalQuestions || adaptive.askedCount)}/{attempt?.totalQuestions || "?"})
+                </span>
+            )}
+        </div>
+    );
+
+    const renderVerdict = () => (
+        <>
+            {feedback && isCoding && (
+                <div
+                    className={cn(
+                        "mt-3 flex items-start gap-2 rounded-lg border p-3 text-sm",
+                        feedback.passed === feedback.total ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "border-red-500/30 bg-red-500/10 text-red-700 dark:text-red-300"
+                    )}
+                >
+                    {feedback.passed === feedback.total ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" /> : <XCircle className="mt-0.5 h-4 w-4 shrink-0" />}
+                    <div className="min-w-0">
+                        <p className="font-medium">Passed {feedback.passed}/{feedback.total} test cases</p>
+                        {feedback.judge?.failedCases?.length > 0 && (
+                            <div className="mt-2 space-y-1 text-xs opacity-80">
+                                {feedback.judge.failedCases.map((fc, i) => (
+                                    <p key={i} className="whitespace-pre-wrap break-words">
+                                        <span className="font-medium">Expected:</span> {fc.expected} <span className="font-medium">Got:</span> {fc.stdout || fc.error || "(empty)"}
+                                    </p>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
+            {feedback && !isCoding && (
+                <p className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-300">
+                    Answer submitted. Loading the next question...
+                </p>
+            )}
+            {error && <p className="mt-3 rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-400">{error}</p>}
+        </>
+    );
+
+    // Problem statement: top section of the coding layout, left column of the
+    // non-coding layout.
+    const renderStatement = () => (
+        <>
+            {renderBadges()}
+            <p className="min-w-0 whitespace-pre-wrap break-words text-sm leading-relaxed text-slate-700 [overflow-wrap:anywhere] dark:text-zinc-300">{question.description}</p>
+            {question.format === "code_snippet" && <CodeBlock code={question.codeSnippet} />}
+            {isCoding && (
+                <div className="mt-3 space-y-3">
+                    {question.constraints?.length > 0 && (
+                        <div>
+                            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-zinc-500">Constraints</p>
+                            <ul className="mt-1 list-inside list-disc text-sm text-slate-700 dark:text-zinc-300">
+                                {question.constraints.map((c, i) => <li key={i}>{c}</li>)}
+                            </ul>
+                        </div>
+                    )}
+                    {question.inputFormat && <p className="text-sm text-slate-700 dark:text-zinc-300"><span className="font-semibold text-slate-500 dark:text-zinc-400">Input: </span>{question.inputFormat}</p>}
+                    {question.outputFormat && <p className="text-sm text-slate-700 dark:text-zinc-300"><span className="font-semibold text-slate-500 dark:text-zinc-400">Output: </span>{question.outputFormat}</p>}
+                    {(question.examples || []).map((ex, i) => (
+                        <div key={i} className="rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-zinc-800 dark:bg-zinc-950/50">
+                            <p className="text-xs font-semibold text-slate-500 dark:text-zinc-400">Example {i + 1}</p>
+                            <pre className="mt-1 whitespace-pre-wrap text-sm text-slate-800 dark:text-zinc-200">
+                                <span className="text-slate-400 dark:text-zinc-500">Input:</span> {ex.input}
+                                {"\n"}
+                                <span className="text-slate-400 dark:text-zinc-500">Output:</span> {ex.output}
+                            </pre>
+                        </div>
+                    ))}
+                </div>
+            )}
+            {renderVerdict()}
+        </>
+    );
+
+    const renderNonCodingInput = () => (
+        <>
+            {question.format === "mcq" ? (
+                <div className="space-y-2">
+                    {(question.options || []).map((opt, i) => (
+                        <button
+                            key={i}
+                            onClick={() => setAnswer(i)}
+                            className={cn(
+                                "flex w-full items-center gap-3 rounded-lg border px-4 py-3 text-left text-sm transition-all",
+                                answer === i ? "border-violet-500 bg-violet-600/10 text-violet-800 dark:text-violet-200" : "border-slate-200 bg-white text-slate-700 hover:border-slate-300 dark:border-zinc-800 dark:bg-zinc-950/40 dark:text-zinc-300 dark:hover:border-zinc-700"
+                            )}
+                        >
+                            <span className={cn("flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-xs font-semibold", answer === i ? "border-violet-400 bg-violet-500 text-white" : "border-slate-300 text-slate-500 dark:border-zinc-700 dark:text-zinc-400")}>
+                                {String.fromCharCode(65 + i)}
+                            </span>
+                            <span className="min-w-0 flex-1 whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{opt}</span>
+                        </button>
+                    ))}
+                </div>
+            ) : (
+                <Textarea value={answer} onChange={(e) => setAnswer(e.target.value)} placeholder="Type your answer here..." rows={4} />
+            )}
+            {question.format === "code_snippet" && (
+                <Textarea className="mt-3" value={answer} onChange={(e) => setAnswer(e.target.value)} placeholder="What is the output?" rows={3} />
+            )}
+        </>
+    );
+
+    const renderSubmitRow = () => (
+        <div className="mt-4 flex gap-3">
+            <Button className="flex-1" onClick={handleSubmit} disabled={submitting || !!feedback || !isCoding && answer === undefined}>
+                <Send className="h-4 w-4" />
+                {submitting ? "Submitting..." : feedback ? "Next question loading..." : "Submit Answer"}
+            </Button>
+        </div>
+    );
+
+    // Output / error panel shown under the editor.
+    const renderOutputPanel = () => {
+        const r = runResult;
+        const failed = r && (r.status !== "success");
+        const tone = runError
+            ? "text-red-300"
+            : !r
+                ? "text-zinc-500"
+                : failed
+                    ? "text-red-300"
+                    : "text-emerald-300";
+        const rawBody = runError
+            ? runError
+            : !r
+                ? "Run your code to see output, compiler errors and runtime errors here."
+                : r.compileOutput || r.stderr || r.message
+                    ? r.compileOutput || r.stderr || r.message
+                    : r.output || r.stdout || "(no output)";
+        const body = language === "python" ? formatPythonRuntimeError(rawBody) : rawBody;
+        return (
+            <div className="flex h-52 shrink-0 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white dark:border-zinc-800 dark:bg-zinc-900/60">
+                <div className="flex items-center gap-2 border-b border-slate-200 px-3 py-1.5 dark:border-zinc-800">
+                    <Terminal className="h-3.5 w-3.5 text-zinc-500" />
+                    <span className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-zinc-400">Output</span>
+                    {running && <Loader2 className="h-3.5 w-3.5 animate-spin text-violet-400" />}
+                    {r && !running && (
+                        <span className={cn("rounded px-1.5 py-0.5 text-[11px] font-medium", failed ? "bg-red-500/10 text-red-400" : "bg-emerald-500/10 text-emerald-400")}>
+                            {r.testCases?.length
+                                ? `${r.passed}/${r.total} test cases passed`
+                                : r.statusText || (failed ? "Failed" : "Executed")}
+                        </span>
+                    )}
+                    <div className="ml-auto flex items-center gap-3 text-[11px] text-zinc-500">
+                        {r?.engine && <span className="uppercase">{r.engine}</span>}
+                        {r?.time != null && r.time !== "" && <span>{Number(r.time).toFixed(2)}s</span>}
+                        {r?.memoryKb ? <span>{Math.round(Number(r.memoryKb) / 1024)} MB</span> : null}
+                    </div>
+                </div>
+                <pre className={cn("min-h-0 flex-1 overflow-auto whitespace-pre-wrap break-words px-3 py-2 text-xs", tone)}>{body}</pre>
+                {r?.testCases?.length > 0 && (
+                    <div className="max-h-28 shrink-0 space-y-1 overflow-auto border-t border-slate-200 px-3 py-2 dark:border-zinc-800">
+                        {r.testCases.map((testCase, index) => (
+                            <div key={testCase.index ?? index} className={cn("grid grid-cols-[auto_1fr_1fr] gap-2 rounded px-2 py-1.5 text-[11px]", testCase.passed ? "bg-emerald-500/5" : "bg-red-500/5")}>
+                                <span className={testCase.passed ? "text-emerald-400" : "text-red-400"}>
+                                    {testCase.passed ? "✓" : "×"} Case {index + 1}
+                                </span>
+                                <span className="min-w-0 break-words text-zinc-500"><span className="text-zinc-400">Expected:</span> {testCase.expected || "(empty)"}</span>
+                                <span className="min-w-0 break-words text-zinc-500"><span className="text-zinc-400">Output:</span> {testCase.stdout || (language === "python" ? formatPythonRuntimeError(testCase.error) : testCase.error) || "(empty)"}</span>
+                            </div>
+                        ))}
+                    </div>
+                )}
+                {r?.warning && (
+                    <p className="border-t border-amber-500/30 bg-amber-500/10 px-3 py-1 text-[11px] text-amber-300">{r.warning}</p>
+                )}
+            </div>
+        );
     };
 
     // ---------- Result / error / loading states (always full width) ----------
@@ -699,183 +1062,121 @@ export default function TakeTest() {
                 <Button variant="outline" size="sm" onClick={handleFinish}>Finish</Button>
             </div>
 
-            {/* Main content */}
-            <div className="grid flex-1 grid-cols-1 gap-5 overflow-y-auto p-5 xl:grid-cols-3">
-                <div className="xl:col-span-2">
-                    <Card className="border-slate-200 bg-white dark:border-zinc-800 dark:bg-zinc-900/40">
-                        <CardContent className="p-5">
-                            <div className="mb-4 flex flex-wrap items-center gap-3">
-                                <span className="rounded-lg bg-slate-200 px-3 py-1 text-xs font-medium text-slate-700 dark:bg-zinc-800 dark:text-zinc-300">Question {questionIndex + 1}</span>
-                                <DifficultyBadge difficulty={question.difficulty} />
-                                <span className="rounded-lg bg-slate-100 px-3 py-1 text-xs text-slate-600 dark:bg-zinc-800/70 dark:text-zinc-400">
-                                    {question.type === "coding" ? `Coding • ${question.language}` : question.format === "mcq" ? "MCQ" : question.format === "fillup" ? "Fill in the blank" : "Code Snippet"}
-                                </span>
-                                {adaptive && (
-                                    <span className="ml-auto rounded-lg bg-violet-500/10 px-3 py-1 text-xs font-medium text-violet-300">
-                                        Adaptive level: {adaptive.level} ({Math.min(adaptive.askedCount, attempt?.totalQuestions || adaptive.askedCount)}/{attempt?.totalQuestions || "?"})
-                                    </span>
-                                )}
-                            </div>
-
-                            <p className="whitespace-pre-wrap text-sm leading-relaxed text-slate-700 dark:text-zinc-300">{question.description}</p>
-
-                            {question.format === "code_snippet" && <CodeBlock code={question.codeSnippet} />}
-
-                            {question.type === "coding" && (
-                                <div className="mt-4 space-y-3">
-                                    {question.constraints?.length > 0 && (
-                                        <div>
-                                            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-zinc-500">Constraints</p>
-                                            <ul className="mt-1 list-inside list-disc text-sm text-slate-700 dark:text-zinc-300">
-                                                {question.constraints.map((c, i) => <li key={i}>{c}</li>)}
-                                            </ul>
-                                        </div>
-                                    )}
-                                    {question.inputFormat && <p className="text-sm text-slate-700 dark:text-zinc-300"><span className="font-semibold text-slate-500 dark:text-zinc-400">Input: </span>{question.inputFormat}</p>}
-                                    {question.outputFormat && <p className="text-sm text-slate-700 dark:text-zinc-300"><span className="font-semibold text-slate-500 dark:text-zinc-400">Output: </span>{question.outputFormat}</p>}
-                                    {(question.examples || []).map((ex, i) => (
-                                        <div key={i} className="rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-zinc-800 dark:bg-zinc-950/50">
-                                            <p className="text-xs font-semibold text-slate-500 dark:text-zinc-400">Example {i + 1}</p>
-                                            <pre className="mt-1 text-sm text-slate-800 dark:text-zinc-200">
-                                                <span className="text-slate-400 dark:text-zinc-500">Input:</span> {ex.input}
-                                                {"\n"}
-                                                <span className="text-slate-400 dark:text-zinc-500">Output:</span> {ex.output}
-                                            </pre>
-                                        </div>
-                                    ))}
-                                </div>
-                            )}
-
-                            {feedback && (
-                                <div
-                                    className={cn(
-                                        "mt-4 flex items-start gap-2 rounded-lg border p-3 text-sm",
-                                        feedback.correct ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "border-red-500/30 bg-red-500/10 text-red-700 dark:text-red-300"
-                                    )}
-                                >
-                                    {feedback.correct ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" /> : <XCircle className="mt-0.5 h-4 w-4 shrink-0" />}
-                                    <div>
-                                        <p className="font-medium">
-                                            {feedback.correct ? "Correct!" : feedback.passed !== undefined ? `Passed ${feedback.passed}/${feedback.total} test cases` : "Incorrect"}
-                                        </p>
-                                        {!feedback.correct && feedback.correctAnswer !== undefined && feedback.correctAnswer !== null && (
-                                            <p className="mt-1 text-xs opacity-80">Correct answer: {String(feedback.correctAnswer)}</p>
-                                        )}
-                                        {feedback.judge?.failedCases?.length > 0 && (
-                                            <div className="mt-2 space-y-1 text-xs opacity-80">
-                                                {feedback.judge.failedCases.map((fc, i) => (
-                                                    <p key={i}>
-                                                        <span className="font-medium">Expected:</span> {fc.expected} <span className="font-medium">Got:</span> {fc.stdout || fc.error || "(empty)"}
-                                                    </p>
-                                                ))}
-                                            </div>
-                                        )}
-                                    </div>
-                                </div>
-                            )}
-
-                            {error && <p className="mt-4 rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-400">{error}</p>}
-                        </CardContent>
-                    </Card>
-                </div>
-
-                <div className="flex flex-col gap-5 pb-20">
-                    <Card className="border-slate-200 bg-white dark:border-zinc-800 dark:bg-zinc-900/40">
-                        <CardContent className="p-5">
-                            <div className="mb-4 flex items-center justify-between">
-                                <p className="text-sm font-medium text-slate-500 dark:text-zinc-400">
-                                    {question.format === "mcq" ? "Choose one option" : question.type === "coding" ? "Write your code" : "Type your answer"}
-                                </p>
-                            </div>
-
-                            {question.type === "coding" ? (
-                                <div className="space-y-3">
-                                    <div className="flex items-center justify-between">
+            {/* Keep the problem and coding workspace as separate full-height views. */}
+            {isCoding ? (
+                <div className="flex min-h-0 flex-1 flex-col p-4">
+                    <div className="mb-3 flex shrink-0 items-center gap-1 self-start rounded-lg border border-slate-200 bg-slate-100 p-1 dark:border-zinc-800 dark:bg-zinc-950">
+                        <Button size="sm" variant={codingView === "problem" ? "default" : "ghost"} aria-pressed={codingView === "problem"} onClick={() => setCodingView("problem")}>
+                            Problem statement
+                        </Button>
+                        <Button size="sm" variant={codingView === "editor" ? "default" : "ghost"} aria-pressed={codingView === "editor"} onClick={() => setCodingView("editor")}>
+                            <Braces className="h-4 w-4" /> Code editor
+                        </Button>
+                    </div>
+                    {codingView === "problem" ? (
+                        <div className="min-h-0 flex-1 overflow-y-auto rounded-lg border border-slate-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-900/40">
+                            {renderStatement()}
+                            <Button className="mt-6" onClick={() => setCodingView("editor")}>
+                                <Braces className="h-4 w-4" /> Open code editor
+                            </Button>
+                        </div>
+                    ) : (
+                        <div className="flex min-h-0 flex-1 flex-col gap-3">
+                            <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white dark:border-zinc-800 dark:bg-zinc-900/40">
+                                <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 px-3 py-2 dark:border-zinc-800">
+                                    <div className="relative">
+                                        <Braces className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-violet-400" />
                                         <select
+                                            aria-label="Programming language"
                                             value={language}
-                                            onChange={(e) => setLanguage(e.target.value)}
-                                            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200"
+                                            onChange={(e) => handleLanguageChange(e.target.value)}
+                                            className="h-9 min-w-40 appearance-none rounded-lg border border-slate-300 bg-white py-1.5 pl-9 pr-9 text-sm font-medium text-slate-700 shadow-sm transition hover:border-violet-400 focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:border-violet-500"
                                         >
-                                            <option value="python">Python</option>
-                                            <option value="javascript">JavaScript</option>
+                                            {LANGUAGES.map((l) => (
+                                                <option key={l.key} value={l.key}>{l.label}</option>
+                                            ))}
                                         </select>
-                                        <Button size="sm" variant="outline" onClick={handleRun} disabled={running}>
-                                            <Play className="h-3.5 w-3.5" /> {running ? "Running..." : "Run sample"}
-                                        </Button>
+                                        <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500 dark:text-zinc-400" />
                                     </div>
-                                    <div className="h-72 overflow-hidden rounded-lg border border-slate-200 dark:border-zinc-800">
-                                        <CodeEditor language={language} value={code} onChange={setCode} />
-                                    </div>
-                                    {runOutput && <pre className="max-h-32 overflow-auto rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-300">{runOutput}</pre>}
+                                    <Button size="sm" variant="outline" onClick={handleRun} disabled={running}>
+                                        <Play className="h-3.5 w-3.5" /> {running ? "Running..." : "Run code"}
+                                    </Button>
+                                    <Button size="sm" variant="ghost" onClick={() => setCode(STARTER[language] || "")} disabled={running} title="Restore the starter template">
+                                        <RotateCcw className="h-3.5 w-3.5" /> Reset
+                                    </Button>
+                                    <span className="ml-auto hidden text-xs text-slate-500 dark:text-zinc-500 lg:block">
+                                        {question?.examples?.[0] ? "Runs with the Example 1 input" : "No sample input for this question"}
+                                    </span>
                                 </div>
-                            ) : question.format === "mcq" ? (
-                                <div className="space-y-2">
-                                    {(question.options || []).map((opt, i) => (
-                                        <button
-                                            key={i}
-                                            onClick={() => setAnswer(i)}
-                                            className={cn(
-                                                "flex w-full items-center gap-3 rounded-lg border px-4 py-3 text-left text-sm transition-all",
-                                                answer === i ? "border-violet-500 bg-violet-600/10 text-violet-800 dark:text-violet-200" : "border-slate-200 bg-white text-slate-700 hover:border-slate-300 dark:border-zinc-800 dark:bg-zinc-950/40 dark:text-zinc-300 dark:hover:border-zinc-700"
-                                            )}
-                                        >
-                                            <span className={cn("flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-xs font-semibold", answer === i ? "border-violet-400 bg-violet-500 text-white" : "border-slate-300 text-slate-500 dark:border-zinc-700 dark:text-zinc-400")}>
-                                                {String.fromCharCode(65 + i)}
-                                            </span>
-                                            <span className="whitespace-pre-wrap">{opt}</span>
-                                        </button>
-                                    ))}
+                                <div className="min-h-0 flex-1">
+                                    <CodeEditor language={MONACO_LANGUAGE[language] || "python"} value={code} onChange={setCode} />
                                 </div>
-                            ) : (
-                                <Textarea value={answer} onChange={(e) => setAnswer(e.target.value)} placeholder="Type your answer here..." rows={4} />
-                            )}
-
-                            {question.format === "code_snippet" && (
-                                <Textarea className="mt-3" value={answer} onChange={(e) => setAnswer(e.target.value)} placeholder="What is the output?" rows={3} />
-                            )}
-
-                            <div className="mt-5 flex gap-3">
-                                <Button className="flex-1" onClick={handleSubmit} disabled={submitting || !!feedback || (question.type !== "coding" && answer === undefined)}>
-                                    <Send className="h-4 w-4" />
-                                    {submitting ? "Submitting..." : feedback ? "Next question loading..." : "Submit Answer"}
-                                </Button>
-                                <Button variant="outline" onClick={handleFinish}>Finish</Button>
+                                <div className="flex flex-wrap items-center gap-3 border-t border-slate-200 px-3 py-2 dark:border-zinc-800">
+                                    <Button onClick={handleSubmit} disabled={submitting || !!feedback}>
+                                        <Send className="h-4 w-4" />
+                                        {submitting ? "Submitting..." : feedback ? "Next question loading..." : "Submit Answer"}
+                                    </Button>
+                                </div>
                             </div>
-
-                            {feedback && attempt?.totalScore > 0 && (
-                                <div className="mt-4">
-                                    <div className="mb-1 flex justify-between text-xs text-slate-500 dark:text-zinc-500">
-                                        <span>Score</span>
-                                        <span>{attempt.score}/{attempt.totalScore}</span>
-                                    </div>
-                                    <SimpleProgress value={(attempt.score / attempt.totalScore) * 100} />
-                                </div>
-                            )}
-                        </CardContent>
-                    </Card>
+                            {renderOutputPanel()}
+                        </div>
+                    )}
                 </div>
-            </div>
+            ) : (
+                <div className="grid flex-1 grid-cols-1 gap-5 overflow-y-auto p-5 xl:grid-cols-3">
+                    <div className="min-w-0 xl:col-span-2">
+                        <Card className="border-slate-200 bg-white dark:border-zinc-800 dark:bg-zinc-900/40">
+                            <CardContent className="p-5">
+                                {renderStatement()}
+                            </CardContent>
+                        </Card>
+                    </div>
+
+                    <div className="flex flex-col gap-5 pb-20">
+                        <Card className="border-slate-200 bg-white dark:border-zinc-800 dark:bg-zinc-900/40">
+                            <CardContent className="p-5">
+                                <div className="mb-4 flex items-center justify-between">
+                                    <p className="text-sm font-medium text-slate-500 dark:text-zinc-400">
+                                        {question.format === "mcq" ? "Choose one option" : "Type your answer"}
+                                    </p>
+                                </div>
+
+                                {renderNonCodingInput()}
+                                {renderSubmitRow()}
+                            </CardContent>
+                        </Card>
+                    </div>
+                </div>
+            )}
 
             {/* Camera PIP */}
             {proctored && proctoring.status === "active" && (
-                <div className="absolute bottom-4 right-4 z-10 w-44 overflow-hidden rounded-xl border border-zinc-700 bg-zinc-900 shadow-2xl">
+                <div
+                    ref={cameraPipRef}
+                    style={cameraPosition ? { left: cameraPosition.left, top: cameraPosition.top, right: "auto", bottom: "auto" } : undefined}
+                    className="absolute bottom-4 right-4 z-10 w-44 overflow-hidden rounded-xl border border-zinc-700 bg-zinc-900 shadow-2xl"
+                >
                     <div className="relative">
                         <video ref={previewRef} autoPlay playsInline muted className="h-28 w-full object-cover" />
                         <FaceAttentionOverlay metrics={proctoring.faceMonitor?.metrics} width={176} height={112} />
                     </div>
-                    <div className="flex items-center justify-between px-2 py-1 text-[10px] text-zinc-400">
+                    <button
+                        type="button"
+                        aria-label="Move camera preview. Use arrow keys to reposition."
+                        title="Drag to move; use arrow keys to reposition"
+                        onPointerDown={startCameraDrag}
+                        onPointerMove={moveCameraPip}
+                        onPointerUp={stopCameraDrag}
+                        onPointerCancel={stopCameraDrag}
+                        onKeyDown={nudgeCameraPip}
+                        className="flex w-full touch-none cursor-move items-center justify-between px-2 py-1 text-[10px] text-zinc-400 hover:bg-zinc-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-violet-500"
+                    >
                         <span className="flex items-center gap-1">
                             <span className={cn("h-1.5 w-1.5 rounded-full", proctoring.cameraActive ? "bg-emerald-400" : "bg-red-500")} />
-                            <span>{faceStatus.label}</span>
+                            <span>{proctoring.cameraActive ? "Camera active" : "Camera reconnecting"}</span>
                         </span>
-                        <span className="truncate">
-                            {!faceMonitor?.known
-                                ? "starting"
-                                : (faceMonitor.faceCount ?? 0) > 0
-                                    ? `${faceMonitor.faceCount} face${faceMonitor.faceCount === 1 ? "" : "s"}`
-                                    : "no face"}
-                        </span>
-                    </div>
+                        <Move className="h-3 w-3" />
+                    </button>
                 </div>
             )}
 

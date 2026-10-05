@@ -77,7 +77,7 @@ export function HeroSection() {
                 <div className="h-3 w-3 rounded-full bg-green-500/80"/>
               </div>
               <span className="ml-2 text-xs text-zinc-600">
-                assessment.py — CodeAssess Editor
+                assessment.py — PrepGenix Editor
               </span>
             </div>
             <div className="p-6 font-mono text-sm leading-relaxed">

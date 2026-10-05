@@ -5,6 +5,7 @@ import { PageHeader } from "@/components/portal/primitives";
 import { StatusBadge } from "@/components/portal/status-badge";
 import { useAuthStore } from "@/store/auth-store";
 import { api } from "@/lib/api";
+import { getAvatarImage } from "@/lib/avatar-options";
 
 function PerfRow({ label, list }) {
     if (!list?.length) return <p className="text-sm text-zinc-500">No {label.toLowerCase()} yet.</p>;
@@ -50,8 +51,10 @@ export default function StudentProfile() {
             <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
                 <Card className="border-zinc-800/80 bg-zinc-900/40">
                     <CardContent className="flex flex-col items-center gap-3 p-6 text-center">
-                        <div className="flex h-20 w-20 items-center justify-center rounded-full bg-gradient-to-br from-violet-600 to-indigo-600 text-2xl font-bold text-white">
-                            {(p.name || "?").slice(0, 1).toUpperCase()}
+                        <div className="flex h-20 w-20 items-center justify-center overflow-hidden rounded-full bg-gradient-to-br from-violet-600 to-indigo-600 text-4xl font-bold text-white">
+                            {getAvatarImage(user?.avatar)
+                                ? <img src={getAvatarImage(user?.avatar)} alt={`${p.name}'s profile icon`} className="h-full w-full object-cover" />
+                                : (p.name || "?").slice(0, 1).toUpperCase()}
                         </div>
                         <div>
                             <h2 className="text-lg font-semibold text-white">{p.name}</h2>

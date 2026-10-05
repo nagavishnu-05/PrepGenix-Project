@@ -18,6 +18,7 @@ import numpy as np
 
 from ..utils.config import (
     FACE_DETECTION_CONFIDENCE,
+    FACE_DETECT_SIZE,
     FACE_DETECTOR_BACKEND,
     FACE_DETECTOR_DIR,
     MEDIAPIPE_ENABLED,
@@ -26,17 +27,11 @@ from ..utils.config import (
     YOLO_FACE_DIFFICULT_MIN_SIZE,
     YOLO_FACE_FALLBACK_ENABLED,
 )
+from .insightface_app import INSIGHTFACE_AVAILABLE, build_insightface_app
 from .landmark_detector import FacialLandmarkDetector
 from .yolo_face_detector import YOLOFaceDetector
 
 logger = logging.getLogger(__name__)
-
-INSIGHTFACE_AVAILABLE = False
-try:
-    from insightface.app import FaceAnalysis
-    INSIGHTFACE_AVAILABLE = True
-except ImportError:
-    pass
 
 _BACKEND_ALIASES = {
     "mediapipe": "mediapipe",
@@ -71,9 +66,29 @@ class FaceDetector:
         self._cvnet = None
         self._landmark_detector = None
         self._yolo = None
+        self._yolo_failed = False
         self._init_backend()
 
     def _init_backend(self):
+        # InsightFace first: RetinaFace holds up better on angled, partially
+        # occluded and off-centre faces than the MediaPipe short-range detector,
+        # and multi-face recall is what intruder detection depends on.
+        if self._requested_backend in (None, "insightface") and INSIGHTFACE_AVAILABLE:
+            try:
+                app, pack = build_insightface_app(["detection"])
+                if app is None:
+                    raise RuntimeError("no usable InsightFace pack")
+                det_size = max(64, int(FACE_DETECT_SIZE))
+                app.prepare(ctx_id=0, det_size=(det_size, det_size))
+                self._insightface_app = app
+                self._backend = "insightface"
+                logger.info(
+                    "Face detector backend: InsightFace SCRFD %s (det_size=%d)", pack, det_size
+                )
+                return
+            except Exception as e:
+                logger.warning(f"InsightFace init failed, trying fallback: {e}")
+
         if self._use_landmarks and self._requested_backend in (None, "mediapipe") and MEDIAPIPE_ENABLED:
             detector = FacialLandmarkDetector()
             if detector.backend_name == "mediapipe":
@@ -81,24 +96,6 @@ class FaceDetector:
                 self._backend = "mediapipe"
                 logger.info("Face detector backend: MediaPipe Face Landmarker")
                 return
-
-        if self._requested_backend in (None, "insightface") and INSIGHTFACE_AVAILABLE:
-            try:
-                providers = ["CPUExecutionProvider"]
-                if os.environ.get("USE_GPU", "false").lower() == "true":
-                    providers.insert(0, "CUDAExecutionProvider")
-                app = FaceAnalysis(
-                    name="buffalo_l",
-                    providers=providers,
-                    allowed_modules=["detection"],
-                )
-                app.prepare(ctx_id=0, det_size=(640, 640))
-                self._insightface_app = app
-                self._backend = "insightface"
-                logger.info("Face detector backend: InsightFace RetinaFace")
-                return
-            except Exception as e:
-                logger.warning(f"InsightFace init failed, trying fallback: {e}")
 
         if self._requested_backend in (None, "opencv_dnn"):
             ssd_path = FACE_DETECTOR_DIR / "opencv_face_detector_uint8.pb"
@@ -191,9 +188,18 @@ class FaceDetector:
         return "normal"
 
     def _detect_yolo_fallback(self, frame: np.ndarray, conditions: str) -> dict:
+        # Without its weights the YOLO fallback can never succeed, and building it
+        # again on every dark frame costs a failed model lookup per detection.
+        # Latch the failure after the first attempt.
+        if self._yolo_failed:
+            return self._empty_result()
         if self._yolo is None:
             self._yolo = YOLOFaceDetector()
         if not self._yolo.available:
+            self._yolo_failed = True
+            logger.warning(
+                "YOLO face fallback unavailable; relying on the primary detector only."
+            )
             return self._empty_result()
         result = self._yolo.detect(frame)
         if result["face_count"] == 0:

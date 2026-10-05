@@ -335,7 +335,7 @@ router.post("/analyze", authenticate, async (req, res) => {
     const set = {
       lastSeenAt: new Date(),
       latestAnalysis: analysis,
-      ...(latestFramePath ? { latestFramePath } : {}),
+      ...(latestFramePath ? { latestFramePath, latestFrameAt: new Date() } : {}),
     };
     await col("attempts").updateOne({ _id: attempt._id }, { $set: set, $unset: { latestFrame: "" } });
 

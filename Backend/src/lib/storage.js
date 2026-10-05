@@ -14,7 +14,10 @@ const { createClient } = require("@supabase/supabase-js");
 
 const FRAME_BUCKET = process.env.SUPABASE_FRAME_BUCKET || "proctoring-frames";
 const REFERENCE_BUCKET = process.env.SUPABASE_REFERENCE_BUCKET || "proctoring-reference";
+const PROFILE_BUCKET = process.env.SUPABASE_PROFILE_BUCKET || "student-profiles";
 const SIGNED_URL_TTL_SEC = Number(process.env.SUPABASE_SIGNED_URL_TTL_SEC || 900);
+const PROFILE_AVATARS_PATH = "avatars";
+const PROFILE_AVATAR_LIMIT = 1000;
 
 let client = null;
 let clientError = null;
@@ -114,11 +117,14 @@ async function ensureBuckets() {
   const supabase = getClient();
   const created = [];
 
-  for (const bucket of [FRAME_BUCKET, REFERENCE_BUCKET]) {
+  for (const [bucket, options] of [
+    [FRAME_BUCKET, { fileSizeLimit: 10 * 1024 * 1024, allowedMimeTypes: ["image/jpeg", "image/png", "image/webp"] }],
+    [REFERENCE_BUCKET, { fileSizeLimit: 10 * 1024 * 1024, allowedMimeTypes: ["image/jpeg", "image/png", "image/webp"] }],
+    [PROFILE_BUCKET, { fileSizeLimit: 1024, allowedMimeTypes: ["application/json"] }],
+  ]) {
     const { error } = await supabase.storage.createBucket(bucket, {
       public: false,
-      fileSizeLimit: 10 * 1024 * 1024,
-      allowedMimeTypes: ["image/jpeg", "image/png", "image/webp"],
+      ...options,
     });
     // 404/duplicate means it is already there, which is the happy path on
     // every restart after the first.
@@ -128,6 +134,87 @@ async function ensureBuckets() {
     }
   }
   return { skipped: false, created };
+}
+
+function avatarObjectName(regNo, avatar) {
+  const encodedRegNo = Buffer.from(String(regNo)).toString("base64url");
+  return `${encodedRegNo}.${avatar}.json`;
+}
+
+async function listProfileAvatarObjects(search) {
+  if (!isConfigured()) throw new Error("Supabase Storage is required for student profile avatars");
+  const bucket = getClient().storage.from(PROFILE_BUCKET);
+  const objects = [];
+  for (let offset = 0; ; offset += PROFILE_AVATAR_LIMIT) {
+    const { data, error } = await bucket.list(PROFILE_AVATARS_PATH, {
+      limit: PROFILE_AVATAR_LIMIT,
+      offset,
+      ...(search ? { search } : {}),
+    });
+    if (error) throw new Error(`Could not read student profile avatars: ${error.message}`);
+    objects.push(...(data || []));
+    if (!data || data.length < PROFILE_AVATAR_LIMIT) break;
+  }
+  return objects;
+}
+
+async function getStudentAvatars(regNos) {
+  const avatars = new Map();
+  if (!regNos?.length) return avatars;
+
+  const wanted = new Set(regNos.map(String));
+  for (const object of await listProfileAvatarObjects()) {
+    if (!object.name.endsWith(".json")) continue;
+    const nameWithoutExtension = object.name.slice(0, -5);
+    const separator = nameWithoutExtension.lastIndexOf(".");
+    if (separator < 1) continue;
+    const avatar = nameWithoutExtension.slice(separator + 1);
+    if (!/^(boy|girl)-[1-5]$/.test(avatar)) continue;
+
+    let regNo;
+    try {
+      regNo = Buffer.from(nameWithoutExtension.slice(0, separator), "base64url").toString("utf8");
+    } catch {
+      continue;
+    }
+    if (wanted.has(regNo)) avatars.set(regNo, avatar);
+  }
+  return avatars;
+}
+
+async function getStudentAvatar(regNo) {
+  const encodedRegNo = Buffer.from(String(regNo)).toString("base64url");
+  const prefix = `${encodedRegNo}.`;
+  const objects = await listProfileAvatarObjects(prefix);
+  for (const object of objects) {
+    if (!object.name.startsWith(prefix) || !object.name.endsWith(".json")) continue;
+    const avatar = object.name.slice(prefix.length, -5);
+    if (/^(boy|girl)-[1-5]$/.test(avatar)) return avatar;
+  }
+  return null;
+}
+
+async function setStudentAvatar(regNo, avatar) {
+  if (!isConfigured()) throw new Error("Supabase Storage is required for student profile avatars");
+  if (!/^(boy|girl)-[1-5]$/.test(avatar)) throw new Error("Invalid student profile avatar");
+
+  const bucket = getClient().storage.from(PROFILE_BUCKET);
+  const prefix = `${Buffer.from(String(regNo)).toString("base64url")}.`;
+  const existing = (await listProfileAvatarObjects(prefix))
+    .filter((object) => object.name.startsWith(prefix))
+    .filter((object) => object.name !== avatarObjectName(regNo, avatar))
+    .map((object) => `${PROFILE_AVATARS_PATH}/${object.name}`);
+  const key = `${PROFILE_AVATARS_PATH}/${avatarObjectName(regNo, avatar)}`;
+  const { error } = await bucket.upload(key, Buffer.from(JSON.stringify({ avatar })), {
+    contentType: "application/json",
+    upsert: true,
+  });
+  if (error) throw new Error(`Could not save student profile avatar: ${error.message}`);
+  if (existing.length) {
+    const { error: removeError } = await bucket.remove(existing);
+    if (removeError) throw new Error(`Avatar saved, but the previous profile avatar could not be removed: ${removeError.message}`);
+  }
+  return avatar;
 }
 
 /**
@@ -156,6 +243,27 @@ async function uploadImage({ image, bucket = FRAME_BUCKET, scope = "misc", ext =
 async function uploadImagePath(opts) {
   const stored = await uploadImage(opts);
   return stored ? `${stored.bucket}/${stored.key}` : null;
+}
+
+async function removePaths(paths) {
+  if (!isConfigured()) throw new Error("Cannot remove Supabase images: storage is not configured");
+  const grouped = new Map();
+  for (const path of paths || []) {
+    if (typeof path !== "string") continue;
+    const slash = path.indexOf("/");
+    if (slash <= 0 || /^(data:|https?:)/.test(path)) continue;
+    const bucket = path.slice(0, slash);
+    const key = path.slice(slash + 1);
+    if (!grouped.has(bucket)) grouped.set(bucket, []);
+    grouped.get(bucket).push(key);
+  }
+
+  for (const [bucket, keys] of grouped) {
+    for (let start = 0; start < keys.length; start += 100) {
+      const { error } = await getClient().storage.from(bucket).remove(keys.slice(start, start + 100));
+      if (error) throw new Error(`Supabase image cleanup failed for "${bucket}": ${error.message}`);
+    }
+  }
 }
 
 /**
@@ -210,12 +318,17 @@ async function signedUrl(bucketOrPath, ttlSec = SIGNED_URL_TTL_SEC) {
 
 module.exports = {
   FRAME_BUCKET,
+  PROFILE_BUCKET,
   REFERENCE_BUCKET,
   SIGNED_URL_TTL_SEC,
   ensureBuckets,
+  getStudentAvatar,
+  getStudentAvatars,
   isConfigured,
+  removePaths,
   resolveUrls,
   signedUrl,
+  setStudentAvatar,
   uploadImage,
   uploadImagePath,
 };

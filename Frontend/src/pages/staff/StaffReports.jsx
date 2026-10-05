@@ -1,5 +1,5 @@
 import { useState, useEffect, Fragment } from "react";
-import { Search, Users, FileCode, BrainCircuit, AlertTriangle, ChevronDown, ChevronRight, TrendingUp } from "lucide-react";
+import { Search, Users, FileCode, BrainCircuit, AlertTriangle, ChevronDown, ChevronRight, TrendingUp, RefreshCw } from "lucide-react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,6 +12,7 @@ import { api } from "@/lib/api";
 export default function StaffReports() {
     const [rows, setRows] = useState([]);
     const [tests, setTests] = useState([]);
+    const [testListError, setTestListError] = useState("");
     const [testReport, setTestReport] = useState(null);
     const [selectedTest, setSelectedTest] = useState("");
     const [loading, setLoading] = useState(true);
@@ -22,8 +23,26 @@ export default function StaffReports() {
     const [reloadKey, setReloadKey] = useState(0);
 
     useEffect(() => {
-        api.tests.list().then(setTests).catch(() => {});
-    }, []);
+        if (tab !== "test") return;
+        let cancelled = false;
+        setTests([]);
+        setTestReport(null);
+        setTestListError("");
+        api.tests.list().then((items) => {
+            if (cancelled) return;
+            setTests(items);
+            if (selectedTest && !items.some((test) => test.id === selectedTest)) {
+                setSelectedTest("");
+                setTestReport(null);
+            }
+        }).catch((error) => {
+            if (cancelled) return;
+            setTests([]);
+            setTestReport(null);
+            setTestListError(error.message || "Failed to load the tests currently in the staff portal.");
+        });
+        return () => { cancelled = true; };
+    }, [tab, reloadKey]);
 
     useEffect(() => {
         if (tab !== "students") return;
@@ -39,7 +58,7 @@ export default function StaffReports() {
         setLoading(true);
         api.reports.perTest(selectedTest)
             .then(setTestReport)
-            .catch(() => {})
+            .catch(() => setTestReport(null))
             .finally(() => setLoading(false));
     }, [tab, selectedTest, reloadKey]);
 
@@ -145,12 +164,19 @@ export default function StaffReports() {
             {tab === "test" && (
                 <Card className="border-slate-200/80 dark:border-zinc-800/80 bg-white/70 dark:bg-zinc-900/40">
                     <CardHeader>
-                        <Select value={selectedTest} onValueChange={setSelectedTest}>
-                            <SelectTrigger className="w-80"><SelectValue placeholder="Select a test" /></SelectTrigger>
-                            <SelectContent>
-                                {tests.map((t) => <SelectItem key={t.id} value={t.id}>{t.title}</SelectItem>)}
-                            </SelectContent>
-                        </Select>
+                        <div className="flex flex-wrap items-center gap-2">
+                            <Select value={selectedTest} onValueChange={setSelectedTest}>
+                                <SelectTrigger className="w-80"><SelectValue placeholder="Select a test" /></SelectTrigger>
+                                <SelectContent>
+                                    {tests.map((t) => <SelectItem key={t.id} value={t.id}>{t.title}</SelectItem>)}
+                                </SelectContent>
+                            </Select>
+                            <Button type="button" variant="outline" size="sm" onClick={() => setReloadKey((key) => key + 1)}>
+                                <RefreshCw className="mr-2 h-3.5 w-3.5" />
+                                Refresh test list
+                            </Button>
+                        </div>
+                        {testListError && <p role="alert" className="text-sm text-red-500">{testListError}</p>}
                     </CardHeader>
                     <CardContent>
                         {!selectedTest ? (

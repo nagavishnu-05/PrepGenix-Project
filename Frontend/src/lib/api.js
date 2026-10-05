@@ -43,6 +43,7 @@ export const api = {
     auth: {
         login: (role, username, password) => request("/auth/login", { method: "POST", body: { role, username, password } }),
         me: () => request("/auth/me"),
+        updateProfile: (data) => request("/auth/profile", { method: "PUT", body: data }),
         changePassword: (currentPassword, newPassword) => request("/auth/password", { method: "PUT", body: { currentPassword, newPassword } }),
         createCoordinator: (data) => request("/auth/coordinators", { method: "POST", body: data }),
     },
@@ -67,7 +68,7 @@ export const api = {
         aimlImport: (file) => request("/questions/aiml-import", { method: "POST", body: { file } }),
     },
         tests: {
-            list: () => request("/tests"),
+            list: () => request("/tests", { cache: "no-store" }),
             get: (id) => request(`/tests/${id}`),
             create: (data) => request("/tests", { method: "POST", body: data }),
             update: (id, data) => request(`/tests/${id}`, { method: "PUT", body: data }),
@@ -84,7 +85,9 @@ export const api = {
             terminateAttempt: (attemptId, data) => request(`/tests/attempts/${attemptId}/terminate`, { method: "POST", body: data, keepalive: true }),
         },
     judge: {
+        languages: () => request("/judge/languages"),
         run: (code, language, input) => request("/judge/run", { method: "POST", body: { code, language, input } }),
+        runTests: (code, language, testCases) => request("/judge/run", { method: "POST", body: { code, language, testCases } }),
     },
     resumes: {
         list: (params) => request(`/resumes${qs(params)}`),
@@ -106,7 +109,8 @@ export const api = {
         overview: () => request("/reports/overview"),
         students: (params) => request(`/reports/students${qs(params)}`),
         perTest: (id) => request(`/reports/tests/${id}`),
-        perStudent: (regNo) => request(`/reports/student/${regNo}`),
+        perStudent: (regNo) => request(`/reports/student/${regNo}`, { cache: "no-store" }),
+        rankings: () => request("/reports/rankings/me", { cache: "no-store" }),
     },
     proctoring: {
         report: (data) => request("/proctoring/report", { method: "POST", body: data }),

@@ -9,7 +9,9 @@ import { FileInput } from "@/components/ui/file-input";
 import { useAuthStore } from "@/store/auth-store";
 import { useUIStore } from "@/store/ui-store";
 import { api } from "@/lib/api";
+import { STUDENT_AVATARS, getAvatarImage } from "@/lib/avatar-options";
 import { cn } from "@/lib/utils";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 
 function PerfRow({ label, list }) {
     if (!list?.length) return <p className="text-sm text-slate-500 dark:text-zinc-500">No {label.toLowerCase()} attempts yet.</p>;
@@ -34,6 +36,7 @@ function PerfRow({ label, list }) {
 
 export default function SettingsPage() {
     const user = useAuthStore((s) => s.user);
+    const updateUser = useAuthStore((s) => s.updateUser);
     const { theme, setTheme } = useUIStore();
     const [student, setStudent] = useState(null);
     const [loadingStudent, setLoadingStudent] = useState(user?.role === "student");
@@ -87,6 +90,9 @@ export default function SettingsPage() {
     const [resume, setResume] = useState(null);
     const [uploadingResume, setUploadingResume] = useState(false);
     const [resumeError, setResumeError] = useState(null);
+    const [avatarSaving, setAvatarSaving] = useState(false);
+    const [avatarError, setAvatarError] = useState("");
+    const [avatarDialogOpen, setAvatarDialogOpen] = useState(false);
 
     useEffect(() => {
         if (!isStudent || !regNo) return;
@@ -105,9 +111,68 @@ export default function SettingsPage() {
                 <div className="space-y-6">
                     <Card className="border-slate-200/80 dark:border-zinc-800/80 bg-white/70 dark:bg-zinc-900/40">
                         <CardContent className="flex flex-col items-center gap-3 p-6 text-center">
-                            <div className="flex h-20 w-20 items-center justify-center rounded-full bg-gradient-to-br from-violet-600 to-indigo-600 text-2xl font-bold text-white shadow-lg">
-                                {(user?.name || "?").slice(0, 1).toUpperCase()}
+                            <div className="flex h-20 w-20 items-center justify-center overflow-hidden rounded-full bg-gradient-to-br from-violet-600 to-indigo-600 text-4xl shadow-lg" aria-label="Profile picture">
+                                {getAvatarImage(user?.avatar)
+                                    ? <img src={getAvatarImage(user?.avatar)} alt="Selected profile icon" className="h-full w-full object-cover" />
+                                    : (user?.name || "?").slice(0, 1).toUpperCase()}
                             </div>
+                            {isStudent && (
+                                <Dialog open={avatarDialogOpen} onOpenChange={setAvatarDialogOpen}>
+                                    <DialogTrigger asChild>
+                                        <button type="button" className="text-xs font-medium text-violet-600 hover:text-violet-700 dark:text-violet-400 dark:hover:text-violet-300">
+                                            Change profile icon
+                                        </button>
+                                    </DialogTrigger>
+                                    <DialogContent className="max-h-[85vh] overflow-y-auto">
+                                        <DialogHeader>
+                                            <DialogTitle>Choose your profile icon</DialogTitle>
+                                            <DialogDescription>Choose one of the provided icons. Your selection is saved to your account.</DialogDescription>
+                                        </DialogHeader>
+                                        <div className="space-y-4">
+                                            {["Boy avatars", "Girl avatars"].map((group, groupIndex) => (
+                                                <div key={group}>
+                                                    <p className="mb-2 text-[11px] font-medium uppercase tracking-wide text-slate-500 dark:text-zinc-500">{group}</p>
+                                                    <div className="grid grid-cols-5 gap-2">
+                                                        {STUDENT_AVATARS.filter((option) => option.group === (groupIndex === 0 ? "Masculine styles" : "Feminine styles")).map((option) => (
+                                                            <button
+                                                                key={option.id}
+                                                                type="button"
+                                                                aria-label={`Choose ${option.label} profile icon`}
+                                                                aria-pressed={user?.avatar === option.id}
+                                                                disabled={avatarSaving}
+                                                                onClick={async () => {
+                                                                    setAvatarError("");
+                                                                    setAvatarSaving(true);
+                                                                    try {
+                                                                        const updated = await api.auth.updateProfile({ avatar: option.id });
+                                                                        updateUser({ avatar: updated.avatar });
+                                                                        setAvatarDialogOpen(false);
+                                                                    } catch (err) {
+                                                                        setAvatarError(err.message || "Could not save profile icon.");
+                                                                    } finally {
+                                                                        setAvatarSaving(false);
+                                                                    }
+                                                                }}
+                                                                className={cn(
+                                                                    "flex aspect-square items-center justify-center overflow-hidden rounded-xl border transition hover:-translate-y-0.5 hover:border-violet-400 disabled:opacity-60",
+                                                                    user?.avatar === option.id
+                                                                        ? "border-violet-500 bg-violet-500/10 ring-2 ring-violet-500/30"
+                                                                        : "border-slate-200 bg-slate-50 dark:border-zinc-800 dark:bg-zinc-950/40"
+                                                                )}
+                                                                title={option.label}
+                                                            >
+                                                                <img src={option.image} alt={option.label} className="h-full w-full object-cover" />
+                                                            </button>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            ))}
+                                            {avatarSaving && <p className="text-xs text-slate-500 dark:text-zinc-500">Saving profile icon...</p>}
+                                            {avatarError && <p role="alert" className="text-xs text-red-500">{avatarError}</p>}
+                                        </div>
+                                    </DialogContent>
+                                </Dialog>
+                            )}
                             <div>
                                 <h2 className="text-lg font-semibold text-slate-900 dark:text-white">{user?.name}</h2>
                                 <p className="text-sm text-slate-500 dark:text-zinc-500">{user?.username}</p>
