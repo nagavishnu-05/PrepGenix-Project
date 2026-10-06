@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
-import { PageHeader, EmptyState } from "@/components/portal/primitives";
+import { PageHeader, EmptyState, LoadingState } from "@/components/portal/primitives";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
@@ -147,7 +147,7 @@ export default function StaffStudents() {
                 </CardHeader>
                 <CardContent className="space-y-6">
                     {loading ? (
-                        <p className="py-10 text-center text-sm text-slate-500 dark:text-zinc-500">Loading...</p>
+                        <LoadingState label="Loading students" className="py-10" />
                     ) : rows.length === 0 ? (
                         <EmptyState icon={Users} title="No students found" description="Add students manually or import them from an Excel file." />
                     ) : (

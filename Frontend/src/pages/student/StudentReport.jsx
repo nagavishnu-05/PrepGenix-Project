@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { BarChart3, BrainCircuit, FileCode, Video } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { PageHeader, EmptyState, SimpleProgress } from "@/components/portal/primitives";
+import { PageHeader, EmptyState, SimpleProgress, LoadingState } from "@/components/portal/primitives";
 import { StatusBadge } from "@/components/portal/status-badge";
 import { useAuthStore } from "@/store/auth-store";
 import { useUIStore } from "@/store/ui-store";
@@ -50,7 +50,7 @@ export default function StudentReport() {
         api.reports.perStudent(regNo).then(setReport).catch(() => {}).finally(() => setLoading(false));
     }, [regNo]);
 
-    if (loading) return <p className="text-sm text-slate-500 dark:text-zinc-500">Loading...</p>;
+    if (loading) return <LoadingState label="Loading report" className="min-h-48" />;
     if (!report) return <EmptyState icon={BarChart3} title="Report not available" />;
 
     const perf = report.performance || {};

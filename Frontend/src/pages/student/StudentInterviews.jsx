@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Video } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
-import { PageHeader, EmptyState } from "@/components/portal/primitives";
+import { PageHeader, EmptyState, LoadingState } from "@/components/portal/primitives";
 import { StatusBadge } from "@/components/portal/status-badge";
 import { api } from "@/lib/api";
 
@@ -17,7 +17,7 @@ export default function StudentInterviews() {
         <div>
             <PageHeader title="My Interviews" description="Technical interviews scheduled by the Placement Coordinator" />
             {loading ? (
-                <p className="text-sm text-slate-500 dark:text-zinc-500">Loading...</p>
+                <LoadingState label="Loading interviews" className="min-h-48" />
             ) : interviews.length === 0 ? (
                 <EmptyState icon={Video} title="No interviews scheduled" description="Scheduled technical interviews will appear here with their results." />
             ) : (

@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { PageHeader, EmptyState } from "@/components/portal/primitives";
+import { PageHeader, EmptyState, LoadingState } from "@/components/portal/primitives";
 import { StatusBadge } from "@/components/portal/status-badge";
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
@@ -171,7 +171,7 @@ export default function LiveMonitoring() {
             </Card>
 
             {loading ? (
-                <p className="text-sm text-zinc-500">Loading...</p>
+                <LoadingState label="Loading live sessions" className="min-h-48" />
             ) : activeRows.length === 0 ? (
                 <EmptyState icon={RadioTower} title="No active tests" description="Students' in-progress tests will appear here with their live camera feed and violation feed." />
             ) : (

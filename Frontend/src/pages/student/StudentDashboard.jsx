@@ -4,7 +4,7 @@ import { ClipboardList, Video, Award, User, BrainCircuit, FileCode } from "lucid
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { StatsCard } from "@/components/portal/stats-card";
-import { PageHeader, SimpleProgress } from "@/components/portal/primitives";
+import { PageHeader, SimpleProgress, LoadingState } from "@/components/portal/primitives";
 import { StatusBadge } from "@/components/portal/status-badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { useAuthStore } from "@/store/auth-store";
@@ -93,7 +93,7 @@ export default function StudentDashboard() {
                     </CardHeader>
                     <CardContent className="space-y-3">
                         {loading ? (
-                            <p className="py-6 text-center text-sm text-slate-500 dark:text-zinc-500">Loading...</p>
+                            <LoadingState label="Loading tests" className="py-6" />
                         ) : tests.length === 0 ? (
                             <p className="py-6 text-center text-sm text-slate-500 dark:text-zinc-500">No tests assigned yet.</p>
                         ) : (
@@ -124,7 +124,7 @@ export default function StudentDashboard() {
                     </CardHeader>
                     <CardContent className="space-y-3">
                         {loading ? (
-                            <p className="py-6 text-center text-sm text-slate-500 dark:text-zinc-500">Loading...</p>
+                            <LoadingState label="Loading interviews" className="py-6" />
                         ) : upcoming.length === 0 ? (
                             <p className="py-6 text-center text-sm text-slate-500 dark:text-zinc-500">No interviews scheduled.</p>
                         ) : (

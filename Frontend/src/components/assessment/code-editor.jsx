@@ -1,7 +1,7 @@
 import { lazy, Suspense, useState, useEffect } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
-import { Code } from "lucide-react";
+import { Code, LoaderCircle } from "lucide-react";
 const Editor = lazy(() => import("@monaco-editor/react"));
 const editorFallback = (<div className="flex h-full w-full flex-col gap-2 p-4">
       <Skeleton className="h-8 w-48"/>
@@ -69,7 +69,7 @@ export function CodeEditor({ language, value, onChange }) {
         <div className={cn("flex items-center gap-3", isLoaded ? "text-zinc-500" : "text-zinc-600")}>
           <span>Ln {cursorPosition.line}, Col {cursorPosition.column}</span>
           <span className="h-3 w-px bg-zinc-700"/>
-          <span>{isLoaded ? "Auto-saved" : "Loading..."}</span>
+          {isLoaded ? <span>Auto-saved</span> : <span className="flex items-center gap-1"><LoaderCircle className="h-3 w-3 animate-spin" /> Loading</span>}
           {isLoaded && (<span className="h-1.5 w-1.5 rounded-full bg-emerald-500"/>)}
         </div>
       </div>

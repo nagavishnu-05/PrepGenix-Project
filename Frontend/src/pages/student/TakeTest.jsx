@@ -6,7 +6,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent } from "@/components/ui/card";
 import { CodeEditor } from "@/components/assessment/code-editor";
 import FaceAttentionOverlay from "@/components/assessment/face-attention-overlay";
-import { DifficultyBadge } from "@/components/portal/primitives";
+import { DifficultyBadge, LoadingState } from "@/components/portal/primitives";
 import { StatusBadge } from "@/components/portal/status-badge";
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
@@ -865,7 +865,7 @@ const codeBuffersRef = useRef({});
     if (!attempt) {
         return (
             <div className="flex h-64 items-center justify-center">
-                <p className="text-sm text-zinc-500">Loading test...</p>
+                <LoadingState label="Loading test" />
             </div>
         );
     }
@@ -1019,7 +1019,7 @@ const codeBuffersRef = useRef({});
     if (!question) {
         return (
             <div className="flex h-64 items-center justify-center">
-                <p className="text-sm text-zinc-500">Loading question...</p>
+                <LoadingState label="Loading question" />
             </div>
         );
     }

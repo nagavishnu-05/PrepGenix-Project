@@ -54,6 +54,40 @@ router.get("/", authenticate, async (req, res) => {
   }
 });
 
+// GET /api/resumes/:regNo/file
+router.get("/:regNo/file", authenticate, async (req, res) => {
+  try {
+    const isCoordinator = ["placement", "staff"].includes(req.user.role);
+    const isStudentOwner = req.user.role === "student" && req.user.username === req.params.regNo;
+    if (!isCoordinator && !isStudentOwner) {
+      return res.status(403).json({ error: "You cannot view this resume" });
+    }
+
+    const resume = await col("resumes", "resume").findOne(
+      { regNo: req.params.regNo },
+      { projection: { data: 1, fileName: 1, contentType: 1 } }
+    );
+    if (!resume?.data) return res.status(404).json({ error: "Resume file not found" });
+
+    const extension = path.extname(resume.fileName || "").toLowerCase();
+    const contentType = {
+      ".pdf": "application/pdf",
+      ".txt": "text/plain; charset=utf-8",
+      ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    }[extension];
+    if (!contentType) return res.status(415).json({ error: "Unsupported resume file type" });
+
+    const filename = path.basename(resume.fileName || "resume.pdf");
+    res.set("Content-Type", contentType);
+    const safeFilename = filename.replace(/[^\x20-\x7E]/g, "_").replace(/[\/\\"]/g, "_");
+    res.set("Content-Disposition", `inline; filename="${safeFilename}"`);
+    res.set("X-Content-Type-Options", "nosniff");
+    res.send(Buffer.from(resume.data, "base64"));
+  } catch {
+    res.status(500).json({ error: "Failed to retrieve resume file" });
+  }
+});
+
 // GET /api/resumes/:regNo
 router.get("/:regNo", authenticate, async (req, res) => {
   try {

@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
-import { PageHeader, EmptyState } from "@/components/portal/primitives";
+import { PageHeader, EmptyState, LoadingState } from "@/components/portal/primitives";
 import { StatusBadge } from "@/components/portal/status-badge";
 import { api } from "@/lib/api";
 
@@ -94,7 +94,7 @@ export default function PlacementInterviews() {
             <Card className="border-slate-200/80 dark:border-zinc-800/80 bg-white/70 dark:bg-zinc-900/40">
                 <CardContent className="p-0">
                     {loading ? (
-                        <p className="py-10 text-center text-sm text-slate-500 dark:text-zinc-500">Loading...</p>
+                        <LoadingState label="Loading interviews" className="py-10" />
                     ) : interviews.length === 0 ? (
                         <div className="p-10">
                             <EmptyState icon={CalendarClock} title="No interviews" description="Schedule an interview for a shortlisted student." />

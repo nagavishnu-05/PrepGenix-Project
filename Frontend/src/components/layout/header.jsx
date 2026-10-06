@@ -1,7 +1,29 @@
-import { motion } from "framer-motion";
-import { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { Bell, BellRing, ChevronRight, Home, Settings, LogOut, Sun, Moon, CheckCheck } from "lucide-react";
+import { AnimatePresence, motion } from "framer-motion";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Link, useLocation, useNavigate } from "react-router-dom";
+import {
+    Bell,
+    BellRing,
+    BarChart3,
+    CheckCheck,
+    ChevronRight,
+    ClipboardList,
+    FileCode,
+    FileText,
+    GraduationCap,
+    LayoutDashboard,
+    LogOut,
+    Menu,
+    Moon,
+    RadioTower,
+    Settings,
+    Shield,
+    Sun,
+    Trophy,
+    Users,
+    Video,
+    X,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/store/auth-store";
 import { useUIStore } from "@/store/ui-store";
@@ -10,6 +32,32 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
 import { api } from "@/lib/api";
 import { getAvatarImage } from "@/lib/avatar-options";
 import { Button } from "@/components/ui/button";
+import { LoadingState } from "@/components/portal/primitives";
+
+const NAV = {
+    student: [
+        { label: "Dashboard", href: "/student", icon: LayoutDashboard, end: true },
+        { label: "My Tests", href: "/student/tests", icon: ClipboardList },
+        { label: "Interviews", href: "/student/interviews", icon: Video },
+        { label: "My Report", href: "/student/report", icon: BarChart3 },
+        { label: "Rankings", href: "/student/rankings", icon: Trophy },
+    ],
+    staff: [
+        { label: "Dashboard", href: "/staff", icon: LayoutDashboard, end: true },
+        { label: "Questions", href: "/staff/questions", icon: FileCode },
+        { label: "Tests", href: "/staff/tests", icon: ClipboardList },
+        { label: "Students", href: "/staff/students", icon: Users },
+        { label: "Reports", href: "/staff/reports", icon: BarChart3 },
+        { label: "Live Monitoring", href: "/staff/monitor", icon: RadioTower },
+    ],
+    placement: [
+        { label: "Dashboard", href: "/placement", icon: LayoutDashboard, end: true },
+        { label: "Students", href: "/placement/students", icon: GraduationCap },
+        { label: "Resumes", href: "/placement/resumes", icon: FileText },
+        { label: "Interviews", href: "/placement/interviews", icon: Video },
+        { label: "Reports", href: "/placement/reports", icon: BarChart3 },
+    ],
+};
 
 const ROLE_COLORS = {
     staff: "from-violet-500 to-indigo-500",
@@ -20,8 +68,16 @@ const ROLE_COLORS = {
 
 export function Header({ breadcrumbs = [] }) {
     const navigate = useNavigate();
+    const location = useLocation();
     const { user, logout } = useAuthStore();
     const { theme, toggleTheme } = useUIStore();
+    const [mobileNavOpen, setMobileNavOpen] = useState(false);
+    const [navOrder, setNavOrder] = useState([]);
+    const [draggingHref, setDraggingHref] = useState(null);
+    const longPressTimer = useRef(null);
+    const longPressActive = useRef(false);
+    const draggingHrefRef = useRef(null);
+    const suppressNavClick = useRef(false);
     const [notifications, setNotifications] = useState([]);
     const [notificationError, setNotificationError] = useState("");
     const [notificationLoading, setNotificationLoading] = useState(true);
@@ -118,24 +174,167 @@ export function Header({ breadcrumbs = [] }) {
         .slice(0, 2) || "??";
 
     const settingsHref = user?.role ? `/${user.role}/settings` : "/settings";
-    const defaultBreadcrumbs = [{ label: "Home", href: useAuthStore.getState().homeFor(user?.role) || "/dashboard" }];
-    const allBreadcrumbs = [...defaultBreadcrumbs, ...breadcrumbs];
+    const defaultNavItems = NAV[user?.role] || [];
+    const navItems = navOrder.length
+        ? [...defaultNavItems].sort((a, b) => navOrder.indexOf(a.href) - navOrder.indexOf(b.href))
+        : defaultNavItems;
+
+    useEffect(() => {
+        try {
+            const savedOrder = JSON.parse(localStorage.getItem(`portal-nav-order:${user?.role}`) || "[]");
+            setNavOrder(Array.isArray(savedOrder) ? savedOrder : []);
+        } catch {
+            setNavOrder([]);
+        }
+    }, [user?.role]);
+
+    useEffect(() => {
+        setMobileNavOpen(false);
+    }, [location.pathname]);
+
+    useEffect(() => () => window.clearTimeout(longPressTimer.current), []);
+
+    const startNavPress = (href) => {
+        window.clearTimeout(longPressTimer.current);
+        longPressActive.current = false;
+        suppressNavClick.current = false;
+        longPressTimer.current = window.setTimeout(() => {
+            longPressActive.current = true;
+            draggingHrefRef.current = href;
+            setDraggingHref(href);
+        }, 350);
+    };
+
+    const moveNavItem = useCallback((targetHref) => {
+        const activeDragHref = draggingHrefRef.current;
+        if (!activeDragHref || activeDragHref === targetHref) return;
+        const orderedHrefs = navItems.map((item) => item.href);
+        const from = orderedHrefs.indexOf(activeDragHref);
+        const to = orderedHrefs.indexOf(targetHref);
+        if (from < 0 || to < 0) return;
+        orderedHrefs.splice(to, 0, ...orderedHrefs.splice(from, 1));
+        setNavOrder(orderedHrefs);
+        localStorage.setItem(`portal-nav-order:${user?.role}`, JSON.stringify(orderedHrefs));
+    }, [navItems, user?.role]);
+
+    useEffect(() => {
+        const handlePointerMove = (event) => {
+            if (!draggingHrefRef.current) return;
+            const target = event.target instanceof Element
+                ? event.target.closest("[data-nav-href]")
+                : null;
+            if (target?.dataset.navHref) moveNavItem(target.dataset.navHref);
+        };
+        const stopDragging = () => {
+            window.clearTimeout(longPressTimer.current);
+            if (longPressActive.current) {
+                suppressNavClick.current = true;
+                draggingHrefRef.current = null;
+                setDraggingHref(null);
+                window.setTimeout(() => {
+                    longPressActive.current = false;
+                }, 0);
+                window.setTimeout(() => {
+                    suppressNavClick.current = false;
+                }, 500);
+            }
+        };
+        window.addEventListener("pointermove", handlePointerMove);
+        window.addEventListener("pointerup", stopDragging);
+        window.addEventListener("pointercancel", stopDragging);
+        return () => {
+            window.removeEventListener("pointermove", handlePointerMove);
+            window.removeEventListener("pointerup", stopDragging);
+            window.removeEventListener("pointercancel", stopDragging);
+        };
+    }, [moveNavItem]);
 
     return (
-        <header className="sticky top-0 z-30 flex h-16 items-center border-b border-slate-200 dark:border-zinc-800/60 bg-white/80 dark:bg-zinc-950/60 px-6 backdrop-blur-xl">
-            <nav className="flex flex-1 items-center gap-1 text-sm">
-                {allBreadcrumbs.map((crumb, index) => (
-                    <span key={index} className="flex items-center gap-1">
-                        {index > 0 && <ChevronRight className="h-3.5 w-3.5 text-slate-400 dark:text-zinc-600" />}
-                        {index === 0 ? <Home className="h-3.5 w-3.5 text-slate-400 dark:text-zinc-500" /> : null}
-                        <span className={cn("transition-colors", index === allBreadcrumbs.length - 1 ? "text-slate-800 dark:text-zinc-200" : "text-slate-400 dark:text-zinc-500 hover:text-slate-600 dark:hover:text-zinc-300")}>
-                            {crumb.label}
-                        </span>
+        <motion.header
+            initial={false}
+            className="sticky top-4 z-50 mx-auto w-[92%] rounded-2xl border border-slate-200/60 bg-white/30 shadow-lg backdrop-blur-xl transition-colors duration-300 dark:border-zinc-800/30 dark:bg-zinc-950/30 sm:w-[95%] sm:max-w-6xl"
+        >
+            <div className="pointer-events-none relative grid h-20 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 px-3 sm:gap-4 sm:px-6">
+                <Link to={useAuthStore.getState().homeFor(user?.role) || "/"} className="pointer-events-auto flex shrink-0 items-center gap-2.5 rounded-xl px-1 py-1">
+                    <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-violet-600 to-indigo-600 shadow-md">
+                        <Shield className="h-5 w-5 text-white" />
                     </span>
-                ))}
-            </nav>
+                    <span className="hidden sm:block">
+                        <span className="block text-sm font-bold leading-tight text-slate-900 dark:text-white">PrepGenix</span>
+                        <span className="block text-[10px] capitalize text-slate-500 dark:text-zinc-400">{user?.role || "Portal"}</span>
+                    </span>
+                </Link>
 
-            <div className="flex items-center gap-3">
+                <nav
+                    aria-label="Main navigation"
+                    onClickCapture={(event) => {
+                        if (suppressNavClick.current) {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            suppressNavClick.current = false;
+                        }
+                    }}
+                    onPointerLeave={() => {
+                        if (!longPressActive.current) window.clearTimeout(longPressTimer.current);
+                    }}
+                    className="pointer-events-auto hidden min-w-0 items-center justify-center gap-1 justify-self-center xl:flex"
+                >
+                    {navItems.map((item) => {
+                        const active = item.end ? location.pathname === item.href : location.pathname.startsWith(item.href);
+                        const Icon = item.icon;
+                        return (
+                            <Link
+                                key={item.href}
+                                to={item.href}
+                                data-nav-href={item.href}
+                                onPointerDown={() => startNavPress(item.href)}
+                                aria-current={active ? "page" : undefined}
+                                title={`Hold and drag to rearrange ${item.label}`}
+                                className="flex shrink-0 touch-none"
+                            >
+                                <motion.span
+                                    layout
+                                    transition={{ type: "spring", stiffness: 420, damping: 25, mass: 0.6 }}
+                                    className={cn(
+                                        "group relative flex items-center justify-center gap-2 rounded-full px-2.5 py-2.5 text-sm font-medium leading-none transition-colors duration-200 2xl:px-3",
+                                        active ? "text-violet-800 dark:text-violet-100" : "text-slate-600 hover:text-slate-950 dark:text-zinc-400 dark:hover:text-zinc-100",
+                                        draggingHref === item.href && "z-20 scale-110 -translate-y-1 cursor-grabbing",
+                                        draggingHref && draggingHref !== item.href && "cursor-grab"
+                                    )}
+                                >
+                                    {active && (
+                                        <motion.span
+                                            layoutId="portal-active-tab"
+                                            transition={{ type: "spring", stiffness: 420, damping: 23, mass: 0.5 }}
+                                            className="absolute inset-0 rounded-full bg-violet-100/75 shadow-[0_2px_8px_-4px_rgba(109,40,217,0.28),inset_0_1px_0_rgba(255,255,255,0.7)] ring-1 ring-violet-200/70 dark:bg-white/15 dark:shadow-[0_3px_12px_-5px_rgba(139,92,246,0.4),inset_0_1px_1px_rgba(255,255,255,0.2)] dark:ring-white/10"
+                                        />
+                                    )}
+                                    <Icon className="relative z-10 h-[18px] w-[18px] shrink-0 transition-transform duration-300 group-hover:-translate-y-0.5" />
+                                    <span className="relative z-10 whitespace-nowrap">{item.label}</span>
+                                </motion.span>
+                            </Link>
+                        );
+                    })}
+                </nav>
+
+                <button
+                    type="button"
+                    aria-label={mobileNavOpen ? "Close navigation menu" : "Open navigation menu"}
+                    aria-expanded={mobileNavOpen}
+                    onClick={() => setMobileNavOpen((open) => !open)}
+                    className="pointer-events-auto flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-slate-600 transition-colors hover:bg-white/60 dark:text-zinc-300 dark:hover:bg-white/10 xl:hidden"
+                >
+                    <motion.span
+                        key={mobileNavOpen ? "close" : "menu"}
+                        initial={{ opacity: 0, rotate: -45, scale: 0.8 }}
+                        animate={{ opacity: 1, rotate: 0, scale: 1 }}
+                        transition={{ type: "spring", stiffness: 500, damping: 28 }}
+                    >
+                        {mobileNavOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+                    </motion.span>
+                </button>
+
+                <div className="pointer-events-auto flex shrink-0 items-center gap-1 sm:gap-2">
                 {/* Theme Switch Toggle Button */}
                 <button
                     type="button"
@@ -169,7 +368,7 @@ export function Header({ breadcrumbs = [] }) {
                         </div>
                         <DropdownMenuSeparator />
                         {notificationLoading ? (
-                            <p className="px-3 py-5 text-center text-xs text-slate-500 dark:text-zinc-400">Loading notifications...</p>
+                            <LoadingState label="Loading notifications" className="px-3 py-5 text-xs" />
                         ) : notificationError ? (
                             <p role="alert" className="px-3 py-4 text-xs text-red-500">{notificationError}</p>
                         ) : notifications.length === 0 ? (
@@ -232,6 +431,52 @@ export function Header({ breadcrumbs = [] }) {
                     </DropdownMenuContent>
                 </DropdownMenu>
             </div>
-        </header>
+            </div>
+
+            <AnimatePresence initial={false}>
+                {mobileNavOpen && (
+                    <motion.nav
+                        aria-label="Mobile navigation"
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: "auto" }}
+                        exit={{ opacity: 0, height: 0 }}
+                        transition={{ type: "spring", stiffness: 360, damping: 32 }}
+                        className="pointer-events-auto absolute left-1/2 top-full mt-2 grid w-[min(22rem,calc(100vw-2rem))] -translate-x-1/2 grid-cols-2 gap-1 rounded-2xl border border-white/70 bg-white/80 p-2.5 shadow-lg backdrop-blur-2xl dark:border-white/10 dark:bg-zinc-900/80 xl:hidden"
+                    >
+                        {navItems.map((item) => {
+                            const active = item.end ? location.pathname === item.href : location.pathname.startsWith(item.href);
+                            const Icon = item.icon;
+                            return (
+                                <Link
+                                    key={item.href}
+                                    to={item.href}
+                                    aria-current={active ? "page" : undefined}
+                                    className={cn(
+                                        "flex min-w-0 items-center gap-2 rounded-xl px-3 py-2.5 text-sm font-medium transition-all duration-200 active:scale-[0.98]",
+                                        active
+                                            ? "bg-violet-600/10 text-violet-700 dark:bg-violet-500/15 dark:text-violet-300"
+                                            : "text-slate-600 hover:bg-slate-100/80 hover:text-slate-900 dark:text-zinc-400 dark:hover:bg-zinc-800/70 dark:hover:text-zinc-100"
+                                    )}
+                                >
+                                    <Icon className="h-4 w-4 shrink-0" />
+                                    <span className="truncate">{item.label}</span>
+                                </Link>
+                            );
+                        })}
+                    </motion.nav>
+                )}
+            </AnimatePresence>
+
+            {breadcrumbs.length > 0 && (
+                <div className="flex items-center gap-1 border-t border-slate-200/70 px-5 py-2 text-xs text-slate-500 dark:border-zinc-800/60 dark:text-zinc-400">
+                    {breadcrumbs.map((crumb, index) => (
+                        <span key={`${crumb.label}-${index}`} className="flex items-center gap-1">
+                            {index > 0 && <ChevronRight className="h-3 w-3 text-slate-400 dark:text-zinc-600" />}
+                            <span>{crumb.label}</span>
+                        </span>
+                    ))}
+                </div>
+            )}
+        </motion.header>
     );
 }

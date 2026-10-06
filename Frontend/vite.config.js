@@ -10,6 +10,9 @@ export default defineConfig({
       "@": fileURLToPath(new URL("./src", import.meta.url)),
     },
   },
+  optimizeDeps: {
+    include: ["write-excel-file/browser"],
+  },
   server: {
     port: 5173,
     proxy: {

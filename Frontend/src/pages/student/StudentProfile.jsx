@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { User, Phone, Mail, FileText } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { PageHeader } from "@/components/portal/primitives";
+import { PageHeader, LoadingState } from "@/components/portal/primitives";
 import { StatusBadge } from "@/components/portal/status-badge";
 import { useAuthStore } from "@/store/auth-store";
 import { api } from "@/lib/api";
@@ -39,7 +39,7 @@ export default function StudentProfile() {
         api.students.get(regNo).then(setStudent).catch(() => {}).finally(() => setLoading(false));
     }, [regNo]);
 
-    if (loading) return <p className="text-sm text-zinc-500">Loading...</p>;
+    if (loading) return <LoadingState label="Loading profile" className="min-h-48" />;
     if (!student) return <PageHeader title="My Profile" description="Profile unavailable." />;
 
     const p = student;

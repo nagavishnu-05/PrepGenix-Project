@@ -10,7 +10,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
-import { PageHeader, EmptyState } from "@/components/portal/primitives";
+import { PageHeader, EmptyState, LoadingState } from "@/components/portal/primitives";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip } from "recharts";
@@ -252,7 +252,7 @@ export default function StaffTests() {
             <Card className="border-slate-200/80 dark:border-zinc-800/80 bg-white/70 dark:bg-zinc-900/40">
                 <CardContent className="p-0">
                     {loading ? (
-                        <p className="py-10 text-center text-sm text-slate-500 dark:text-zinc-500">Loading...</p>
+                        <LoadingState label="Loading tests" className="py-10" />
                     ) : tests.length === 0 ? (
                         <div className="p-10">
                             <EmptyState icon={ClipboardList} title="No tests yet" description="Create your first test to assign it to students." />

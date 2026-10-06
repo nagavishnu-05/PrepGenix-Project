@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { Users, FileText, CalendarClock, Activity } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { StatsCard } from "@/components/portal/stats-card";
-import { PageHeader, EmptyState } from "@/components/portal/primitives";
+import { PageHeader, EmptyState, LoadingState } from "@/components/portal/primitives";
 import { StatusBadge } from "@/components/portal/status-badge";
 import { api } from "@/lib/api";
 
@@ -24,7 +24,7 @@ export default function PlacementDashboard() {
             .finally(() => setLoading(false));
     }, []);
 
-    if (loading) return <p className="text-sm text-slate-500 dark:text-zinc-500">Loading...</p>;
+    if (loading) return <LoadingState label="Loading dashboard" className="min-h-48" />;
 
     const upcoming = interviews.filter((i) => i.status === "scheduled").slice(0, 5);
 

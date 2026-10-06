@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { PageHeader, EmptyState } from "@/components/portal/primitives";
+import { PageHeader, EmptyState, LoadingState } from "@/components/portal/primitives";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip } from "recharts";
 import { api } from "@/lib/api";
 
@@ -118,7 +118,7 @@ export default function StaffReports() {
                     </CardHeader>
                     <CardContent>
                         {loading ? (
-                            <p className="py-10 text-center text-sm text-slate-500 dark:text-zinc-500">Loading...</p>
+                            <LoadingState label="Loading reports" className="py-10" />
                         ) : rows.length === 0 ? (
                             <EmptyState icon={Users} title="No data" description="No student performance data matches the filters." />
                         ) : (
@@ -129,6 +129,7 @@ export default function StaffReports() {
                                         <TableHead>Aptitude</TableHead>
                                         <TableHead>Coding</TableHead>
                                         <TableHead>Interviews</TableHead>
+                                        <TableHead>Violations</TableHead>
                                         <TableHead>Top Category</TableHead>
                                     </TableRow>
                                 </TableHeader>
@@ -151,6 +152,7 @@ export default function StaffReports() {
                                                 <p className="text-sm text-slate-700 dark:text-zinc-200">{s.interviewCount || "—"}</p>
                                                 {s.lastInterview && <p className="text-xs text-slate-500 dark:text-zinc-400">rating {s.lastInterview.rating}/5</p>}
                                             </TableCell>
+                                            <TableCell className="text-sm text-slate-700 dark:text-zinc-200">{s.violationCount ?? 0}</TableCell>
                                             <TableCell className="text-sm text-slate-600 dark:text-zinc-300">{s.topCategory || "—"}</TableCell>
                                         </TableRow>
                                     ))}
@@ -182,7 +184,7 @@ export default function StaffReports() {
                         {!selectedTest ? (
                             <EmptyState icon={FileCode} title="Pick a test" description="Select a test to see its performance breakdown." />
                         ) : loading ? (
-                            <p className="py-10 text-center text-sm text-slate-500 dark:text-zinc-500">Loading...</p>
+                            <LoadingState label="Loading test report" className="py-10" />
                         ) : testReport ? (
                             <div className="space-y-6">
                                 <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">

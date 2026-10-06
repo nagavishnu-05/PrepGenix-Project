@@ -4,7 +4,7 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { PageHeader, EmptyState } from "@/components/portal/primitives";
+import { PageHeader, EmptyState, LoadingState } from "@/components/portal/primitives";
 import { api } from "@/lib/api";
 
 export default function PlacementStudents() {
@@ -56,7 +56,7 @@ export default function PlacementStudents() {
                 </CardHeader>
                 <CardContent>
                     {loading ? (
-                        <p className="py-10 text-center text-sm text-slate-500 dark:text-zinc-500">Loading...</p>
+                        <LoadingState label="Loading students" className="py-10" />
                     ) : rows.length === 0 ? (
                         <EmptyState icon={Users} title="No students" description="No student records match the filters." />
                     ) : (

@@ -18,7 +18,6 @@ from face_detection.utils.config import (
     MULTIPLE_FACE_CONFIRM_SECONDS,
     MULTIPLE_FACE_MIN_SAMPLES,
     GAZE_HOLD_SECONDS,
-    HEAD_TURNED_HOLD_SECONDS,
     NO_FACE_CONFIRM_SECONDS,
     NO_FACE_MIN_SAMPLES,
 )
@@ -49,7 +48,6 @@ MULTIPLE_PERSON_CONFIRM = int(os.environ.get("MULTIPLE_PERSON_CONFIRMATION_FRAME
 DEVICE_CONFIRM = int(os.environ.get("DEVICE_CONFIRMATION_FRAMES", "2"))
 CAMERA_CONFIRM = int(os.environ.get("CAMERA_DISABLED_CONFIRMATION_FRAMES", "2"))
 LOOKING_AWAY_CONFIRM = int(os.environ.get("GAZE_CONFIRMATION_FRAMES", "5"))
-HEAD_TURNED_CONFIRM = int(os.environ.get("HEAD_TURNED_CONFIRMATION_FRAMES", "5"))
 EYES_CLOSED_CONFIRM = int(os.environ.get("EYES_CLOSED_CONFIRMATION_FRAMES", "3"))
 
 NO_FACE_ABSENCE_GRACE_SECONDS = float(os.environ.get("NO_FACE_ABSENCE_GRACE_SECONDS", "3"))
@@ -133,9 +131,7 @@ class ViolationManager:
         self._looking_away_signal = Sustained(
             GAZE_HOLD_SECONDS, LOOKING_AWAY_CONFIRM, name="looking_away"
         )
-        self._head_turned_signal = Sustained(
-            HEAD_TURNED_HOLD_SECONDS, HEAD_TURNED_CONFIRM, name="head_turned"
-        )
+        self._head_turned_active = False
         self._eyes_closed_frames: deque[bool] = deque(maxlen=EYES_CLOSED_CONFIRM)
 
         # Time-based confirmation for the conditions the candidate is warned
@@ -450,7 +446,9 @@ class ViolationManager:
                 new_violations.append(v)
 
         head_turned = bool(detection_result.get("head_turned", False))
-        head_turned_confirmed = self._head_turned_signal.update(head_turned)
+        # AttentionAnalyzer already applies the configured duration and frame threshold.
+        head_turned_confirmed = head_turned and not self._head_turned_active
+        self._head_turned_active = head_turned
         if head_turned:
             self._active_events["HEAD_TURNED_AWAY"] = {
                 "type": "HEAD_TURNED_AWAY",
@@ -554,7 +552,7 @@ class ViolationManager:
         self._device_frames.clear()
         self._camera_frames.clear()
         self._looking_away_signal.reset()
-        self._head_turned_signal.reset()
+        self._head_turned_active = False
         self._eyes_closed_frames.clear()
         self._active_events.clear()
         self._reset_identity_signals()
@@ -605,7 +603,7 @@ class ViolationManager:
         self._device_frames.clear()
         self._camera_frames.clear()
         self._looking_away_signal.reset()
-        self._head_turned_signal.reset()
+        self._head_turned_active = False
         self._eyes_closed_frames.clear()
         self._reset_identity_signals()
         self._active_events.clear()

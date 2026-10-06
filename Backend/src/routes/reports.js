@@ -132,11 +132,27 @@ router.get("/students", authenticate, async (req, res) => {
       filter.$or = [{ name: rx }, { regNo: rx }];
     }
     const students = await col("students").find(filter).sort({ regNo: 1 }).toArray();
-    const [activeTests, perfDocs, resumeDocs] = await Promise.all([
+    const [activeTests, perfDocs, resumeDocs, attempts] = await Promise.all([
       col("tests").find({}, { projection: { _id: 1 } }).toArray(),
       col("performances", "perf").find({ regNo: { $in: students.map((s) => s.regNo) } }).toArray(),
       col("resumes", "resume").find({ regNo: { $in: students.map((s) => s.regNo) } }).toArray(),
+      col("attempts").find(
+        { studentRegNo: { $in: students.map((s) => s.regNo) } },
+        { projection: { _id: 1, studentRegNo: 1 } }
+      ).toArray(),
     ]);
+    const attemptRegNoById = new Map(attempts.map((attempt) => [attempt._id.toString(), attempt.studentRegNo]));
+    const violationsByStudent = new Map();
+    if (attempts.length) {
+      const violationCounts = await col("violations").aggregate([
+        { $match: { attemptId: { $in: [...attemptRegNoById.keys()] } } },
+        { $group: { _id: "$attemptId", count: { $sum: 1 } } },
+      ]).toArray();
+      for (const violation of violationCounts) {
+        const regNo = attemptRegNoById.get(violation._id);
+        if (regNo) violationsByStudent.set(regNo, (violationsByStudent.get(regNo) || 0) + violation.count);
+      }
+    }
     const activeTestIds = new Set(activeTests.map((test) => test._id.toString()));
     const perfMap = new Map(perfDocs.map((p) => [p.regNo, p]));
     const resumeMap = new Map(resumeDocs.map((r) => [r.regNo, r]));
@@ -172,6 +188,7 @@ router.get("/students", authenticate, async (req, res) => {
         lastCoding: lastCoding ? { score: lastCoding.score, total: lastCoding.total, result: lastCoding.result, percentage: lastCoding.percentage } : null,
         interviewCount: interview.length,
         lastInterview: lastInterview ? { rating: lastInterview.rating, notes: lastInterview.notes } : null,
+        violationCount: violationsByStudent.get(s.regNo) || 0,
         categories: resume ? (resume.categories || []).map((c) => (typeof c === "string" ? c : c.name)) : [],
         topCategory: resume?.topCategory || null,
         hasResume: !!resume,
@@ -188,15 +205,43 @@ router.get("/students", authenticate, async (req, res) => {
   }
 });
 
-// GET /api/reports/tests/:id  (staff) performance per test
+// GET /api/reports/tests (staff / placement) list available tests and formats
+router.get("/tests", authenticate, async (req, res) => {
+  try {
+    if (!["staff", "placement"].includes(req.user.role)) return res.status(403).json({ error: "Staff or Placement Coordinator only" });
+    const tests = await col("tests").find({}, {
+      projection: { title: 1, type: 1, mode: 1, fixedQuestionIds: 1, adaptive: 1 },
+    }).sort({ createdAt: -1 }).toArray();
+    const questionIds = [...new Set(tests.flatMap((test) => test.fixedQuestionIds || []))].map(id);
+    const questions = questionIds.length
+      ? await col("questions").find({ _id: { $in: questionIds } }, { projection: { format: 1 } }).toArray()
+      : [];
+    const formatById = new Map(questions.map((question) => [question._id.toString(), question.format]));
+    res.json(tests.map((test) => ({
+      id: test._id.toString(),
+      title: test.title,
+      type: test.type,
+      mode: test.mode,
+      formats: test.mode === "adaptive"
+        ? test.adaptive?.questionFilter?.formats || (test.type === "coding" ? ["programming"] : [])
+        : [...new Set((test.fixedQuestionIds || []).map((questionId) => formatById.get(String(questionId))).filter(Boolean))],
+    })));
+  } catch (error) {
+    console.error("Failed to fetch report test list:", error);
+    res.status(500).json({ error: "Failed to fetch tests for reports" });
+  }
+});
+
+// GET /api/reports/tests/:id  (staff / placement) performance per test
 router.get("/tests/:id", authenticate, async (req, res) => {
   try {
-    if (req.user.role !== "staff") return res.status(403).json({ error: "Staff Coordinator only" });
+    if (!["staff", "placement"].includes(req.user.role)) return res.status(403).json({ error: "Staff or Placement Coordinator only" });
+    const includeViolations = req.user.role === "staff";
     const test = await col("tests").findOne({ _id: id(req.params.id) });
     if (!test) return res.status(404).json({ error: "Test not found" });
     const attempts = await col("attempts").find({ testId: test._id.toString(), status: { $in: ["completed", "disqualified", "flagged"] } }).sort({ score: -1 }).toArray();
     const violationIds = attempts.map((a) => a._id.toString());
-    const violationDocs = violationIds.length
+    const violationDocs = includeViolations && violationIds.length
       ? await col("violations").find({ attemptId: { $in: violationIds } }).sort({ timestamp: -1 }).toArray()
       : [];
     const framePaths = violationDocs.map((v) => v.cameraFramePath).filter(Boolean);
@@ -223,19 +268,24 @@ router.get("/tests/:id", authenticate, async (req, res) => {
       _count: { attempts: attempts.length },
       stats: { averageScore: avg, bestScore: best, totalScore: test.mode === "adaptive" ? (test.adaptive?.totalQuestions || 10) * 10 : attempts[0]?.totalScore || 0 },
       results,
-      attempts: attempts.map((a) => ({
-        id: a._id.toString(),
-        studentRegNo: a.studentRegNo,
-        studentName: a.studentName,
-        score: a.score,
-        totalScore: a.totalScore,
-        result: a.result,
-        correct: a.answers.filter((x) => x.correct).length,
-        totalQuestions: a.answers.length,
-        completedAt: a.completedAt,
-        violationCount: (violMap.get(a._id.toString()) || []).length,
-        violations: violMap.get(a._id.toString()) || [],
-      })),
+      attempts: attempts.map((a) => {
+        const report = {
+          id: a._id.toString(),
+          studentRegNo: a.studentRegNo,
+          studentName: a.studentName,
+          score: a.score,
+          totalScore: a.totalScore,
+          result: a.result,
+          correct: a.answers.filter((x) => x.correct).length,
+          totalQuestions: a.answers.length,
+          completedAt: a.completedAt,
+        };
+        if (includeViolations) {
+          report.violationCount = (violMap.get(a._id.toString()) || []).length;
+          report.violations = violMap.get(a._id.toString()) || [];
+        }
+        return report;
+      }),
     });
   } catch {
     res.status(500).json({ error: "Failed to fetch test report" });

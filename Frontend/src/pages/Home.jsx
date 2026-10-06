@@ -16,7 +16,6 @@ import {
     CheckCircle 
 } from "lucide-react";
 import { Navbar } from "@/components/landing/navbar";
-import { FeaturesSection } from "@/components/landing/features-section";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
@@ -148,11 +147,6 @@ export default function Home() {
                                 Access Portal
                                 <ArrowRight className="h-5 w-5 ml-1.5 transition-transform group-hover:translate-x-1" />
                             </Button>
-                            <a href="#features">
-                                <Button variant="outline" size="xl" className="cursor-pointer">
-                                    Explore Features
-                                </Button>
-                            </a>
                         </motion.div>
                     </div>
 
@@ -202,11 +196,6 @@ export default function Home() {
                     </motion.div>
                 </div>
             </section>
-
-            {/* Features Info Section */}
-            <div id="features" className="border-t border-slate-200 dark:border-zinc-800/40 bg-white/40 dark:bg-zinc-950/20 py-8">
-                <FeaturesSection />
-            </div>
 
             {/* Integrated slide-over Sign In Panel */}
             <AnimatePresence>

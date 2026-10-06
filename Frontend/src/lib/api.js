@@ -23,6 +23,24 @@ async function request(endpoint, options = {}) {
     return res.json();
 }
 
+async function requestBlob(endpoint) {
+    const token = localStorage.getItem("auth-token");
+    const res = await fetch(`${API_BASE}${endpoint}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: "Request failed" }));
+        if (res.status === 401 && !endpoint.startsWith("/auth/login")) {
+            if (!isInLoginGrace()) {
+                localStorage.removeItem("auth-token");
+                window.dispatchEvent(new Event("auth-unauthorized"));
+            }
+        }
+        throw new Error(err.error || `HTTP ${res.status}`);
+    }
+    return res.blob();
+}
+
 function qs(params = {}) {
     const sp = new URLSearchParams();
     for (const [k, v] of Object.entries(params)) {
@@ -92,6 +110,7 @@ export const api = {
     resumes: {
         list: (params) => request(`/resumes${qs(params)}`),
         get: (regNo) => request(`/resumes/${regNo}`),
+        file: (regNo) => requestBlob(`/resumes/${encodeURIComponent(regNo)}/file`),
         upload: (regNo, file) => request(`/resumes/${regNo}/upload`, { method: "POST", body: formData(file) }),
         parse: (regNo) => request(`/resumes/${regNo}/parse`, { method: "POST", body: {} }),
         updateCategories: (regNo, categories, topCategory) => request(`/resumes/${regNo}/categories`, { method: "PUT", body: { categories, topCategory } }),
@@ -108,6 +127,7 @@ export const api = {
     reports: {
         overview: () => request("/reports/overview"),
         students: (params) => request(`/reports/students${qs(params)}`),
+        tests: () => request("/reports/tests", { cache: "no-store" }),
         perTest: (id) => request(`/reports/tests/${id}`),
         perStudent: (regNo) => request(`/reports/student/${regNo}`, { cache: "no-store" }),
         rankings: () => request("/reports/rankings/me", { cache: "no-store" }),

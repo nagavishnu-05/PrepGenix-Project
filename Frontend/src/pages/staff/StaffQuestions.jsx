@@ -8,7 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Checkbox } from "@/components/ui/checkbox";
-import { PageHeader, EmptyState, DifficultyBadge } from "@/components/portal/primitives";
+import { PageHeader, EmptyState, DifficultyBadge, LoadingState } from "@/components/portal/primitives";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import QuestionForm from "@/components/staff/question-form";
@@ -169,7 +169,7 @@ export default function StaffQuestions() {
                 </CardHeader>
                 <CardContent className="space-y-6">
                     {loading ? (
-                        <p className="py-10 text-center text-sm text-zinc-500">Loading...</p>
+                        <LoadingState label="Loading questions" className="py-10" />
                     ) : questions.length === 0 ? (
                         <EmptyState icon={type === "coding" ? FileCode : BrainCircuit} title="No questions found" description="Create a question manually or import from Excel / AIML." />
                     ) : (() => {

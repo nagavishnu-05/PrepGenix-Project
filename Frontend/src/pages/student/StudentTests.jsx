@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { ClipboardList, FileCode, BrainCircuit, Clock } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { PageHeader, EmptyState } from "@/components/portal/primitives";
+import { PageHeader, EmptyState, LoadingState } from "@/components/portal/primitives";
 import { StatusBadge } from "@/components/portal/status-badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { api } from "@/lib/api";
@@ -47,7 +47,7 @@ export default function StudentTests() {
         <div>
             <PageHeader title="My Tests" description="Tests assigned to you by the Staff Coordinator" />
             {loading ? (
-                <p className="text-sm text-slate-500 dark:text-zinc-500">Loading...</p>
+                <LoadingState label="Loading tests" className="min-h-48" />
             ) : tests.length === 0 ? (
                 <EmptyState icon={ClipboardList} title="No tests assigned yet" description="Once a test is assigned to your batch it will appear here." />
             ) : (

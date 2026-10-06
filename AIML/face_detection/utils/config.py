@@ -140,7 +140,7 @@ SCENE_DETECTION_EVERY_N_CYCLES = int(os.environ.get("SCENE_DETECTION_EVERY_N_CYC
 # they can be confirmed, on top of the consecutive-frame count. A quick glance
 # or a single head turn therefore never registers as a violation.
 GAZE_HOLD_SECONDS = float(os.environ.get("GAZE_HOLD_SECONDS", "3.0"))
-HEAD_TURNED_HOLD_SECONDS = float(os.environ.get("HEAD_TURNED_HOLD_SECONDS", "5.0"))
+HEAD_TURNED_HOLD_SECONDS = float(os.environ.get("HEAD_TURNED_HOLD_SECONDS", "7.0"))
 
 ATTENTION_ANALYZER_ENABLED = os.environ.get("ATTENTION_ANALYZER_ENABLED", "true").lower() == "true"
 ATTENTION_METRICS_IN_RESPONSE = os.environ.get("ATTENTION_METRICS_IN_RESPONSE", "true").lower() == "true"

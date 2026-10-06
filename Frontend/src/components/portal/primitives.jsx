@@ -1,9 +1,19 @@
 import { cn } from "@/lib/utils";
+import { LoaderCircle } from "lucide-react";
+
+export function LoadingState({ label = "Loading...", className }) {
+    return (
+        <div role="status" className={cn("flex items-center justify-center gap-2.5 text-sm text-slate-500 dark:text-zinc-400", className)}>
+            <LoaderCircle className="h-4 w-4 animate-spin text-violet-600 dark:text-violet-400" aria-hidden="true" />
+            <span>{label}</span>
+        </div>
+    );
+}
 
 export function PageHeader({ title, description, action }) {
     return (
-        <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
-            <div>
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-slate-200/80 bg-white/70 px-5 py-4 shadow-sm backdrop-blur-sm dark:border-zinc-800/80 dark:bg-zinc-900/40">
+            <div className="min-w-0">
                 <h1 className="text-2xl font-bold text-slate-900 dark:text-white">{title}</h1>
                 {description && <p className="mt-1 text-sm text-slate-500 dark:text-zinc-500">{description}</p>}
             </div>

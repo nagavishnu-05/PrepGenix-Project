@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback } from "react";
-import { Upload, RefreshCw, Trash2, FileText, Tag } from "lucide-react";
+import { useState, useEffect, useCallback, useMemo } from "react";
+import { Download, Eye, Upload, RefreshCw, Trash2, FileText, Tag } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -7,13 +7,17 @@ import { FileInput } from "@/components/ui/file-input";
 import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { PageHeader, EmptyState } from "@/components/portal/primitives";
+import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/lib/api";
+import { getSectionsForBatch, getStudentSection } from "@/lib/student-section";
 
 export default function PlacementResumes() {
     const [resumes, setResumes] = useState([]);
     const [students, setStudents] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [loadError, setLoadError] = useState("");
     const [uploadOpen, setUploadOpen] = useState(false);
     const [regNo, setRegNo] = useState("");
     const [file, setFile] = useState(null);
@@ -22,19 +26,81 @@ export default function PlacementResumes() {
     const [catInput, setCatInput] = useState("");
     const [top, setTop] = useState("");
     const [busy, setBusy] = useState(false);
+    const [batch, setBatch] = useState("all");
+    const [section, setSection] = useState("all");
+    const [preview, setPreview] = useState(null);
+    const [previewLoading, setPreviewLoading] = useState("");
 
-    const load = useCallback(() => {
+    useEffect(() => () => {
+        if (preview?.url) URL.revokeObjectURL(preview.url);
+    }, [preview]);
+
+    const load = useCallback(async () => {
         setLoading(true);
-        Promise.all([api.resumes.list({}), api.students.list({})])
-            .then(([r, s]) => {
-                setResumes(r);
-                setStudents(s);
-            })
-            .catch(() => {})
-            .finally(() => setLoading(false));
+        setLoadError("");
+        try {
+            const [resumeRows, studentRows] = await Promise.all([api.resumes.list({}), api.students.list({})]);
+            setResumes(resumeRows);
+            setStudents(studentRows);
+        } catch (error) {
+            setLoadError(error.message || "Could not load resumes and students.");
+        } finally {
+            setLoading(false);
+        }
     }, []);
 
     useEffect(() => { load(); }, [load]);
+
+    const batches = useMemo(
+        () => [...new Set(students.map((student) => student.batch).filter(Boolean))].sort(),
+        [students]
+    );
+    const batchStudents = useMemo(
+        () => students.filter((student) => batch === "all" || student.batch === batch),
+        [students, batch]
+    );
+    const sections = useMemo(() => getSectionsForBatch(batch, students), [batch, students]);
+    const visibleResumes = useMemo(() => {
+        const byRegNo = new Map(batchStudents.map((student) => [student.regNo, student]));
+        return resumes.filter((resume) => {
+            if (!byRegNo.has(resume.regNo)) return false;
+            return section === "all" || getStudentSection(resume.regNo) === section;
+        });
+    }, [batchStudents, resumes, section]);
+
+    const changeBatch = (value) => {
+        setBatch(value);
+        setSection("all");
+    };
+
+    const viewResume = async (resume) => {
+        setPreviewLoading(resume.regNo);
+        try {
+            const fileBlob = await api.resumes.file(resume.regNo);
+            setPreview({ name: resume.fileName, url: URL.createObjectURL(fileBlob) });
+        } catch (error) {
+            alert(error.message);
+        } finally {
+            setPreviewLoading("");
+        }
+    };
+
+    const downloadResume = async (resume) => {
+        setPreviewLoading(resume.regNo);
+        try {
+            const fileBlob = await api.resumes.file(resume.regNo);
+            const url = URL.createObjectURL(fileBlob);
+            const link = document.createElement("a");
+            link.href = url;
+            link.download = resume.fileName || "resume";
+            link.click();
+            window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+        } catch (error) {
+            alert(error.message);
+        } finally {
+            setPreviewLoading("");
+        }
+    };
 
     const doUpload = async () => {
         if (!regNo || !file) return;
@@ -44,7 +110,7 @@ export default function PlacementResumes() {
             setUploadOpen(false);
             setFile(null);
             setRegNo("");
-            load();
+            await load();
         } catch (e) {
             alert(e.message);
         } finally {
@@ -56,7 +122,7 @@ export default function PlacementResumes() {
         setBusy(true);
         try {
             await api.resumes.parse(r.regNo);
-            load();
+            await load();
         } catch (e) {
             alert(e.message);
         } finally {
@@ -77,7 +143,7 @@ export default function PlacementResumes() {
         try {
             await api.resumes.updateCategories(catTarget.regNo, catInput.split(",").map((c) => c.trim()).filter(Boolean), top || null);
             setCatOpen(false);
-            load();
+            await load();
         } catch (e) {
             alert(e.message);
         } finally {
@@ -87,8 +153,15 @@ export default function PlacementResumes() {
 
     const remove = async (r) => {
         if (!confirm(`Delete resume for ${r.studentName}?`)) return;
-        await api.resumes.remove(r.regNo).catch((e) => alert(e.message));
-        load();
+        setBusy(true);
+        try {
+            await api.resumes.remove(r.regNo);
+            await load();
+        } catch (error) {
+            alert(error.message);
+        } finally {
+            setBusy(false);
+        }
     };
 
     return (
@@ -99,13 +172,48 @@ export default function PlacementResumes() {
                 action={<Button onClick={() => setUploadOpen(true)}><Upload className="h-4 w-4" /> Upload Resume</Button>}
             />
 
+            <div className="mb-4 flex flex-wrap gap-3">
+                <Select value={batch} onValueChange={changeBatch}>
+                    <SelectTrigger className="w-48"><SelectValue placeholder="Select batch" /></SelectTrigger>
+                    <SelectContent>
+                        <SelectItem value="all">All batches</SelectItem>
+                        {batches.map((item) => <SelectItem key={item} value={item}>{item}</SelectItem>)}
+                    </SelectContent>
+                </Select>
+                <Select value={section} onValueChange={setSection}>
+                    <SelectTrigger className="w-48"><SelectValue placeholder="Select section" /></SelectTrigger>
+                    <SelectContent>
+                        <SelectItem value="all">All sections</SelectItem>
+                        {sections.map((item) => <SelectItem key={item} value={item}>Section {item}</SelectItem>)}
+                    </SelectContent>
+                </Select>
+            </div>
+
             <Card className="border-slate-200/80 dark:border-zinc-800/80 bg-white/70 dark:bg-zinc-900/40">
                 <CardContent className="p-0">
                     {loading ? (
-                        <p className="py-10 text-center text-sm text-slate-500 dark:text-zinc-500">Loading...</p>
-                    ) : resumes.length === 0 ? (
+                        <div role="status" aria-label="Loading resumes" className="space-y-4 p-5">
+                            <div className="flex items-center gap-3">
+                                <span className="h-5 w-5 animate-spin rounded-full border-2 border-violet-200 border-t-violet-600 dark:border-violet-950 dark:border-t-violet-400" />
+                                <span className="sr-only">Loading resumes</span>
+                                <Skeleton className="h-4 w-36 bg-slate-200 dark:bg-zinc-700" />
+                            </div>
+                            {[0, 1, 2, 3, 4].map((row) => (
+                                <div key={row} className="grid grid-cols-6 gap-4">
+                                    {[0, 1, 2, 3, 4, 5].map((cell) => (
+                                        <Skeleton key={cell} className="h-9 bg-slate-100 dark:bg-zinc-800" />
+                                    ))}
+                                </div>
+                            ))}
+                        </div>
+                    ) : loadError ? (
+                        <div className="flex flex-col items-center gap-3 p-10 text-center">
+                            <p role="alert" className="text-sm text-red-600 dark:text-red-400">{loadError}</p>
+                            <Button variant="outline" onClick={load}>Try again</Button>
+                        </div>
+                    ) : visibleResumes.length === 0 ? (
                         <div className="p-10">
-                            <EmptyState icon={FileText} title="No resumes" description="Upload a student resume — it will be parsed automatically for skills and categories." />
+                            <EmptyState icon={FileText} title="No resumes found" description="No uploaded resumes match the selected batch and roll number." />
                         </div>
                     ) : (
                         <Table>
@@ -120,13 +228,42 @@ export default function PlacementResumes() {
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
-                                {resumes.map((r) => (
+                                {visibleResumes.map((r) => (
                                     <TableRow key={r.id}>
                                         <TableCell>
                                             <p className="font-medium text-slate-800 dark:text-zinc-100">{r.studentName}</p>
                                             <p className="text-xs text-slate-500 dark:text-zinc-500">{r.regNo}</p>
                                         </TableCell>
-                                        <TableCell className="text-sm text-slate-500 dark:text-zinc-400">{r.fileName}</TableCell>
+                                        <TableCell>
+                                            <div className="flex items-center gap-1">
+                                                <span className="min-w-0 truncate text-sm text-slate-500 dark:text-zinc-400">{r.fileName}</span>
+                                                {r.fileName?.toLowerCase().endsWith(".pdf") ? (
+                                                    <Button
+                                                        variant="ghost"
+                                                        size="icon"
+                                                        className="h-8 w-8 shrink-0"
+                                                        onClick={() => viewResume(r)}
+                                                        disabled={previewLoading === r.regNo}
+                                                        title="View PDF"
+                                                        aria-label={`View ${r.studentName}'s resume`}
+                                                    >
+                                                        <Eye className="h-4 w-4" />
+                                                    </Button>
+                                                ) : (
+                                                    <Button
+                                                        variant="ghost"
+                                                        size="icon"
+                                                        className="h-8 w-8 shrink-0"
+                                                        onClick={() => downloadResume(r)}
+                                                        disabled={previewLoading === r.regNo}
+                                                        title="Download resume"
+                                                        aria-label={`Download ${r.studentName}'s resume`}
+                                                    >
+                                                        <Download className="h-4 w-4" />
+                                                    </Button>
+                                                )}
+                                            </div>
+                                        </TableCell>
                                         <TableCell>
                                             <div className="flex max-w-xs flex-wrap gap-1">
                                                 {(r.skills || []).slice(0, 4).map((s) => (
@@ -174,6 +311,22 @@ export default function PlacementResumes() {
                             <Button onClick={doUpload} disabled={!regNo || !file || busy}>{busy ? "Uploading & parsing..." : "Upload"}</Button>
                         </div>
                     </div>
+                </DialogContent>
+            </Dialog>
+
+            <Dialog open={Boolean(preview)} onOpenChange={(open) => { if (!open) setPreview(null); }}>
+                <DialogContent className="flex h-[88vh] max-w-5xl flex-col gap-3">
+                    <DialogHeader>
+                        <DialogTitle>{preview?.name || "Resume preview"}</DialogTitle>
+                        <DialogDescription>PDF resume preview</DialogDescription>
+                    </DialogHeader>
+                    {preview && (
+                        <iframe
+                            title={`Resume preview: ${preview.name}`}
+                            src={preview.url}
+                            className="min-h-0 w-full flex-1 rounded-lg border border-slate-200 dark:border-zinc-700"
+                        />
+                    )}
                 </DialogContent>
             </Dialog>
 
