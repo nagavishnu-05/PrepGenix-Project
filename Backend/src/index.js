@@ -62,6 +62,7 @@ async function main() {
     }
 
     require("./lib/snapshot-retention").startSnapshotCleanup();
+    require("./lib/recording-retention").startRecordingCleanup();
 
     const server = app.listen(PORT, () => {
       console.log(`Server running on port ${PORT}`);

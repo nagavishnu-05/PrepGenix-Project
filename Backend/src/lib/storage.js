@@ -15,6 +15,9 @@ const { createClient } = require("@supabase/supabase-js");
 const FRAME_BUCKET = process.env.SUPABASE_FRAME_BUCKET || "proctoring-frames";
 const REFERENCE_BUCKET = process.env.SUPABASE_REFERENCE_BUCKET || "proctoring-reference";
 const PROFILE_BUCKET = process.env.SUPABASE_PROFILE_BUCKET || "student-profiles";
+// Opt-in interview A/V recordings. Only written when the candidate consents to
+// recording; cleaned up by lib/recording-retention.js.
+const RECORDING_BUCKET = process.env.SUPABASE_RECORDING_BUCKET || "interview-recordings";
 const SIGNED_URL_TTL_SEC = Number(process.env.SUPABASE_SIGNED_URL_TTL_SEC || 900);
 const PROFILE_AVATARS_PATH = "avatars";
 const PROFILE_AVATAR_LIMIT = 1000;
@@ -121,6 +124,7 @@ async function ensureBuckets() {
     [FRAME_BUCKET, { fileSizeLimit: 10 * 1024 * 1024, allowedMimeTypes: ["image/jpeg", "image/png", "image/webp"] }],
     [REFERENCE_BUCKET, { fileSizeLimit: 10 * 1024 * 1024, allowedMimeTypes: ["image/jpeg", "image/png", "image/webp"] }],
     [PROFILE_BUCKET, { fileSizeLimit: 1024, allowedMimeTypes: ["application/json"] }],
+    [RECORDING_BUCKET, { fileSizeLimit: 200 * 1024 * 1024, allowedMimeTypes: ["video/webm", "video/mp4", "audio/webm", "audio/mpeg", "audio/ogg", "audio/wav", "audio/x-wav"] }],
   ]) {
     const { error } = await supabase.storage.createBucket(bucket, {
       public: false,
@@ -326,6 +330,7 @@ async function signedUrl(bucketOrPath, ttlSec = SIGNED_URL_TTL_SEC) {
 module.exports = {
   FRAME_BUCKET,
   PROFILE_BUCKET,
+  RECORDING_BUCKET,
   REFERENCE_BUCKET,
   SIGNED_URL_TTL_SEC,
   ensureBuckets,

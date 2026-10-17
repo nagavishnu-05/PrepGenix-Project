@@ -192,6 +192,50 @@ const models = {
       camera: "object | null",
       mic: "object | null"
     },
+    // Resume-grounded interview plan (null until placement runs /prepare).
+    plan: {
+      source: "llm | heuristic",
+      generatedAt: "Date",
+      resumeAvailable: "boolean",
+      resumeSummary: "string",
+      sections: "object",
+      rubric: "array",
+      questions: "array",
+      notes: "string"
+    },
+    // Candidate consent captured before the session starts.
+    consent: {
+      camera: "boolean",
+      microphone: "boolean",
+      transcript: "boolean",
+      recording: "boolean",
+      policyVersion: "string",
+      consentedAt: "Date"
+    },
+    // Live session bookkeeping.
+    session: {
+      status: "not_started | consented | in_progress | completed",
+      startedAt: "Date | null",
+      endedAt: "Date | null",
+      answeredCount: "number"
+    },
+    // Evidence-based report generated from the transcript (never accept/reject).
+    report: {
+      source: "llm | heuristic",
+      generatedAt: "Date",
+      rubric: "object",
+      overall: "number",
+      strengths: "string[]",
+      clarifications: "string[]",
+      evidence: "array",
+      summary: "string",
+      disclaimer: "string"
+    },
+    // Opt-in A/V recording reference (Supabase bucket/key); removed by retention.
+    recordingPath: "string | null",
+    recordingMimeType: "string | null",
+    recordingUploadedAt: "Date | null",
+    recordingRetentionDays: "number | null",
     rating: "number | null",
     notes: "string",
     strengths: "string",

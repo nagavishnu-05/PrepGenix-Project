@@ -8,6 +8,7 @@ import StudentDashboard from "@/pages/student/StudentDashboard";
 import StudentTests from "@/pages/student/StudentTests";
 import TakeTest from "@/pages/student/TakeTest";
 import StudentInterviews from "@/pages/student/StudentInterviews";
+import InterviewRoom from "@/pages/student/InterviewRoom";
 import StudentReport from "@/pages/student/StudentReport";
 import StudentRankings from "@/pages/student/StudentRankings";
 import SettingsPage from "@/pages/Settings";
@@ -63,6 +64,7 @@ export function App() {
                 <Route path="tests" element={<StudentTests />} />
                 <Route path="take/:attemptId" element={<TakeTest />} />
                 <Route path="interviews" element={<StudentInterviews />} />
+                <Route path="interview/:id" element={<InterviewRoom />} />
                 <Route path="settings" element={<SettingsPage />} />
                 <Route path="profile" element={<Navigate to="/student/settings" replace />} />
                 <Route path="report" element={<StudentReport />} />
