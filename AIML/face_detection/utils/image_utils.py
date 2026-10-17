@@ -51,20 +51,70 @@ def crop_face(frame: np.ndarray, box: dict, padding: float = 0.25) -> np.ndarray
 
 
 def assess_face_quality(face_crop: np.ndarray) -> dict:
-    """Assess face quality: blur, brightness, size."""
+    """Assess face quality: blur, brightness (dark/blown-out) and size.
+
+    Returns the numeric metrics plus a coarse ``quality`` grade and a list of
+    machine-readable ``reasons`` for anything that degrades it. ``unusable``
+    means there is effectively no identity signal (empty, too small, or so dark
+    it is black); ``poor`` covers blur and overexposure that still leave some
+    signal but should not be enrolled on.
+    """
+    try:
+        from .config import (
+            MIN_FACE_BLUR_VARIANCE,
+            MIN_FACE_BRIGHTNESS,
+            MAX_FACE_BRIGHTNESS,
+            MIN_FACE_SIZE_PX,
+        )
+    except Exception:  # pragma: no cover - config always importable in-tree
+        MIN_FACE_BLUR_VARIANCE, MIN_FACE_BRIGHTNESS = 50.0, 30.0
+        MAX_FACE_BRIGHTNESS, MIN_FACE_SIZE_PX = 245.0, 40
+
+    empty = {
+        "blur": 0.0,
+        "brightness": 0.0,
+        "size": 0,
+        "overexposed": False,
+        "quality": "unusable",
+        "reasons": ["empty"],
+    }
     if face_crop is None or face_crop.size == 0:
-        return {"blur": 0, "brightness": 0, "quality": "unusable"}
+        return empty
+
     gray = cv2.cvtColor(face_crop, cv2.COLOR_BGR2GRAY)
     blur = float(cv2.Laplacian(gray, cv2.CV_64F).var())
     brightness = float(np.mean(gray))
     h, w = face_crop.shape[:2]
-    if blur < 30 or brightness < 20 or h < 40 or w < 40:
+    min_side = int(min(h, w))
+    overexposed = brightness >= MAX_FACE_BRIGHTNESS
+
+    reasons: list[str] = []
+    if min_side < MIN_FACE_SIZE_PX:
+        reasons.append("too_small")
+    if brightness < MIN_FACE_BRIGHTNESS:
+        reasons.append("too_dark")
+    if overexposed:
+        reasons.append("overexposed")
+    if blur < MIN_FACE_BLUR_VARIANCE:
+        reasons.append("blurry")
+
+    if min_side < MIN_FACE_SIZE_PX or brightness < MIN_FACE_BRIGHTNESS:
+        quality = "unusable"
+    elif blur < MIN_FACE_BLUR_VARIANCE or overexposed:
         quality = "poor"
     elif blur < 80 or brightness < 40:
         quality = "acceptable"
     else:
         quality = "good"
-    return {"blur": round(blur, 1), "brightness": round(brightness, 1), "quality": quality}
+
+    return {
+        "blur": round(blur, 1),
+        "brightness": round(brightness, 1),
+        "size": min_side,
+        "overexposed": overexposed,
+        "quality": quality,
+        "reasons": reasons,
+    }
 
 
 def resize_for_detection(frame: np.ndarray, max_side: int = 640) -> tuple[np.ndarray, float]:

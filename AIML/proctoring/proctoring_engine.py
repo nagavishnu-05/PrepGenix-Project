@@ -23,8 +23,8 @@ from face_detection.inference.face_detector import FaceDetector as ModernFaceDet
 from face_detection.inference.face_embedding import FaceEmbedding
 from face_detection.utils.image_utils import crop_face, assess_face_quality
 from face_detection.utils.config import FACE_MATCH_THRESHOLD
+from face_detection.utils.device_tracker import DeviceTracker
 
-DEVICE_CONFIRM_FRAMES = int(os.environ.get("DEVICE_CONFIRMATION_FRAMES", "5"))
 PERSON_CONFIRM_FRAMES = int(os.environ.get("PERSON_CONFIRMATION_FRAMES", "5"))
 NO_FACE_CONFIRM_FRAMES = int(os.environ.get("NO_FACE_CONFIRMATION_FRAMES", "15"))
 IMPOSTER_CONFIRM_FRAMES = int(os.environ.get("IMPOSTER_CONFIRMATION_FRAMES", "5"))
@@ -35,14 +35,14 @@ PERSON_CONFIDENCE = float(os.environ.get("PERSON_CONFIDENCE_THRESHOLD", "0.60"))
 class ProctoringEngine:
     def __init__(self):
         self.face_detector = FaceDetector()
-        self.face_verifier = FaceVerifier()
+        self._modern_detector = ModernFaceDetector()
+        self._embedding = FaceEmbedding()
+        # Share the one embedding backend with the verifier.
+        self.face_verifier = FaceVerifier(embedding=self._embedding)
         self.person_detector = PersonDetector(confidence_threshold=PERSON_CONFIDENCE)
         self.device_detector = DeviceDetector(confidence_threshold=DEVICE_CONFIDENCE)
 
-        self._modern_detector = ModernFaceDetector()
-        self._embedding = FaceEmbedding()
-
-        self._device_frames = deque(maxlen=DEVICE_CONFIRM_FRAMES)
+        self._device_tracker = DeviceTracker()
         self._person_frames = deque(maxlen=PERSON_CONFIRM_FRAMES)
         self._no_face_frames = deque(maxlen=NO_FACE_CONFIRM_FRAMES)
         self._imposter_frames = deque(maxlen=IMPOSTER_CONFIRM_FRAMES)
@@ -54,29 +54,23 @@ class ProctoringEngine:
         self._grace_seconds = float(os.environ.get("VIOLATION_GRACE_SECONDS", "8"))
 
     def register_face(self, frame) -> dict:
-        """Register the reference face from the initial frame."""
-        emb = self._embedding.generate_embedding(frame)
-        if emb is not None:
-            self._reference_embedding = emb
-            self._face_registered = True
-            result = self.face_verifier.register(frame)
-            return {
-                "success": True,
-                "faceCount": result.get("faceCount", 1),
-                "quality": result.get("quality", "good"),
-                "box": result.get("box"),
-                "message": "Reference face registered successfully",
-            }
+        """Register the reference face from the initial frame.
 
+        Delegates to the verifier, which refuses to register when no real
+        embedding backend is loaded. A histogram vector is never accepted as a
+        reference: it cannot verify identity.
+        """
         result = self.face_verifier.register(frame)
         if result.get("success"):
+            self._reference_embedding = self.face_verifier._reference_embedding
             self._face_registered = True
+            result.setdefault("message", "Reference face registered successfully")
         return result
 
     def register_face_from_embeddings(self, embeddings: list) -> dict:
         """Register face from pre-computed embeddings (multi-frame enrollment)."""
         import numpy as np
-        valid = [e for e in embeddings if e is not None]
+        valid = [e for e in embeddings if e is not None and getattr(e, "size", 0) > 0]
         if not valid:
             return {"success": False, "error": "no_embeddings", "message": "No valid embeddings provided"}
 
@@ -87,6 +81,10 @@ class ProctoringEngine:
             mean_emb = mean_emb / norm
         self._reference_embedding = mean_emb.astype(np.float32)
         self._face_registered = True
+        # Keep the verifier's reference in sync so /verify-face agrees with the
+        # engine's own embedded reference.
+        self.face_verifier._reference_embedding = self._reference_embedding
+        self.face_verifier._reference_set = True
         return {"success": True, "faceCount": len(valid), "message": "Reference face registered from multiple frames"}
 
     def analyze(self, frame) -> dict:
@@ -108,18 +106,16 @@ class ProctoringEngine:
 
         violations = []
 
-        device_detected = device_result.get("deviceDetected", False)
-        self._device_frames.append(device_detected)
-        if (
-            len(self._device_frames) >= DEVICE_CONFIRM_FRAMES
-            and all(self._device_frames)
-            and "ELECTRONIC_DEVICE" not in self._confirmed
-        ):
+        # Rolling-window confirmation: a weak, partial phone only raises a
+        # "possible" review state; a violation needs consistent hits plus a
+        # strong detection.
+        device_state = self._device_tracker.update(device_result.get("devices", []))
+        if device_state["level"] == "confirmed" and "ELECTRONIC_DEVICE" not in self._confirmed:
             self._confirmed.add("ELECTRONIC_DEVICE")
             violations.append({
                 "type": "ELECTRONIC_DEVICE",
-                "confidence": max((d["confidence"] for d in device_result.get("devices", [])), default=0.0),
-                "devices": device_result.get("devices", []),
+                "confidence": device_state.get("best_confidence", 0.0),
+                "devices": device_state.get("devices") or device_result.get("devices", []),
                 "confirmed": True,
             })
 
@@ -155,6 +151,7 @@ class ProctoringEngine:
 
         face_verification = None
         identity_mismatch = False
+        identity_unverified = False
         if self._face_registered and self._reference_embedding is not None and mod_det.get("face_present"):
             best_face = None
             if mod_det["faces"]:
@@ -165,20 +162,33 @@ class ProctoringEngine:
                     "x2": best_face["bbox"][2], "y2": best_face["bbox"][3],
                 })
                 if crop is not None:
-                    cur_emb = self._embedding.generate_embedding_from_crop(crop)
+                    # Pass the detector keypoints so the face is aligned exactly
+                    # as the recognition model expects, and so a face that is
+                    # merely unreadable yields "unverified" (match=None) rather
+                    # than being mistaken for a different person.
+                    cur_emb = self._embedding.generate_embedding_from_crop(
+                        crop, kps=best_face.get("landmarks"), frame=frame
+                    )
                     if cur_emb is not None:
                         cmp = self._embedding.compare(self._reference_embedding, cur_emb)
                         face_verification = cmp
-                        identity_mismatch = not cmp.get("match", True)
+                        identity_mismatch = cmp.get("match") is False
+                        identity_unverified = cmp.get("match") is None
                     else:
                         q = assess_face_quality(crop)
-                        face_verification = {"match": True, "similarity": None, "quality": q["quality"]}
+                        face_verification = {"match": None, "similarity": None, "quality": q["quality"]}
+                        identity_unverified = True
+            else:
+                identity_unverified = True
 
         elif self._face_registered and mod_det.get("face_present"):
             fv_result = self.face_verifier.verify(frame)
             face_verification = fv_result
-            identity_mismatch = fv_result.get("imposter", False)
+            identity_mismatch = fv_result.get("match") is False
+            identity_unverified = fv_result.get("match") is None
 
+        # Only a readable-but-different face counts as mismatch evidence. A
+        # low-quality/unreadable frame pushes False and never proves identity.
         self._imposter_frames.append(identity_mismatch)
         if (
             len(self._imposter_frames) >= IMPOSTER_CONFIRM_FRAMES
@@ -193,8 +203,6 @@ class ProctoringEngine:
                 "threshold": face_verification.get("threshold") if face_verification else None,
                 "confirmed": True,
             })
-        elif self._face_registered:
-            self._imposter_frames.append(False)
 
         auto_submit = len(self._confirmed) > 0
         cheat_reason = None
@@ -211,13 +219,16 @@ class ProctoringEngine:
             "person": person_result,
             "device": device_result,
             "faceVerification": face_verification,
+            "identityUnverified": identity_unverified,
+            "identityBackend": self._embedding.backend_name,
             "faceRegistered": self._face_registered,
             "violations": violations,
             "autoSubmit": auto_submit,
             "cheatingReason": cheat_reason,
             "confirmationProgress": {
-                "device": len(self._device_frames),
-                "deviceThreshold": DEVICE_CONFIRM_FRAMES,
+                "device": device_state["hits"],
+                "deviceThreshold": device_state["min_hits"],
+                "deviceLevel": device_state["level"],
                 "multiplePerson": len(self._person_frames),
                 "multiplePersonThreshold": PERSON_CONFIRM_FRAMES,
                 "noFace": len(self._no_face_frames),
@@ -234,6 +245,8 @@ class ProctoringEngine:
             "person": {"personCount": 0, "persons": []},
             "device": {"deviceDetected": False, "devices": [], "count": 0},
             "faceVerification": None,
+            "identityUnverified": False,
+            "identityBackend": self._embedding.backend_name,
             "faceRegistered": self._face_registered,
             "violations": [],
             "autoSubmit": False,
@@ -243,7 +256,7 @@ class ProctoringEngine:
         }
 
     def reset(self):
-        self._device_frames.clear()
+        self._device_tracker.reset()
         self._person_frames.clear()
         self._no_face_frames.clear()
         self._imposter_frames.clear()

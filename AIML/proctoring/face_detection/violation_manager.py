@@ -21,6 +21,7 @@ from face_detection.utils.config import (
     NO_FACE_CONFIRM_SECONDS,
     NO_FACE_MIN_SAMPLES,
 )
+from face_detection.utils.device_tracker import DeviceTracker
 
 VIOLATION_TYPES = [
     "NO_FACE",
@@ -42,10 +43,14 @@ INFO_LOG_TYPES = [
     "FACE_RESTORED",
     "BLINK",
     "CANDIDATE_LOST_TRACK",
+    "POSSIBLE_DEVICE_OBJECT",
+    "SPOOF_SUSPECTED",
 ]
 
 MULTIPLE_PERSON_CONFIRM = int(os.environ.get("MULTIPLE_PERSON_CONFIRMATION_FRAMES", "3"))
-DEVICE_CONFIRM = int(os.environ.get("DEVICE_CONFIRMATION_FRAMES", "2"))
+# Minimum seconds between repeated non-punitive "possible object" review logs.
+POSSIBLE_DEVICE_LOG_INTERVAL = float(os.environ.get("POSSIBLE_DEVICE_LOG_INTERVAL", "10"))
+SPOOF_LOG_INTERVAL = float(os.environ.get("SPOOF_LOG_INTERVAL", "20"))
 CAMERA_CONFIRM = int(os.environ.get("CAMERA_DISABLED_CONFIRMATION_FRAMES", "2"))
 LOOKING_AWAY_CONFIRM = int(os.environ.get("GAZE_CONFIRMATION_FRAMES", "5"))
 EYES_CLOSED_CONFIRM = int(os.environ.get("EYES_CLOSED_CONFIRMATION_FRAMES", "3"))
@@ -126,7 +131,11 @@ class ViolationManager:
         self._info_logs: list[dict] = []
 
         self._multiple_person_frames: deque[bool] = deque(maxlen=MULTIPLE_PERSON_CONFIRM)
-        self._device_frames: deque[bool] = deque(maxlen=DEVICE_CONFIRM)
+        # Device confirmation is temporal, not "N consecutive frames": a rolling
+        # window tolerates an intermittent partial-phone detection.
+        self._device_tracker = DeviceTracker()
+        self._last_possible_device_log: float = 0.0
+        self._last_spoof_log: float = 0.0
         self._camera_frames: deque[bool] = deque(maxlen=CAMERA_CONFIRM)
         self._looking_away_signal = Sustained(
             GAZE_HOLD_SECONDS, LOOKING_AWAY_CONFIRM, name="looking_away"
@@ -247,22 +256,38 @@ class ViolationManager:
                 new_violations.append(v)
 
         # Prohibited electronics (phone, laptop, etc.) from YOLO scene detection.
+        # A weak, partial detection only ever raises a review signal; a violation
+        # needs consistent location across the rolling window *and* a strong hit.
         devices = detection_result.get("devices") or []
-        device_detected = bool(detection_result.get("device_detected")) or bool(devices)
-        self._device_frames.append(device_detected)
-        if len(self._device_frames) >= DEVICE_CONFIRM and all(self._device_frames):
-            labels = ", ".join(sorted({d.get("label", "device") for d in devices})) or "electronic device"
-            is_phone = any((d.get("label") or "").lower() == "cell phone" for d in devices)
+        device_state = self._device_tracker.update(devices)
+        if device_state["level"] == "confirmed":
+            labels = ", ".join(device_state.get("labels") or []) or "electronic device"
+            evidence = device_state.get("devices") or devices
+            is_phone = any((d.get("label") or "").lower() == "cell phone" for d in evidence)
             v = self._confirm_violation(
                 "PHONE_DETECTED" if is_phone else "ELECTRONIC_DEVICE",
                 {
                     "description": f"Prohibited device detected in camera view: {labels}.",
-                    "devices": devices,
+                    "devices": evidence,
+                    "hits": device_state["hits"],
+                    "window": device_state["window"],
                     "severity": "high",
                 },
             )
             if v:
                 new_violations.append(v)
+        elif device_state["level"] == "possible":
+            entry = self._log_possible_device(device_state)
+            if entry:
+                new_info_logs.append(entry)
+
+        # Liveness is a review signal only. A static photo/screen cannot blink or
+        # move, but the heuristic is weak, so it never increments the violation
+        # count - it is logged for a human or a future anti-spoofing model.
+        if detection_result.get("spoof_suspected"):
+            entry = self._log_spoof_suspected()
+            if entry:
+                new_info_logs.append(entry)
 
         match = detection_result.get("match")
         if match is False:
@@ -319,6 +344,7 @@ class ViolationManager:
             "active_events": dict(self._active_events),
             "cycle": self._cycle_count,
             "info_logs": new_info_logs,
+            "device_state": self._device_tracker.snapshot(),
             **self._identity_gate(detection_result),
         }
 
@@ -421,6 +447,45 @@ class ViolationManager:
                 "identity_mismatch": self._identity_signal.snapshot(),
             },
         }
+
+    def _log_possible_device(self, device_state: dict) -> dict | None:
+        """Log a non-punitive "possible object" review signal, rate-limited."""
+        now = time.time()
+        if now - self._last_possible_device_log < POSSIBLE_DEVICE_LOG_INTERVAL:
+            return None
+        self._last_possible_device_log = now
+        labels = ", ".join(device_state.get("labels") or []) or "device-like object"
+        entry = {
+            "type": "POSSIBLE_DEVICE_OBJECT",
+            "timestamp": now,
+            "message": (
+                f"Possible prohibited object detected ({labels}); "
+                f"{device_state['hits']}/{device_state['window']} recent frames, "
+                "awaiting stronger evidence."
+            ),
+            "hits": device_state["hits"],
+            "window": device_state["window"],
+            "best_confidence": device_state["best_confidence"],
+        }
+        self._info_logs.append(entry)
+        return entry
+
+    def _log_spoof_suspected(self) -> dict | None:
+        """Log a non-punitive liveness review signal, rate-limited."""
+        now = time.time()
+        if now - self._last_spoof_log < SPOOF_LOG_INTERVAL:
+            return None
+        self._last_spoof_log = now
+        entry = {
+            "type": "SPOOF_SUSPECTED",
+            "timestamp": now,
+            "message": (
+                "No blink or micro-motion detected for a full window; the camera "
+                "may be showing a photo or a screen."
+            ),
+        }
+        self._info_logs.append(entry)
+        return entry
 
     def _track_attention(self, detection_result: dict, info_logs: list[dict]) -> list[dict]:
         new_violations = []
@@ -549,7 +614,7 @@ class ViolationManager:
     def reset_count(self):
         self._violation_count = max(0, self._violation_count - 1)
         self._multiple_person_frames.clear()
-        self._device_frames.clear()
+        self._device_tracker.reset()
         self._camera_frames.clear()
         self._looking_away_signal.reset()
         self._head_turned_active = False
@@ -585,6 +650,7 @@ class ViolationManager:
             "active_events": dict(self._active_events),
             "absence_duration_seconds": round(self._absence_duration(), 2),
             "cycles": self._cycle_count,
+            "device_state": self._device_tracker.snapshot(),
             "identity_status": self._gate_status,
             "identity_blocked": self._gate_blocked_since is not None,
             "identity_block_reason": self._gate_reason,
@@ -600,7 +666,9 @@ class ViolationManager:
         self._confirmed_violations.clear()
         self._info_logs.clear()
         self._multiple_person_frames.clear()
-        self._device_frames.clear()
+        self._device_tracker.reset()
+        self._last_possible_device_log = 0.0
+        self._last_spoof_log = 0.0
         self._camera_frames.clear()
         self._looking_away_signal.reset()
         self._head_turned_active = False

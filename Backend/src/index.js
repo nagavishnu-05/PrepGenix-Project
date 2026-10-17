@@ -40,7 +40,7 @@ app.use("/api/interviews", require("./routes/interviews"));
 app.use("/api/reports", require("./routes/reports"));
 app.use("/api/proctoring", require("./routes/proctoring"));
 
-const PORT = Number(process.env.PORT) || 3000;
+const PORT = Number(process.env.PORT) || 8080;
 
 async function main() {
   try {

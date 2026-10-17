@@ -24,10 +24,23 @@ class DeviceDetector:
     def detect(self, frame: np.ndarray) -> dict:
         result = self._detector.detect(frame)
         if result.get("error"):
-            return {"error": result["error"], "deviceDetected": False, "devices": [], "count": 0}
+            return {
+                "error": result["error"],
+                "deviceDetected": False,
+                "confirmedDevices": [],
+                "possibleDevices": [],
+                "devices": [],
+                "count": 0,
+            }
         devices = result.get("devices", [])
+        confirmed = result.get("confirmedDevices", [])
+        possible = result.get("possibleDevices", [])
         return {
-            "deviceDetected": bool(devices),
+            # "deviceDetected" is only true for strong detections; weak edges
+            # arrive as possibleDevices and must earn confirmation over time.
+            "deviceDetected": bool(result.get("deviceDetected", bool(confirmed))),
+            "confirmedDevices": confirmed,
+            "possibleDevices": possible,
             "devices": devices,
             "count": len(devices),
         }

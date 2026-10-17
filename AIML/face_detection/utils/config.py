@@ -149,6 +149,43 @@ ATTENTION_OVERLAY_LANDMARK_COUNT = int(os.environ.get("ATTENTION_OVERLAY_LANDMAR
 
 FACE_EMBEDDING_SIZE = int(os.environ.get("FACE_EMBEDDING_SIZE", "128"))
 
+# --- Face quality gates -------------------------------------------------------
+# A face that is too small, too dark, blown out or blurred carries little
+# identity signal. Registration rejects such frames, and verification reports
+# them as "unverified" instead of counting them as an identity mismatch.
 MIN_FACE_SIZE_PX = int(os.environ.get("MIN_FACE_SIZE_PX", "40"))
 MIN_FACE_BRIGHTNESS = float(os.environ.get("MIN_FACE_BRIGHTNESS", "30.0"))
+MAX_FACE_BRIGHTNESS = float(os.environ.get("MAX_FACE_BRIGHTNESS", "245.0"))
 MIN_FACE_BLUR_VARIANCE = float(os.environ.get("MIN_FACE_BLUR_VARIANCE", "50.0"))
+# Worst quality that may still be used to build the reference embedding.
+# One of: good | acceptable | poor (poor/anything below is rejected).
+ENROLLMENT_MIN_QUALITY = os.environ.get("ENROLLMENT_MIN_QUALITY", "acceptable").strip().lower()
+
+# --- Liveness (anti-spoofing heuristic) --------------------------------------
+# Embedding matching cannot tell a live face from a photo or a screen. Over a
+# rolling window a live candidate blinks and micro-moves; a static spoof does
+# not. This is a review signal, never a counted violation on its own.
+LIVENESS_ENABLED = os.environ.get("LIVENESS_ENABLED", "true").lower() == "true"
+LIVENESS_WINDOW_SECONDS = float(os.environ.get("LIVENESS_WINDOW_SECONDS", "20"))
+LIVENESS_MIN_BLINKS = int(os.environ.get("LIVENESS_MIN_BLINKS", "1"))
+LIVENESS_MIN_MOTION = float(os.environ.get("LIVENESS_MIN_MOTION", "0.012"))
+
+# --- Prohibited device detection (partial/edge phones) ------------------------
+# A phone showing only an edge or a corner occupies a few pixels in the full
+# frame. Re-running the detector on overlapping crops gives it a chance to be
+# resolved, and a rolling window replaces the strict "N consecutive frames"
+# rule that an intermittent edge never satisfies.
+DEVICE_CROP_INFERENCE_ENABLED = os.environ.get("DEVICE_CROP_INFERENCE_ENABLED", "true").lower() == "true"
+DEVICE_CROP_TILES = max(1, int(os.environ.get("DEVICE_CROP_TILES", "2")))
+DEVICE_CROP_OVERLAP = float(os.environ.get("DEVICE_CROP_OVERLAP", "0.2"))
+# Rolling window: at least DEVICE_WINDOW_MIN_HITS hits in the last
+# DEVICE_WINDOW_MAXLEN cycles, at a consistent on-screen location.
+DEVICE_WINDOW_MAXLEN = max(2, int(os.environ.get("DEVICE_TRACK_WINDOW", "8")))
+DEVICE_WINDOW_MIN_HITS = max(1, int(os.environ.get("DEVICE_TRACK_MIN_HITS", "3")))
+DEVICE_LOCATION_IOU = float(os.environ.get("DEVICE_TRACK_MIN_IOU", "0.1"))
+# Confidence separating a "possible object" review signal from a confirmed
+# device. Detections below DEVICE_CONFIRMED_CONFIDENCE can only ever reach the
+# possible state; only strong detections plus temporal/location evidence confirm.
+DEVICE_CONFIRMED_CONFIDENCE = float(os.environ.get("DEVICE_CONFIRMED_CONFIDENCE", "0.35"))
+# Directory for anonymized detection crops/scores saved during testing (empty = off).
+DEVICE_EVIDENCE_DIR = os.environ.get("DEVICE_EVIDENCE_DIR", "").strip()

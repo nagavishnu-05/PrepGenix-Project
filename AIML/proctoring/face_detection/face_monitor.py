@@ -23,6 +23,7 @@ if _aiml_root not in sys.path:
     sys.path.insert(0, _aiml_root)
 
 from proctoring.object_detector import SceneObjectDetector
+from proctoring.liveness import LivenessChecker
 
 from face_detection.inference.attention_analyzer import AttentionAnalyzer
 from face_detection.inference.blink_detector import BlinkDetector
@@ -36,6 +37,8 @@ from face_detection.utils.config import (
     REFERENCE_MIN_VALID_FRAMES,
     FACE_MATCH_THRESHOLD,
     SCENE_DETECTION_EVERY_N_CYCLES,
+    ENROLLMENT_MIN_QUALITY,
+    LIVENESS_ENABLED,
 )
 from face_detection.utils.image_utils import (
     decode_base64_image,
@@ -53,6 +56,9 @@ _OBJECT_DETECTION_ENABLED = os.environ.get("PROCTORING_OBJECT_DETECTION_ENABLED"
 # Upper bound on faces embedded per frame. Enough to catch a handful of people
 # in shot while keeping the per-cycle cost predictable.
 MAX_FACES_FOR_IDENTITY = int(os.environ.get("MAX_FACES_FOR_IDENTITY", "4"))
+
+# Coarse ordering so the enrollment gate can reject anything below a threshold.
+_QUALITY_RANK = {"unusable": 0, "poor": 1, "acceptable": 2, "good": 3}
 
 
 class FaceMonitor:
@@ -76,6 +82,7 @@ class FaceMonitor:
             auto_submit=auto_submit,
         )
         self.scene_detector = SceneObjectDetector() if _OBJECT_DETECTION_ENABLED else None
+        self.liveness = LivenessChecker() if LIVENESS_ENABLED else None
 
         self._reference_embedding: np.ndarray | None = None
         self._reference_captured = False
@@ -172,15 +179,18 @@ class FaceMonitor:
             }
 
         quality_info = assess_face_quality(face_crop)
-        if quality_info["quality"] == "unusable":
+        # Reject blurry, dark, blown-out and tiny frames here. Enrolling on them
+        # would bake a weak reference embedding into every later comparison.
+        if not self._quality_meets_enrollment(quality_info["quality"]):
             return {
                 "status": "capturing",
                 "captured": len(self._enrollment_frames),
                 "required_frames": REFERENCE_CAPTURE_FRAMES,
                 "face_detected": True,
                 "face_count": 1,
-                "quality": "poor",
-                "message": "Face quality is too low. Please improve lighting.",
+                "quality": quality_info["quality"],
+                "reasons": quality_info.get("reasons", []),
+                "message": self._enrollment_quality_message(quality_info),
             }
 
         emb = self.embedding.generate_embedding_from_crop(
@@ -231,6 +241,24 @@ class FaceMonitor:
             "quality": quality_info["quality"],
             "message": f"Capturing face... ({captured}/{REFERENCE_CAPTURE_FRAMES}). Keep your face visible.",
         }
+
+    @staticmethod
+    def _quality_meets_enrollment(quality: str) -> bool:
+        minimum = _QUALITY_RANK.get(ENROLLMENT_MIN_QUALITY, 2)
+        return _QUALITY_RANK.get(quality, 0) >= minimum
+
+    @staticmethod
+    def _enrollment_quality_message(quality_info: dict) -> str:
+        reasons = set(quality_info.get("reasons") or [])
+        if "too_dark" in reasons:
+            return "Face is too dark. Please improve lighting."
+        if "overexposed" in reasons:
+            return "Face is overexposed. Please reduce direct light or glare."
+        if "blurry" in reasons:
+            return "Face is blurry. Hold still and make sure the camera is in focus."
+        if "too_small" in reasons:
+            return "Face is too small. Please move closer to the camera."
+        return "Face quality is too low. Please improve lighting and hold still."
 
     def enroll_from_base64(self, image_b64: str) -> dict:
         frame = decode_base64_image(image_b64)
@@ -305,6 +333,7 @@ class FaceMonitor:
                 "identity_block_reason": None,
                 "identity_block_seconds": 0.0,
                 "info_logs": vm_result.get("info_logs", []),
+                "liveness": None,
             }
 
         det = self.detector.detect(frame)
@@ -351,11 +380,13 @@ class FaceMonitor:
         head_pose = None
         gaze_est = None
         blink_metrics = None
+        primary_points = None
 
         if face_count >= 1 and landmarks_result.get("faces"):
             primary = self._primary_face(landmarks_result, frame.shape, det)
             if primary is not None:
                 points, bbox = primary
+                primary_points = points
                 # _primary_face already returns pixel coordinates.
                 head_pose = self.head_pose.estimate(points, frame.shape, normalized=False)
                 gaze_est = self.gaze.estimate(points, head_pose)
@@ -369,6 +400,14 @@ class FaceMonitor:
             face_count=face_count,
             quality=quality,
         )
+
+        liveness_state = None
+        if self.liveness is not None:
+            liveness_state = self.liveness.update(
+                face_present=face_present,
+                blink_count=getattr(metrics, "blink_count", None),
+                points=primary_points,
+            )
 
         detection_input = {
             "face_count": face_count,
@@ -389,6 +428,7 @@ class FaceMonitor:
             "device_detected": device_detected,
             "unmatched_faces": (match_result or {}).get("unmatched_faces", 0),
             "enrolled": self.is_enrolled,
+            "spoof_suspected": bool(liveness_state and liveness_state.get("spoof_suspected")),
         }
 
         vm_result = self.violation_manager.update(detection_input)
@@ -396,6 +436,8 @@ class FaceMonitor:
         metrics_dict = self._metrics_to_dict(metrics, head_pose, gaze_est, blink_metrics, det)
         metrics_dict["person_count"] = person_count
         metrics_dict["devices"] = devices
+        metrics_dict["device_detected"] = device_detected
+        metrics_dict["liveness"] = liveness_state
 
         # How the identity decision was reached, so the client never has to
         # re-derive it from a face count and a similarity.
@@ -425,6 +467,9 @@ class FaceMonitor:
             "person_count": person_count,
             "devices": devices,
             "device_detected": device_detected,
+            "possible_devices": scene.get("possibleDevices", []) or [],
+            "device_state": vm_result.get("device_state", {}),
+            "liveness": liveness_state,
             "identity_blocked": vm_result.get("identity_blocked", False),
             "identity_status": vm_result.get("identity_status", "checking"),
             "identity_block_reason": vm_result.get("identity_block_reason"),
@@ -448,6 +493,18 @@ class FaceMonitor:
         """
         if not self.is_enrolled:
             return {"match": None, "similarity": None, "quality": "unusable"}
+
+        # A histogram "embedding" is not an identity descriptor. Comparing with
+        # it would produce a plausible-looking but meaningless score, so report
+        # identity as unavailable instead of guessing.
+        if self.embedding.backend_name not in ("insightface", "onnx_arcface"):
+            return {
+                "match": None,
+                "similarity": None,
+                "quality": "unusable",
+                "identity_backend": self.embedding.backend_name,
+                "reason": "identity_backend_unavailable",
+            }
 
         faces = sorted(
             det["faces"],
@@ -478,6 +535,9 @@ class FaceMonitor:
 
             emb = self.embedding.generate_embedding_from_crop(crop, kps=crop_kps, frame=frame)
             if emb is None:
+                # A face that was detected but could not be embedded is a
+                # coverage gap, not proof of a different person.
+                skipped += 1
                 continue
 
             evaluated += 1
@@ -656,4 +716,6 @@ class FaceMonitor:
         self._enrollment_embeddings.clear()
         self.blink.reset()
         self.analyzer.reset()
+        if self.liveness is not None:
+            self.liveness.reset()
         self.violation_manager.reset()

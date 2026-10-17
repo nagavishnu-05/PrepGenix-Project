@@ -161,6 +161,9 @@ async function listProfileAvatarObjects(search) {
 async function getStudentAvatars(regNos) {
   const avatars = new Map();
   if (!regNos?.length) return avatars;
+  // Avatars are cosmetic; without storage just report none instead of failing
+  // the whole request (e.g. student login) that only wanted to read them.
+  if (!isConfigured()) return avatars;
 
   const wanted = new Set(regNos.map(String));
   for (const object of await listProfileAvatarObjects()) {
@@ -183,6 +186,10 @@ async function getStudentAvatars(regNos) {
 }
 
 async function getStudentAvatar(regNo) {
+  // Avatars are optional cosmetic data. Reading one must never throw: when
+  // storage is unconfigured, callers (notably student login) treat the student
+  // as having no avatar and continue. Writes still require storage.
+  if (!isConfigured()) return null;
   const encodedRegNo = Buffer.from(String(regNo)).toString("base64url");
   const prefix = `${encodedRegNo}.`;
   const objects = await listProfileAvatarObjects(prefix);
