@@ -124,7 +124,7 @@ async function ensureBuckets() {
     [FRAME_BUCKET, { fileSizeLimit: 10 * 1024 * 1024, allowedMimeTypes: ["image/jpeg", "image/png", "image/webp"] }],
     [REFERENCE_BUCKET, { fileSizeLimit: 10 * 1024 * 1024, allowedMimeTypes: ["image/jpeg", "image/png", "image/webp"] }],
     [PROFILE_BUCKET, { fileSizeLimit: 1024, allowedMimeTypes: ["application/json"] }],
-    [RECORDING_BUCKET, { fileSizeLimit: 200 * 1024 * 1024, allowedMimeTypes: ["video/webm", "video/mp4", "audio/webm", "audio/mpeg", "audio/ogg", "audio/wav", "audio/x-wav"] }],
+    [RECORDING_BUCKET, { fileSizeLimit: 50 * 1024 * 1024, allowedMimeTypes: ["video/webm", "video/mp4", "audio/webm", "audio/mpeg", "audio/ogg", "audio/wav", "audio/x-wav"] }],
   ]) {
     const { error } = await supabase.storage.createBucket(bucket, {
       public: false,

@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Plus, Star, CalendarClock, ListChecks, FileText, Loader2, Sparkles, AlertTriangle } from "lucide-react";
+import { Plus, Star, CalendarClock, ListChecks, FileText, Loader2, Sparkles, AlertTriangle, RotateCw, RotateCcw } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,6 +11,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { PageHeader, EmptyState, LoadingState } from "@/components/portal/primitives";
 import { StatusBadge } from "@/components/portal/status-badge";
 import { api } from "@/lib/api";
+import { getStudentSection } from "@/lib/student-section";
 
 function ReportBody({ report }) {
     if (!report) return null;
@@ -83,9 +84,13 @@ export default function PlacementInterviews() {
     const [planTarget, setPlanTarget] = useState(null);
     const [reportOpen, setReportOpen] = useState(false);
     const [reportTarget, setReportTarget] = useState(null);
+    const [proctoringOpen, setProctoringOpen] = useState(false);
+    const [proctoringTarget, setProctoringTarget] = useState(null);
     const [preparingId, setPreparingId] = useState(null);
+    const [resettingId, setResettingId] = useState(null);
     const [busy, setBusy] = useState(false);
-    const [sched, setSched] = useState({ regNo: "", type: "General", scheduledAt: "", interviewer: "" });
+    const [sched, setSched] = useState({ regNo: "", type: "Technical", scheduledAt: "", interviewer: "" });
+    const [studentFilters, setStudentFilters] = useState({ batch: "all", section: "all", department: "all", search: "" });
     const [result, setResult] = useState({ rating: 3, notes: "", strengths: "", weaknesses: "", status: "completed" });
 
     const load = () => {
@@ -98,6 +103,20 @@ export default function PlacementInterviews() {
 
     useEffect(() => { load(); }, []);
 
+    const batches = [...new Set(students.map((student) => student.batch).filter(Boolean))].sort();
+    const departments = [...new Set(students.map((student) => student.department).filter(Boolean))].sort();
+    const availableSections = [...new Set(students
+        .filter((student) => studentFilters.batch === "all" || student.batch === studentFilters.batch)
+        .map((student) => getStudentSection(student.regNo))
+        .filter(Boolean))].sort();
+    const filteredStudents = students.filter((student) => {
+        if (studentFilters.batch !== "all" && student.batch !== studentFilters.batch) return false;
+        if (studentFilters.section !== "all" && getStudentSection(student.regNo) !== studentFilters.section) return false;
+        if (studentFilters.department !== "all" && student.department !== studentFilters.department) return false;
+        const query = studentFilters.search.trim().toLowerCase();
+        return !query || `${student.name} ${student.regNo}`.toLowerCase().includes(query);
+    });
+
     const schedule = async () => {
         if (!sched.regNo || !sched.scheduledAt) {
             alert("Select a student and a date/time.");
@@ -107,7 +126,7 @@ export default function PlacementInterviews() {
         try {
             await api.interviews.create(sched);
             setSchedOpen(false);
-            setSched({ regNo: "", type: "General", scheduledAt: "", interviewer: "" });
+            setSched({ regNo: "", type: "Technical", scheduledAt: "", interviewer: "" });
             load();
         } catch (e) {
             alert(e.message);
@@ -132,6 +151,7 @@ export default function PlacementInterviews() {
 
     const viewPlan = (iv) => { setPlanTarget(iv); setPlanOpen(true); };
     const viewReport = (iv) => { setReportTarget(iv); setReportOpen(true); };
+    const viewProctoring = (iv) => { setProctoringTarget(iv); setProctoringOpen(true); };
 
     const openResult = (iv) => {
         setResultTarget(iv);
@@ -165,6 +185,30 @@ export default function PlacementInterviews() {
         load();
     };
 
+    const resetInterview = async (iv) => {
+        if (!confirm(`Reset ${iv.studentName}'s interview? This clears their answers, consent, and proctoring log, then lets them start again. The interview plan will be kept.`)) return;
+        setResettingId(iv.id);
+        try {
+            await api.interviews.reset(iv.id);
+            try {
+                const proctoringApi = import.meta.env.VITE_PROCTORING_API || "http://localhost:5050";
+                const response = await fetch(`${proctoringApi}/reset`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ attemptId: `interview_${iv.id}` }),
+                });
+                if (!response.ok) throw new Error(`Proctoring service returned HTTP ${response.status}`);
+            } catch (error) {
+                alert(`Interview was reset, but the AI monitor could not be cleared: ${error.message}. Restart the proctoring service before the student retries.`);
+            }
+            load();
+        } catch (error) {
+            alert(error.message);
+        } finally {
+            setResettingId(null);
+        }
+    };
+
     return (
         <div>
             <PageHeader
@@ -190,6 +234,7 @@ export default function PlacementInterviews() {
                                     <TableHead>Scheduled</TableHead>
                                     <TableHead>Interviewer</TableHead>
                                     <TableHead>Status</TableHead>
+                                    <TableHead>Proctoring</TableHead>
                                     <TableHead>Rating</TableHead>
                                     <TableHead className="text-right">Actions</TableHead>
                                 </TableRow>
@@ -205,11 +250,27 @@ export default function PlacementInterviews() {
                                         <TableCell className="text-sm text-slate-600 dark:text-zinc-300">{new Date(iv.scheduledAt).toLocaleString()}</TableCell>
                                         <TableCell className="text-sm text-slate-600 dark:text-zinc-300">{iv.interviewer}</TableCell>
                                         <TableCell><StatusBadge value={iv.status} /></TableCell>
+                                        <TableCell>
+                                            {iv.proctoringEvents?.length ? (
+                                                <Button variant="ghost" size="sm" onClick={() => viewProctoring(iv)}>
+                                                    <AlertTriangle className="h-4 w-4 text-amber-500" />
+                                                    {iv.proctoringViolationCount || 0}/3 · Log
+                                                </Button>
+                                            ) : <span className="text-xs text-slate-400">No events</span>}
+                                        </TableCell>
                                         <TableCell className="text-sm text-slate-600 dark:text-zinc-300">{iv.rating ? `${iv.rating}/5` : "—"}</TableCell>
                                         <TableCell className="text-right">
                                             <div className="flex items-center justify-end gap-1">
                                                 {iv.plan?.questions?.length ? (
-                                                    <Button variant="ghost" size="sm" onClick={() => viewPlan(iv)}><ListChecks className="h-4 w-4" /> Questions</Button>
+                                                    <>
+                                                        <Button variant="ghost" size="sm" onClick={() => viewPlan(iv)}><ListChecks className="h-4 w-4" /> Questions</Button>
+                                                        {iv.status === "scheduled" && iv.session?.status !== "in_progress" && !iv.session?.startedAt && (
+                                                            <Button variant="ghost" size="sm" onClick={() => prepare(iv)} disabled={preparingId === iv.id}>
+                                                                {preparingId === iv.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCw className="h-4 w-4" />}
+                                                                {preparingId === iv.id ? "Refreshing..." : "Refresh"}
+                                                            </Button>
+                                                        )}
+                                                    </>
                                                 ) : (
                                                     <Button variant="ghost" size="sm" onClick={() => prepare(iv)} disabled={preparingId === iv.id}>
                                                         {preparingId === iv.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
@@ -218,6 +279,19 @@ export default function PlacementInterviews() {
                                                 )}
                                                 {iv.report && (
                                                     <Button variant="ghost" size="sm" onClick={() => viewReport(iv)}><FileText className="h-4 w-4" /> Report</Button>
+                                                )}
+                                                {["in_progress", "disqualified"].includes(iv.status) && (
+                                                    <Button
+                                                        variant="ghost"
+                                                        size="sm"
+                                                        onClick={() => resetInterview(iv)}
+                                                        disabled={resettingId === iv.id}
+                                                    >
+                                                        {resettingId === iv.id
+                                                            ? <Loader2 className="h-4 w-4 animate-spin" />
+                                                            : <RotateCcw className="h-4 w-4" />}
+                                                        {resettingId === iv.id ? "Resetting..." : "Reset"}
+                                                    </Button>
                                                 )}
                                                 {iv.status === "scheduled" && (
                                                     <>
@@ -236,20 +310,72 @@ export default function PlacementInterviews() {
             </Card>
 
             <Dialog open={schedOpen} onOpenChange={setSchedOpen}>
-                <DialogContent>
+                <DialogContent className="max-w-2xl">
                     <DialogHeader>
                         <DialogTitle>Schedule Interview</DialogTitle>
-                        <DialogDescription>Book a slot for a student.</DialogDescription>
+                        <DialogDescription>Choose the interview type and narrow the student list by batch, section, or department.</DialogDescription>
                     </DialogHeader>
                     <div className="space-y-4">
+                        <div className="grid gap-3 sm:grid-cols-3">
+                            <div className="space-y-1.5">
+                                <Label className="text-xs text-zinc-400">Batch</Label>
+                                <Select value={studentFilters.batch} onValueChange={(value) => setStudentFilters((current) => ({ ...current, batch: value, section: "all" }))}>
+                                    <SelectTrigger><SelectValue /></SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="all">All batches</SelectItem>
+                                        {batches.map((batch) => <SelectItem key={batch} value={batch}>{batch}</SelectItem>)}
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                            <div className="space-y-1.5">
+                                <Label className="text-xs text-zinc-400">Section</Label>
+                                <Select value={studentFilters.section} onValueChange={(value) => setStudentFilters((current) => ({ ...current, section: value }))}>
+                                    <SelectTrigger><SelectValue /></SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="all">All sections</SelectItem>
+                                        {availableSections.map((section) => <SelectItem key={section} value={section}>Section {section}</SelectItem>)}
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                            <div className="space-y-1.5">
+                                <Label className="text-xs text-zinc-400">Department</Label>
+                                <Select value={studentFilters.department} onValueChange={(value) => setStudentFilters((current) => ({ ...current, department: value }))}>
+                                    <SelectTrigger><SelectValue /></SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="all">All departments</SelectItem>
+                                        {departments.map((department) => <SelectItem key={department} value={department}>{department}</SelectItem>)}
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                        </div>
                         <div className="space-y-1.5">
-                            <Label className="text-xs text-zinc-400">Student</Label>
+                            <Label className="text-xs text-zinc-400">Search students</Label>
+                            <Input
+                                value={studentFilters.search}
+                                onChange={(event) => setStudentFilters((current) => ({ ...current, search: event.target.value }))}
+                                placeholder="Search by name or registration number"
+                            />
+                        </div>
+                        <div className="space-y-1.5">
+                            <div className="flex items-center justify-between">
+                                <Label className="text-xs text-zinc-400">Student</Label>
+                                <span className="text-xs text-zinc-500">{filteredStudents.length} match{filteredStudents.length === 1 ? "" : "es"}</span>
+                            </div>
                             <Select value={sched.regNo} onValueChange={(v) => setSched({ ...sched, regNo: v })}>
                                 <SelectTrigger><SelectValue placeholder="Select a student" /></SelectTrigger>
                                 <SelectContent>
-                                    {students.map((s) => <SelectItem key={s.regNo} value={s.regNo}>{s.regNo} — {s.name}</SelectItem>)}
+                                    {filteredStudents.map((student) => {
+                                        const section = getStudentSection(student.regNo);
+                                        const details = [student.department, student.batch, section && `Section ${section}`].filter(Boolean).join(" · ");
+                                        return (
+                                            <SelectItem key={student.regNo} value={student.regNo}>
+                                                {student.name} — {student.regNo}{details ? ` · ${details}` : ""}
+                                            </SelectItem>
+                                        );
+                                    })}
                                 </SelectContent>
                             </Select>
+                            {filteredStudents.length === 0 && <p className="text-xs text-amber-600">No students match these filters.</p>}
                         </div>
                         <div className="grid grid-cols-2 gap-3">
                             <div className="space-y-1.5">
@@ -264,6 +390,7 @@ export default function PlacementInterviews() {
                                         <SelectItem value="Final">Final</SelectItem>
                                     </SelectContent>
                                 </Select>
+                                {sched.type === "Technical" && <p className="text-xs text-violet-600 dark:text-violet-400">Question topics are selected from the student's resume and the topic banks.</p>}
                             </div>
                             <div className="space-y-1.5">
                                 <Label className="text-xs text-zinc-400">Interviewer</Label>
@@ -332,6 +459,13 @@ export default function PlacementInterviews() {
                             ))}
                         </div>
                     )}
+                    {!!planTarget?.plan?.topics?.length && (
+                        <div className="flex flex-wrap gap-1.5">
+                            {planTarget.plan.topics.map((topic) => (
+                                <span key={topic} className="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-xs text-violet-700 dark:border-violet-500/30 dark:bg-violet-500/10 dark:text-violet-300">{topic}</span>
+                            ))}
+                        </div>
+                    )}
                     <div className="max-h-[60vh] space-y-3 overflow-y-auto pr-1">
                         {(planTarget?.plan?.questions || []).map((q, i) => (
                             <div key={q.id || i} className="rounded-lg border border-slate-200 p-3 dark:border-zinc-800">
@@ -349,6 +483,40 @@ export default function PlacementInterviews() {
                         ))}
                     </div>
                     {planTarget?.plan?.notes && <p className="text-xs text-slate-400 dark:text-zinc-600">{planTarget.plan.notes}</p>}
+                </DialogContent>
+            </Dialog>
+
+            <Dialog open={proctoringOpen} onOpenChange={setProctoringOpen}>
+                <DialogContent>
+                    <DialogHeader>
+                        <DialogTitle>Proctoring event log</DialogTitle>
+                        <DialogDescription>
+                            {proctoringTarget?.studentName} — {proctoringTarget?.proctoringViolationCount || 0} of 3 confirmed violations.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="max-h-[60vh] space-y-3 overflow-y-auto pr-1">
+                        {[...(proctoringTarget?.proctoringEvents || [])].reverse().map((event, index) => (
+                            <div key={`${event.type}-${event.at}-${index}`} className="rounded-lg border border-slate-200 p-3 dark:border-zinc-800">
+                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                    <span className="text-sm font-semibold text-slate-800 dark:text-zinc-200">{event.type.replace(/_/g, " ")}</span>
+                                    <span className="text-xs text-slate-500">{new Date(event.at).toLocaleString()}</span>
+                                </div>
+                                <p className="mt-1 text-sm text-slate-600 dark:text-zinc-400">{event.description}</p>
+                                <p className="mt-1 text-xs text-slate-500">Severity: {event.severity} · {event.counted ? "Counted" : "Within repeat-event cooldown"}</p>
+                                {event.metadata && (
+                                    <p className="mt-1 text-xs text-slate-500 dark:text-zinc-500">
+                                        {[
+                                            event.metadata.faceCount != null && `Faces: ${event.metadata.faceCount}`,
+                                            event.metadata.devices?.length && `Devices: ${event.metadata.devices.map((device) => device.label || device.class || "device").join(", ")}`,
+                                            event.metadata.attention && `Attention: ${event.metadata.attention}`,
+                                            event.metadata.headDirection && `Head: ${event.metadata.headDirection}`,
+                                            event.metadata.gazeDirection && `Gaze: ${event.metadata.gazeDirection}`,
+                                        ].filter(Boolean).join(" · ")}
+                                    </p>
+                                )}
+                            </div>
+                        ))}
+                    </div>
                 </DialogContent>
             </Dialog>
 

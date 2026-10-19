@@ -14,6 +14,26 @@ const router = express.Router();
 
 const CONSENT_POLICY_VERSION = process.env.INTERVIEW_CONSENT_VERSION || "2026-01";
 const RECORDING_RETENTION_DAYS = Number(process.env.INTERVIEW_RECORDING_RETENTION_DAYS ?? 30);
+const MAX_PROCTORING_VIOLATIONS = 3;
+const PROCTORING_EVENT_COOLDOWN_MS = 20000;
+const PROCTORING_EVENT_TYPES = new Set([
+  "FULLSCREEN_EXIT",
+  "TAB_SWITCH",
+  "WINDOW_BLUR",
+  "NO_FACE",
+  "MULTIPLE_FACES",
+  "MULTIPLE_PERSONS",
+  "PHONE_DETECTED",
+  "ELECTRONIC_DEVICE",
+  "LOOKING_AWAY",
+  "HEAD_TURNED_AWAY",
+  "EYES_CLOSED",
+  "CAMERA_DISABLED",
+  "CAMERA_LOST",
+  "MIC_LOST",
+  "IDENTITY_MISMATCH",
+  "PROCTORING_FAILURE",
+]);
 
 function canAccess(req, interview) {
   if (req.user.role === "placement") return true;
@@ -227,7 +247,12 @@ router.post("/:id/session/start", authenticate, async (req, res) => {
     if (interview.regNo !== req.user.username) return res.status(403).json({ error: "Access denied" });
     if (!interview.plan?.questions?.length) return res.status(400).json({ error: "Interview questions have not been prepared by the coordinator yet" });
     if (!interview.consent?.consentedAt) return res.status(400).json({ error: "Consent must be given before starting" });
-    if (interview.status === "completed") return res.status(400).json({ error: "This interview is already completed" });
+    if (interview.consent.camera !== true || interview.consent.microphone !== true) {
+      return res.status(400).json({ error: "Camera and microphone consent are required for a proctored interview" });
+    }
+    if (interview.status === "completed" || interview.status === "disqualified") {
+      return res.status(400).json({ error: "This interview is no longer available" });
+    }
 
     const transcript = interview.transcript || [];
     const first = interview.plan.questions[0];
@@ -257,6 +282,12 @@ router.post("/:id/answer", authenticate, async (req, res) => {
     const interview = await loadInterview(req.params.id);
     if (!interview) return res.status(404).json({ error: "Interview not found" });
     if (interview.regNo !== req.user.username) return res.status(403).json({ error: "Access denied" });
+    if (interview.status === "disqualified" || interview.session?.status === "terminated") {
+      return res.status(403).json({ error: "This interview was terminated after repeated proctoring violations" });
+    }
+    if (interview.session?.status !== "in_progress") {
+      return res.status(409).json({ error: "Interview session is not active" });
+    }
     if (!interview.plan?.questions?.length) return res.status(400).json({ error: "Interview has no prepared questions" });
 
     const { questionId, text } = req.body || {};
@@ -299,14 +330,77 @@ router.post("/:id/answer", authenticate, async (req, res) => {
       status: "in_progress",
       answeredCount: (interview.session?.answeredCount || 0) + 1,
     };
-    await col("interviews").updateOne(
-      { _id: interview._id },
+    const saved = await col("interviews").updateOne(
+      { _id: interview._id, "session.status": "in_progress", status: { $ne: "disqualified" } },
       { $set: { transcript, session, updatedAt: new Date() } }
     );
+    if (!saved.matchedCount) return res.status(409).json({ error: "Interview was stopped before the answer could be saved" });
     res.json({ done: !nextQuestion, question: nextQuestion, index: nextIndex, total: questions.length, session });
   } catch (error) {
     console.error("Interview answer failed:", error.message);
     res.status(500).json({ error: "Failed to save answer" });
+  }
+});
+
+// POST /api/interviews/:id/proctoring-event (owning student) record a confirmed issue
+router.post("/:id/proctoring-event", authenticate, async (req, res) => {
+  try {
+    if (req.user.role !== "student") return res.status(403).json({ error: "Candidate only" });
+    const interview = await loadInterview(req.params.id);
+    if (!interview) return res.status(404).json({ error: "Interview not found" });
+    if (interview.regNo !== req.user.username) return res.status(403).json({ error: "Access denied" });
+    if (interview.session?.status !== "in_progress") {
+      return res.status(409).json({ error: "Proctoring events can only be recorded during an active interview" });
+    }
+
+    const type = String(req.body?.type || "").toUpperCase();
+    if (!PROCTORING_EVENT_TYPES.has(type)) return res.status(400).json({ error: "Unknown proctoring event type" });
+
+    const now = new Date();
+    const events = interview.proctoringEvents || [];
+    const lastSameType = [...events].reverse().find((event) => event.type === type);
+    const lastSameTypeTime = lastSameType ? new Date(lastSameType.at).getTime() : NaN;
+    const isNewViolation = !lastSameType || !Number.isFinite(lastSameTypeTime)
+      || now.getTime() - lastSameTypeTime >= PROCTORING_EVENT_COOLDOWN_MS;
+    const violationCount = (interview.proctoringViolationCount || 0) + (isNewViolation ? 1 : 0);
+    const terminated = violationCount >= MAX_PROCTORING_VIOLATIONS;
+    const event = {
+      type,
+      description: String(req.body?.description || type.replace(/_/g, " ").toLowerCase()).slice(0, 300),
+      severity: ["low", "medium", "high"].includes(req.body?.severity) ? req.body.severity : "medium",
+      at: now,
+      metadata: req.body?.metadata && typeof req.body.metadata === "object" && !Array.isArray(req.body.metadata)
+        ? Object.fromEntries(Object.entries(req.body.metadata).slice(0, 10))
+        : {},
+      counted: isNewViolation,
+    };
+    const session = terminated
+      ? { ...(interview.session || {}), status: "terminated", endedAt: now, terminationReason: "proctoring_violation_limit" }
+      : interview.session;
+
+    const saved = await col("interviews").updateOne(
+      { _id: interview._id, "session.status": "in_progress", status: { $ne: "disqualified" } },
+      {
+        $set: {
+          proctoringViolationCount: violationCount,
+          ...(terminated ? { session, status: "disqualified" } : {}),
+          updatedAt: now,
+        },
+        $push: { proctoringEvents: { $each: [event], $slice: -100 } },
+      }
+    );
+    if (!saved.matchedCount) return res.status(409).json({ error: "Interview is no longer active" });
+    res.json({
+      recorded: true,
+      counted: isNewViolation,
+      violationCount,
+      violationLimit: MAX_PROCTORING_VIOLATIONS,
+      paused: true,
+      terminated,
+    });
+  } catch (error) {
+    console.error("Interview proctoring event failed:", error.message);
+    res.status(500).json({ error: "Failed to record proctoring event" });
   }
 });
 
@@ -317,12 +411,19 @@ router.post("/:id/complete", authenticate, async (req, res) => {
     const interview = await loadInterview(req.params.id);
     if (!interview) return res.status(404).json({ error: "Interview not found" });
     if (interview.regNo !== req.user.username) return res.status(403).json({ error: "Access denied" });
+    if (interview.status === "disqualified" || interview.session?.status === "terminated") {
+      return res.status(403).json({ error: "This interview was terminated after repeated proctoring violations" });
+    }
+    if (interview.session?.status !== "in_progress") {
+      return res.status(409).json({ error: "Interview session is not active" });
+    }
 
     const session = { ...(interview.session || {}), status: "completed", endedAt: new Date() };
-    await col("interviews").updateOne(
-      { _id: interview._id },
+    const completed = await col("interviews").updateOne(
+      { _id: interview._id, "session.status": "in_progress", status: { $ne: "disqualified" } },
       { $set: { session, status: "completed", completedAt: new Date(), updatedAt: new Date() } }
     );
+    if (!completed.matchedCount) return res.status(409).json({ error: "Interview was stopped before completion" });
 
     // Generate the report opportunistically; a coordinator can regenerate it later.
     let report = null;
@@ -361,6 +462,62 @@ router.post("/:id/report", authenticate, async (req, res) => {
   } catch (error) {
     console.error("Generate report failed:", error.message);
     res.status(500).json({ error: "Failed to generate report" });
+  }
+});
+
+// POST /api/interviews/:id/reset (placement) reopen a locked or in-progress interview
+router.post("/:id/reset", authenticate, async (req, res) => {
+  try {
+    if (req.user.role !== "placement") return res.status(403).json({ error: "Placement Coordinator only" });
+
+    const interviewId = id(req.params.id);
+    const interview = await col("interviews").findOne({ _id: interviewId });
+    if (!interview) return res.status(404).json({ error: "Interview not found" });
+
+    const canReset = ["in_progress", "disqualified"].includes(interview.status)
+      || ["in_progress", "terminated"].includes(interview.session?.status);
+    if (!canReset) {
+      return res.status(409).json({ error: "Only in-progress or locked interviews can be reset" });
+    }
+
+    const resetInterview = await col("interviews").findOneAndUpdate(
+      {
+        _id: interviewId,
+        $or: [
+          { status: { $in: ["in_progress", "disqualified"] } },
+          { "session.status": { $in: ["in_progress", "terminated"] } },
+        ],
+      },
+      {
+        $set: {
+          transcript: [],
+          consent: null,
+          analysis: { face: null, speech: null, background: null },
+          report: null,
+          session: { status: "not_started", startedAt: null, endedAt: null, answeredCount: 0 },
+          status: "scheduled",
+          proctoringViolationCount: 0,
+          proctoringEvents: [],
+          updatedAt: new Date(),
+        },
+        $unset: {
+          completedAt: "",
+          reportGeneratedAt: "",
+          rating: "",
+          notes: "",
+          strengths: "",
+          weaknesses: "",
+        },
+      },
+      { returnDocument: "after" }
+    );
+
+    if (!resetInterview) {
+      return res.status(409).json({ error: "Interview status changed; refresh before trying again" });
+    }
+    res.json(toId(resetInterview));
+  } catch {
+    res.status(500).json({ error: "Failed to reset interview" });
   }
 });
 

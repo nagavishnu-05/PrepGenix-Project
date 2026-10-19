@@ -15,9 +15,55 @@ import os
 from pathlib import Path
 
 
+def _python_can_run_proctoring(python, project_dir):
+    try:
+        result = subprocess.run(
+            [str(python), "-c", "from proctoring.face_detection import FaceMonitor"],
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+            timeout=45,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0
+
+
+def _select_proctoring_python(project_dir):
+    current_python = Path(sys.executable).resolve()
+    if _python_can_run_proctoring(current_python, project_dir):
+        return current_python
+
+    scripts_dir = "Scripts" if os.name == "nt" else "bin"
+    executable = "python.exe" if os.name == "nt" else "python"
+    candidates = [
+        project_dir / "venv" / scripts_dir / executable,
+        project_dir / ".venv" / scripts_dir / executable,
+    ]
+    for candidate in candidates:
+        if candidate.is_file() and _python_can_run_proctoring(candidate, project_dir):
+            return candidate.resolve()
+    return None
+
+
 def run_server(host='0.0.0.0', port=5000, debug=True):
     """Run the general API and dedicated proctoring API together."""
-    project_dir = Path(__file__).parent
+    project_dir = Path(__file__).resolve().parent
+    python = _select_proctoring_python(project_dir)
+    if python is None:
+        raise RuntimeError(
+            "No compatible Python environment can import the proctoring dependencies. "
+            "Install AIML/requirements.txt in a project virtual environment and run this command again."
+        )
+    if python != Path(sys.executable).resolve():
+        print(f"Using the project's compatible Python environment: {python}")
+        return subprocess.run(
+            [str(python), str(Path(__file__).resolve()), *sys.argv[1:]],
+            cwd=project_dir,
+            check=False,
+        ).returncode
+
     proctoring_port = int(os.environ.get("PROCTORING_PORT", "5050"))
 
     print("🚀 Starting AIML services")
@@ -120,8 +166,7 @@ Examples:
         return setup_env()
     
     elif args.command == 'serve':
-        run_server(args.host, args.port)
-        return True
+        return run_server(args.host, args.port)
     
     elif args.command == 'analyze':
         cmd = [sys.executable, 'main.py', 'analyze-proctor']
@@ -153,4 +198,6 @@ Examples:
 
 if __name__ == '__main__':
     success = main()
-    sys.exit(0 if success else 1)
+    if success is False:
+        sys.exit(1)
+    sys.exit(success if type(success) is int else 0)
