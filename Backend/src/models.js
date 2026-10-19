@@ -171,6 +171,9 @@ const models = {
     regNo: "string",
     studentName: "string",
     type: "Technical | HR | General | Panel",
+    // Optional target role used to match questions to a job description.
+    jobRole: "string | null",
+    jobDescription: "string | null",
     mode: "online-proctored | in-person | hybrid",
     interviewer: "string",
     scheduledAt: "Date",
@@ -194,13 +197,19 @@ const models = {
     },
     // Resume-grounded interview plan (null until placement runs /prepare).
     plan: {
-      source: "llm | heuristic",
+      source: "llm | heuristic | topic-bank | hr-template",
       generatedAt: "Date",
       resumeAvailable: "boolean",
       resumeSummary: "string",
+      jobRole: "string | null",
+      jobDescription: "string | null",
       sections: "object",
+      topics: "string[]",
       rubric: "array",
       questions: "array",
+      // Question mix by focus, and coordinator-reviewable quality flags.
+      coverage: "object",
+      quality: "object",
       notes: "string"
     },
     // Candidate consent captured before the session starts.
@@ -223,12 +232,14 @@ const models = {
     report: {
       source: "llm | heuristic",
       generatedAt: "Date",
+      jobRole: "string | null",
       rubric: "object",
       overall: "number",
       strengths: "string[]",
       clarifications: "string[]",
       evidence: "array",
       summary: "string",
+      candidateSummary: "string",
       disclaimer: "string"
     },
     // Opt-in A/V recording reference (Supabase bucket/key); removed by retention.

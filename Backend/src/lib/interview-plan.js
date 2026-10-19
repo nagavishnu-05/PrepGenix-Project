@@ -30,10 +30,10 @@ const TOPIC_BANKS = [
 ];
 
 const RUBRIC = [
-  { key: "clarity", label: "Clarity of explanation" },
-  { key: "depth", label: "Depth of understanding" },
-  { key: "problemSolving", label: "Problem-solving approach" },
-  { key: "contribution", label: "Ability to describe personal contribution" },
+  { key: "technicalUnderstanding", label: "Technical understanding" },
+  { key: "reasoning", label: "Reasoning" },
+  { key: "communication", label: "Communication" },
+  { key: "relevance", label: "Relevance" },
 ];
 
 const SECTION_ALIASES = {
@@ -115,6 +115,26 @@ function dedupe(list) {
   return out;
 }
 
+/** Role / job-description context supplied by the coordinator (optional). */
+function roleContext(interview) {
+  const jobRole = cleanLine(interview?.jobRole);
+  const jobDescription = cleanLine(interview?.jobDescription).slice(0, 2000);
+  const roleKeywords = dedupe(
+    `${jobRole} ${jobDescription}`
+      .toLowerCase()
+      .split(/[^a-z0-9+#.]+/)
+      .filter((word) => word.length > 2 && !STOP_WORDS.has(word))
+  ).slice(0, 24);
+  return { jobRole, jobDescription, roleKeywords, present: Boolean(jobRole || jobDescription) };
+}
+
+const STOP_WORDS = new Set([
+  "and", "the", "for", "with", "you", "your", "will", "are", "our", "has", "have",
+  "who", "what", "when", "where", "this", "that", "from", "work", "team", "team",
+  "role", "position", "candidate", "experience", "years", "strong", "ability",
+  "must", "should", "required", "preferred", "including", "using", "knowledge",
+]);
+
 /** Turn a resume document + parsed sections into a compact fact sheet. */
 function resumeFacts(resume, sections) {
   const skillsFromText = toItems(sections.skills).flatMap((item) => item.split(/[,|/]/));
@@ -138,6 +158,93 @@ function makeQuestion(question) {
     focus: question.focus || "resume",
     basedOn: question.basedOn || "",
     followUps: (question.followUps || []).map(cleanLine).filter(Boolean).slice(0, 2),
+    flags: [],
+  };
+}
+
+const GENERIC_PATTERNS = [
+  /^tell me about yourself\.?$/i,
+  /^introduce yourself\.?$/i,
+  /^(what are your strengths|what are your weaknesses)\??$/i,
+  /^where do you see yourself in (five|5) years\??$/i,
+  /^why should we hire you\??$/i,
+  /^describe yourself\.?$/i,
+];
+
+function normalizeForCompare(text) {
+  return cleanLine(text).toLowerCase().replace(/[^a-z0-9 ]/g, "").replace(/\s+/g, " ").trim();
+}
+
+function tokenSet(text) {
+  return new Set(normalizeForCompare(text).split(" ").filter((w) => w.length > 2));
+}
+
+function jaccard(a, b) {
+  if (!a.size || !b.size) return 0;
+  let shared = 0;
+  for (const token of a) if (b.has(token)) shared += 1;
+  return shared / (a.size + b.size - shared);
+}
+
+/**
+ * Mark low-value questions so a coordinator can review and refresh the plan
+ * before it is delivered. Never removes questions on its own.
+ */
+function flagQuestions(questions, facts, role) {
+  const resumeText = [
+    ...(facts.skills || []),
+    ...(facts.projects || []),
+    ...(facts.experience || []),
+    ...(facts.achievements || []),
+    facts.summary,
+    facts.education,
+  ].filter(Boolean).join(" ").toLowerCase();
+
+  const seen = questions.map((question) => tokenSet(question.text));
+  questions.forEach((question, i) => {
+    const flags = [];
+    const text = normalizeForCompare(question.text);
+    if (GENERIC_PATTERNS.some((pattern) => pattern.test(question.text.trim()))) flags.push("generic");
+
+    for (let j = 0; j < i; j += 1) {
+      if (jaccard(seen[i], seen[j]) >= 0.7) { flags.push("duplicate"); break; }
+    }
+
+    const basis = `${question.basedOn || ""} ${question.focus || ""}`.toLowerCase();
+    const groundedInResume = ["resume", "project", "skill", "experience", "education", "achievement", "topic", "introduction", "candidate"].some((k) => basis.includes(k));
+    const groundedInRole = role?.present && ["role", "motivation", "job"].some((k) => basis.includes(k));
+    const mentionsResumeTerm = [...tokenSet(resumeText)].some((token) => text.includes(token));
+    if (!groundedInResume && !groundedInRole && !mentionsResumeTerm) flags.push("unsupported");
+
+    question.flags = [...new Set(flags)];
+  });
+  return questions;
+}
+
+/** Summarise question mix so coverage gaps are visible before delivery. */
+function coverageOf(questions) {
+  const coverage = {};
+  for (const question of questions) coverage[question.focus] = (coverage[question.focus] || 0) + 1;
+  return coverage;
+}
+
+function qualityOf(questions) {
+  const counts = { generic: 0, duplicate: 0, unsupported: 0 };
+  let flagged = 0;
+  for (const question of questions) {
+    if (question.flags?.length) flagged += 1;
+    for (const flag of question.flags || []) if (flag in counts) counts[flag] += 1;
+  }
+  return { total: questions.length, flagged, ...counts };
+}
+
+function finalizePlan(questions, facts, role) {
+  const list = questions.slice(0, MAX_QUESTION_COUNT);
+  flagQuestions(list, facts, role);
+  return {
+    questions: list,
+    coverage: coverageOf(list),
+    quality: qualityOf(list),
   };
 }
 
@@ -161,8 +268,10 @@ function topicMatchesResume(topic, facts, sections) {
   return topic.aliases.some((alias) => containsTerm(resumeText, alias));
 }
 
-function buildTechnicalPlan(facts, sections) {
-  const matchedTopics = TOPIC_BANKS.filter((topic) => topicMatchesResume(topic, facts, sections)).slice(0, 4);
+function buildTechnicalPlan(facts, sections, role) {
+  const matchedTopics = TOPIC_BANKS.filter((topic) => topicMatchesResume(topic, facts, sections))
+    .sort((a, b) => roleBias(b, role) - roleBias(a, role))
+    .slice(0, 4);
   const questions = [
     makeQuestion({
       text: "Choose one technical project or piece of work from your resume. What problem did it solve, what was your individual contribution, and how did you verify the result?",
@@ -171,6 +280,16 @@ function buildTechnicalPlan(facts, sections) {
       followUps: ["Which technical decision had the largest impact on the result?"],
     }),
   ];
+
+  if (role?.present) {
+    const target = role.jobRole || "this role";
+    questions.push(makeQuestion({
+      text: `This interview is for ${target}. Looking at your own resume, which two experiences best match what the role needs, and why?`,
+      focus: "role",
+      basedOn: `Role: ${truncate(target, 80)}`,
+      followUps: ["What is the closest gap between that experience and the role, and how would you close it?"],
+    }));
+  }
 
   for (const [topicIndex, topic] of matchedTopics.entries()) {
     const listedSkill = (facts.skills || []).find((skill) => topic.aliases.some((alias) => containsTerm(skill.toLowerCase(), alias)));
@@ -222,7 +341,14 @@ function buildTechnicalPlan(facts, sections) {
   };
 }
 
-function buildHrPlan(facts) {
+/** Prefer topic banks whose aliases also appear in the job description. */
+function roleBias(topic, role) {
+  if (!role?.present) return 0;
+  return topic.aliases.filter((alias) => role.roleKeywords.includes(alias)).length;
+}
+
+function buildHrPlan(facts, role) {
+  const target = role?.jobRole || "this role";
   const questions = [
     makeQuestion({
       text: `Please introduce yourself and connect your background${facts.education ? `, including ${truncate(facts.education, 100)}` : ""} to the kind of role you are seeking.`,
@@ -231,9 +357,9 @@ function buildHrPlan(facts) {
       followUps: ["Which experience best prepared you for this role?"],
     }),
     makeQuestion({
-      text: "What attracted you to this role, and what are you hoping to learn or contribute in your first year?",
+      text: `What attracted you to ${target}, and what are you hoping to learn or contribute in your first year?`,
       focus: "motivation",
-      basedOn: "Role motivation",
+      basedOn: role?.present ? `Role: ${truncate(target, 80)}` : "Role motivation",
       followUps: ["What would you want to accomplish first?"],
     }),
     makeQuestion({
@@ -271,7 +397,7 @@ function buildHrPlan(facts) {
 }
 
 /** Deterministic, resume-grounded plan used when no LLM is available. */
-function buildHeuristicPlan(facts) {
+function buildHeuristicPlan(facts, role) {
   const questions = [];
   questions.push(makeQuestion({
     text: "To begin, please give a short introduction and highlight the parts of your background you would most like to discuss today.",
@@ -279,6 +405,16 @@ function buildHeuristicPlan(facts) {
     basedOn: "Introduction",
     followUps: ["Which of these areas do you feel strongest about, and why?"],
   }));
+
+  if (role?.present) {
+    const target = role.jobRole || "this role";
+    questions.push(makeQuestion({
+      text: `This conversation is about ${target}. From your own resume, which experiences are most relevant to it, and what would you most need to learn?`,
+      focus: "role",
+      basedOn: `Role: ${truncate(target, 80)}`,
+      followUps: ["What is the biggest gap between that experience and the role?"],
+    }));
+  }
 
   for (const project of facts.projects.slice(0, 3)) {
     questions.push(makeQuestion({
@@ -364,21 +500,25 @@ function validatePlan(raw) {
 }
 
 const PLAN_SYSTEM_PROMPT =
-  "You are an experienced interviewer preparing a GENERAL interview based only on a candidate's resume. " +
+  "You are an experienced interviewer preparing an interview grounded in a candidate's resume, optionally matched to a target job role. " +
   "Rules you must follow:\n" +
-  "1. Ground every question in something the resume actually states; never invent experience, employers, or skills.\n" +
+  "1. Ground every question in something the resume (or the stated job role) actually says; never invent experience, employers, or skills.\n" +
   "2. Ask about the candidate's own contributions, decisions, challenges, and results.\n" +
   "3. Treat a listed skill as a claim to explore, not as proven ability.\n" +
-  "4. Keep questions neutral and non-leading, and cover the resume in a balanced way.\n" +
-  "5. Include one short opening question and one closing question.\n" +
-  "6. For each question provide at most 2 follow-up questions that clarify the answer or probe a resume claim.\n" +
+  "4. When a job role/description is provided, prioritise questions that test how the candidate's real experience matches what that role needs; do not invent matching experience.\n" +
+  "5. Keep questions neutral and non-leading, and cover the resume in a balanced way. Avoid generic icebreakers such as 'tell me about yourself'.\n" +
+  "6. Include one short opening question and one closing question. Keep any logistics/motivation questions separate from technical-depth questions.\n" +
+  "7. Do not ask two questions that are near-duplicates of each other.\n" +
+  "8. For each question provide at most 2 follow-up questions that clarify the answer or probe a resume claim.\n" +
   "Return ONLY valid JSON, no prose, matching this schema: " +
-  '{"summary": string, "questions": [{"text": string, "focus": "opening|project|skill|experience|education|achievement|closing", "basedOn": string, "followUps": string[]}]}.';
+  '{"summary": string, "questions": [{"text": string, "focus": "opening|role|project|skill|experience|education|achievement|technical|motivation|logistics|closing", "basedOn": string, "followUps": string[]}]}.';
 
-async function buildLlmPlan(interview, facts) {
+async function buildLlmPlan(interview, facts, role) {
   const payload = {
     candidate: facts.name,
     intendedField: facts.topCategory,
+    jobRole: role?.jobRole || null,
+    jobDescription: role?.jobDescription || null,
     summary: facts.summary,
     education: facts.education,
     skills: facts.skills,
@@ -390,7 +530,7 @@ async function buildLlmPlan(interview, facts) {
   const raw = await llm.chatJson(
     [
       { role: "system", content: PLAN_SYSTEM_PROMPT },
-      { role: "user", content: `Candidate resume facts (JSON):\n${JSON.stringify(payload, null, 2)}\n\nProduce 6-9 questions.` },
+      { role: "user", content: `Candidate facts (JSON):\n${JSON.stringify(payload, null, 2)}\n\nProduce 6-9 questions.` },
     ],
     { temperature: 0.5, maxTokens: 1800 }
   );
@@ -406,47 +546,52 @@ async function buildLlmPlan(interview, facts) {
 async function generateQuestionPlan(interview, resume) {
   const sections = splitResumeSections(resume.text);
   const facts = resumeFacts(resume, sections);
+  const role = roleContext(interview);
+  const baseSections = {
+    education: truncate(facts.education, 600),
+    skills: facts.skills,
+    projects: facts.projects,
+    experience: facts.experience,
+    achievements: facts.achievements,
+  };
+  const roleField = role.present ? { jobRole: role.jobRole, jobDescription: truncate(role.jobDescription, 600) } : {};
 
   const type = String(interview.type || "General").trim().toLowerCase();
   if (type === "technical" || type === "tech") {
-    const technical = buildTechnicalPlan(facts, sections);
+    const technical = buildTechnicalPlan(facts, sections, role);
+    const finalized = finalizePlan(technical.questions, facts, role);
     return {
       source: "topic-bank",
       generatedAt: new Date(),
       resumeAvailable: true,
       resumeSummary: truncate(facts.summary, 400),
-      sections: {
-        education: truncate(facts.education, 600),
-        skills: facts.skills,
-        projects: facts.projects,
-        experience: facts.experience,
-        achievements: facts.achievements,
-      },
+      ...roleField,
+      sections: baseSections,
       topics: technical.topics,
       rubric: RUBRIC,
-      questions: technical.questions,
+      questions: finalized.questions,
+      coverage: finalized.coverage,
+      quality: finalized.quality,
       notes: technical.topics.length
         ? `Technical questions use resume-matched topic banks: ${technical.topics.join(", ")}.`
         : "Technical questions use the skills and projects identified in the resume; no supplied topic matched explicitly.",
     };
   }
   if (type === "hr") {
-    const hr = buildHrPlan(facts);
+    const hr = buildHrPlan(facts, role);
+    const finalized = finalizePlan(hr.questions, facts, role);
     return {
       source: "hr-template",
       generatedAt: new Date(),
       resumeAvailable: true,
       resumeSummary: truncate(facts.summary, 400),
-      sections: {
-        education: truncate(facts.education, 600),
-        skills: facts.skills,
-        projects: facts.projects,
-        experience: facts.experience,
-        achievements: facts.achievements,
-      },
+      ...roleField,
+      sections: baseSections,
       topics: [],
       rubric: RUBRIC,
-      questions: hr.questions,
+      questions: finalized.questions,
+      coverage: finalized.coverage,
+      quality: finalized.quality,
       notes: "HR questions cover motivation, teamwork, self-awareness, and role logistics.",
     };
   }
@@ -456,7 +601,7 @@ async function generateQuestionPlan(interview, resume) {
   let summary = "";
   if (llm.available()) {
     try {
-      const result = await buildLlmPlan(interview, facts);
+      const result = await buildLlmPlan(interview, facts, role);
       if (result) {
         source = "llm";
         questions = result.questions;
@@ -466,22 +611,20 @@ async function generateQuestionPlan(interview, resume) {
       console.error("LLM interview plan failed, using heuristic:", error.message);
     }
   }
-  if (!questions) questions = buildHeuristicPlan(facts);
+  if (!questions) questions = buildHeuristicPlan(facts, role);
+  const finalized = finalizePlan(questions, facts, role);
 
   return {
     source,
     generatedAt: new Date(),
     resumeAvailable: true,
     resumeSummary: summary || truncate(facts.summary, 400),
-    sections: {
-      education: truncate(facts.education, 600),
-      skills: facts.skills,
-      projects: facts.projects,
-      experience: facts.experience,
-      achievements: facts.achievements,
-    },
+    ...roleField,
+    sections: baseSections,
     rubric: RUBRIC,
-    questions,
+    questions: finalized.questions,
+    coverage: finalized.coverage,
+    quality: finalized.quality,
     notes: source === "llm"
       ? "Generated by the configured language model from the candidate's resume."
       : "Generated from the resume using a deterministic template (no language model configured).",
@@ -522,13 +665,75 @@ async function generateFollowUp(interview, plan, question, answerText) {
   }
 }
 
+function wordCount(text) {
+  return String(text || "").trim().split(/\s+/).filter(Boolean).length;
+}
+
+/**
+ * Decide what the interviewer should do next, given the candidate's answer.
+ * Returns { action: "followup"|"advance", followUp?: string, reason }.
+ * Follow-ups are capped at one per question so the same point is not probed
+ * twice. Uses the plan's pre-written follow-up when present, an LLM one when
+ * available, and otherwise advances.
+ */
+async function decideNextAction(interview, plan, question, answerText, alreadyAskedFollowUp) {
+  if (alreadyAskedFollowUp) {
+    return { action: "advance", reason: "follow_up_already_asked" };
+  }
+  const planned = question.followUps?.[0] || null;
+  const words = wordCount(answerText);
+
+  // A thin answer deserves a clarification before moving on.
+  if (words > 0 && words < 15) {
+    const followUp = planned || await generateFollowUp(interview, plan, question, answerText);
+    if (followUp) return { action: "followup", followUp, reason: "short_answer" };
+    return { action: "advance", reason: "short_answer_no_followup" };
+  }
+
+  if (llm.available()) {
+    try {
+      const raw = await llm.chatJson(
+        [
+          {
+            role: "system",
+            content:
+              "You are an interviewer. Decide the single best next move after the candidate's answer. " +
+              'Return ONLY JSON: {"action": "followup"|"advance", "followUp": string}. ' +
+              'Use "followup" only if one short follow-up would meaningfully clarify or probe their answer; otherwise "advance". ' +
+              "When advancing, set followUp to an empty string. Never repeat a point already covered.",
+          },
+          {
+            role: "user",
+            content:
+              `Resume skills/projects: ${JSON.stringify({ skills: plan?.sections?.skills || [], projects: plan?.sections?.projects || [] })}\n` +
+              `Question: ${question.text}\nCandidate answer: ${answerText}`,
+          },
+        ],
+        { temperature: 0.4, maxTokens: 200 }
+      );
+      if (raw?.action === "followup") {
+        const text = cleanLine(raw.followUp);
+        if (text.length >= 8) return { action: "followup", followUp: text, reason: "llm" };
+      }
+      if (raw?.action === "advance") return { action: "advance", reason: "llm" };
+    } catch (error) {
+      console.error("LLM next-action decision failed:", error.message);
+    }
+  }
+
+  if (planned) return { action: "followup", followUp: planned, reason: "planned_followup" };
+  return { action: "advance", reason: "no_followup" };
+}
+
 module.exports = {
   generateQuestionPlan,
   generateFollowUp,
+  decideNextAction,
   splitResumeSections,
   buildHeuristicPlan,
   buildTechnicalPlan,
   buildHrPlan,
+  roleContext,
   RUBRIC,
   MAX_QUESTION_COUNT,
 };

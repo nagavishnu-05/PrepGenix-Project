@@ -6,6 +6,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent } from "@/components/ui/card";
 import { CodeEditor } from "@/components/assessment/code-editor";
 import FaceAttentionOverlay from "@/components/assessment/face-attention-overlay";
+import { ProctoringStatusBar } from "@/components/assessment/proctoring-status-bar";
 import { DifficultyBadge, LoadingState } from "@/components/portal/primitives";
 import { StatusBadge } from "@/components/portal/status-badge";
 import { cn } from "@/lib/utils";
@@ -1035,24 +1036,13 @@ const codeBuffersRef = useRef({});
                 </div>
 
                 {proctored && (
-                    <div className="flex items-center gap-3">
-                        <span className={cn("flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs", proctoring.cameraActive ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-400" : "border-red-500/30 bg-red-500/10 text-red-400")}>
-                            {proctoring.cameraActive ? <Video className="h-3.5 w-3.5" /> : <VideoOff className="h-3.5 w-3.5" />}
-                            Cam
-                        </span>
-                        <span className={cn("flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs", faceStatus.tone)}>
-                            <ScanFace className="h-3.5 w-3.5" />
-                            {faceStatus.label}
-                        </span>
-                        <span className={cn("flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs", proctoring.micActive ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-400" : "border-red-500/30 bg-red-500/10 text-red-400")}>
-                            {proctoring.micActive ? <Mic className="h-3.5 w-3.5" /> : <MicOff className="h-3.5 w-3.5" />}
-                            Mic
-                        </span>
-                        <span className={cn("flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs", proctoring.fullscreenActive ? "border-slate-300 bg-slate-100 text-slate-600 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300" : "border-red-500/30 bg-red-500/10 text-red-400")}>
-                            <Maximize2 className="h-3.5 w-3.5" />
-                            {proctoring.fullscreenActive ? "Fullscreen" : "Not fullscreen"}
-                        </span>
-                    </div>
+                    <ProctoringStatusBar
+                        cameraActive={proctoring.cameraActive}
+                        micActive={proctoring.micActive}
+                        fullscreenActive={proctoring.fullscreenActive}
+                        faceLabel={faceStatus.label}
+                        faceTone={faceStatus.tone}
+                    />
                 )}
 
                 <span className="flex items-center gap-1.5 rounded-lg bg-slate-200 px-2.5 py-1 text-sm font-medium text-slate-800 dark:bg-zinc-800 dark:text-zinc-100">

@@ -14,8 +14,8 @@ const llm = require("./llm");
 const { RUBRIC } = require("./interview-plan");
 
 const DISCLAIMER =
-  "These are interview observations from a general, resume-based conversation. " +
-  "No job description was used, so this is not a job-fit score or a hiring recommendation.";
+  "These are interview observations from a resume-based conversation. " +
+  "This is a review aid, not a hiring decision or a job-fit score.";
 
 const ACTION_VERBS = /\b(led|designed|built|developed|implemented|created|optimized|improved|migrated|decided|chose|solved|debugged|tested|refactored|launched|shipped|managed|owned|automated|reduced|increased|researched|proposed|coordinated)\b/gi;
 const CHALLENGE_TERMS = /\b(challenge|difficult|problem|issue|bug|trade-?off|constraint|failure|failed|struggl|learned|mistake|obstacle)\b/gi;
@@ -63,24 +63,56 @@ function scoreRubric(plan, transcript) {
   const shortAnswers = allAnswers.filter((answer) => words(answer).length < 8).length;
   const unanswered = questions.filter((q) => !answers.has(q.id)).length;
 
-  const clarity = clampScore(3 + (avgWords >= 20 ? 1 : 0) + (avgWords >= 45 ? 0.5 : 0) - (shortAnswers ? 1 : 0) - (unanswered ? 0.5 : 0));
-  const depth = clampScore(3 + (specificity >= 2 ? 1 : 0) + (avgWords >= 30 ? 0.5 : 0) - (avgWords < 15 ? 1 : 0));
-  const problemSolving = clampScore(3 + (challenges >= 1 ? 1 : 0) + (actions >= 3 ? 1 : 0) - (challenges === 0 && actions === 0 ? 1 : 0));
-  const contribution = clampScore(3 + (firstPerson >= 2 ? 1 : 0) + (actions >= 2 ? 1 : 0) - (plural > firstPerson && firstPerson === 0 ? 1 : 0));
+  const technicalUnderstanding = clampScore(3 + (specificity >= 2 ? 1 : 0) + (avgWords >= 30 ? 0.5 : 0) - (avgWords < 15 ? 1 : 0));
+  const reasoning = clampScore(3 + (challenges >= 1 ? 1 : 0) + (actions >= 3 ? 1 : 0) - (challenges === 0 && actions === 0 ? 1 : 0));
+  const communication = clampScore(3 + (avgWords >= 20 ? 1 : 0) + (avgWords >= 45 ? 0.5 : 0) - (shortAnswers ? 1 : 0) - (unanswered ? 0.5 : 0));
+  const relevance = clampScore(3 + (firstPerson >= 2 ? 1 : 0) + (actions >= 2 ? 1 : 0) - (plural > firstPerson && firstPerson === 0 ? 1 : 0));
 
-  const scores = { clarity, depth, problemSolving, contribution };
+  const scores = { technicalUnderstanding, reasoning, communication, relevance };
   const rationales = {
-    clarity: avgWords ? `Average answer length was about ${Math.round(avgWords)} words${shortAnswers ? `, with ${shortAnswers} very short answer(s)` : ""}.` : "No answers were recorded.",
-    depth: specificity ? `The candidate cited ${specificity} concrete detail(s) such as figures or counts.` : "Answers stayed largely conceptual with few concrete details.",
-    problemSolving: challenges || actions ? `The candidate described ${challenges} challenge reference(s) and ${actions} action verb(s).` : "Little evidence of problem-solving or decision-making was described.",
-    contribution: firstPerson ? `First-person language appeared ${firstPerson} time(s), indicating ownership.` : "Answers rarely distinguished the candidate's own contribution from the team's.",
+    technicalUnderstanding: specificity ? `Cited ${specificity} concrete detail(s) such as figures or counts.` : "Answers stayed largely conceptual with few concrete details.",
+    reasoning: challenges || actions ? `Described ${challenges} challenge/trade-off reference(s) and ${actions} action verb(s).` : "Little evidence of problem-solving or decision-making was described.",
+    communication: avgWords ? `Average answer length was about ${Math.round(avgWords)} words${shortAnswers ? `, with ${shortAnswers} very short answer(s)` : ""}.` : "No answers were recorded.",
+    relevance: firstPerson ? `First-person language appeared ${firstPerson} time(s), linking answers to the candidate's own work.` : "Answers rarely distinguished the candidate's own contribution from the team's.",
   };
   return {
     rubric: Object.fromEntries(RUBRIC.map(({ key, label }) => [key, { label, score: scores[key], rationale: rationales[key] }])),
-    overall: Number(((clarity + depth + problemSolving + contribution) / 4).toFixed(2)),
+    overall: Number(((technicalUnderstanding + reasoning + communication + relevance) / 4).toFixed(2)),
     questionsAnswered: questions.length - unanswered,
     totalQuestions: questions.length,
+    scores,
   };
+}
+
+/** Short, candidate-facing summary of how the interview went and what to work on. */
+function buildCandidateSummary(scored, plan, transcript) {
+  const { scores } = scored;
+  const ranked = RUBRIC
+    .map(({ key, label }) => ({ key, label, score: scores[key] }))
+    .sort((a, b) => b.score - a.score);
+  const strongest = ranked[0];
+  const weakest = ranked[ranked.length - 1];
+  const answered = scored.questionsAnswered;
+  const total = scored.totalQuestions;
+
+  if (!total) return "No answers were recorded, so there is nothing to summarise yet.";
+  const coverageLine = answered === total
+    ? `You answered all ${total} questions.`
+    : `You answered ${answered} of ${total} planned questions.`;
+
+  const weakGuidance = {
+    technicalUnderstanding: "Add concrete specifics (numbers, tools, outcomes) when you describe your work.",
+    reasoning: "Walk through the trade-offs and decisions you made, not just the final result.",
+    communication: "Aim for structured answers: context, what you did, then the result.",
+    relevance: "Tie each answer back to your own contribution and to the role you are interviewing for.",
+  };
+
+  return [
+    coverageLine,
+    `Your strongest area was ${strongest.label.toLowerCase()} (score ${strongest.score}/5).`,
+    `An area to work on is ${weakest.label.toLowerCase()} (score ${weakest.score}/5): ${weakGuidance[weakest.key]}`,
+    "This is a practice-oriented summary of the conversation, not a hiring decision.",
+  ].join(" ");
 }
 
 function buildHeuristicBody(plan, transcript) {
@@ -117,12 +149,13 @@ function buildHeuristicBody(plan, transcript) {
 
 const REPORT_SYSTEM_PROMPT =
   "You are an interview analyst writing an evidence-based report for a placement coordinator. " +
-  "The interview was GENERAL and based only on the candidate's resume; no job description was used. " +
+  "The interview was grounded in the candidate's resume and, if provided, a target job role. " +
   "Summarise what the candidate actually said. Do not recommend hiring or rejection. " +
   "Base every claim on the transcript and quote the candidate where possible. " +
   "Score each rubric dimension from 1 (weak) to 5 (strong) and justify it. " +
+  "Also write a short, supportive, candidate-facing summary (2-3 sentences) of their strongest area and one concrete thing to improve. " +
   "Return ONLY valid JSON matching: " +
-  '{"rubric": {"clarity": {"score": number, "rationale": string}, "depth": {"score": number, "rationale": string}, "problemSolving": {"score": number, "rationale": string}, "contribution": {"score": number, "rationale": string}}, "strengths": string[], "clarifications": string[], "evidence": [{"point": string, "quote": string, "basedOn": string}], "summary": string}.';
+  '{"rubric": {"technicalUnderstanding": {"score": number, "rationale": string}, "reasoning": {"score": number, "rationale": string}, "communication": {"score": number, "rationale": string}, "relevance": {"score": number, "rationale": string}}, "strengths": string[], "clarifications": string[], "evidence": [{"point": string, "quote": string, "basedOn": string}], "summary": string, "candidateSummary": string}.';
 
 function sanitizeLlmReport(raw, plan, transcript) {
   if (!raw || typeof raw !== "object") return null;
@@ -147,6 +180,7 @@ function sanitizeLlmReport(raw, plan, transcript) {
       .map((item) => ({ point: String(item?.point || ""), quote: String(item?.quote || ""), basedOn: String(item?.basedOn || "") }))
       .slice(0, 12),
     summary: String(raw.summary || fallback.summary).slice(0, 1200),
+    candidateSummary: String(raw.candidateSummary || "").slice(0, 600),
   };
 }
 
@@ -157,6 +191,7 @@ function sanitizeLlmReport(raw, plan, transcript) {
 async function generateReport(interview, plan) {
   const transcript = interview.transcript || [];
   const scored = scoreRubric(plan, transcript);
+  const jobRole = String(plan?.jobRole || interview?.jobRole || "").trim();
   let source = "heuristic";
   let body = null;
 
@@ -172,6 +207,7 @@ async function generateReport(interview, plan) {
           {
             role: "user",
             content:
+              `Target job role: ${jobRole || "(not specified)"}\n` +
               `Resume sections (JSON):\n${JSON.stringify(plan?.sections || {}, null, 2)}\n\n` +
               `Interview transcript:\n${condensed || "(empty)"}\n\n` +
               "Write the report JSON.",
@@ -189,6 +225,7 @@ async function generateReport(interview, plan) {
   } else {
     source = "llm";
   }
+  if (!body.candidateSummary) body.candidateSummary = buildCandidateSummary(scored, plan, transcript);
 
   return {
     generatedAt: new Date(),
@@ -199,9 +236,13 @@ async function generateReport(interview, plan) {
     clarifications: body.clarifications || [],
     evidence: body.evidence || [],
     summary: body.summary || "",
+    candidateSummary: body.candidateSummary,
+    jobRole: jobRole || null,
     questionsAnswered: scored.questionsAnswered,
     totalQuestions: scored.totalQuestions,
-    disclaimer: DISCLAIMER,
+    disclaimer: jobRole
+      ? `${DISCLAIMER} Questions were matched to the target role "${jobRole}", but this report is not a job-fit score.`
+      : `${DISCLAIMER} No job description was provided, so role fit was not assessed.`,
   };
 }
 

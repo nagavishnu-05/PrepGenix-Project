@@ -17,11 +17,17 @@ import {
     ListChecks,
     Maximize,
     ScanFace,
+    RefreshCw,
+    Sun,
+    Languages,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { LoadingState } from "@/components/portal/primitives";
+import { AssessmentPausedOverlay } from "@/components/assessment/assessment-paused-overlay";
 import { api } from "@/lib/api";
 
 const SpeechRecognition =
@@ -68,6 +74,19 @@ export default function InterviewRoom() {
     const [micLevel, setMicLevel] = useState(0);
     const [online, setOnline] = useState(typeof navigator === "undefined" ? true : navigator.onLine);
 
+    const [cameras, setCameras] = useState([]);
+    const [selectedCameraId, setSelectedCameraId] = useState("");
+    const [checkingReadiness, setCheckingReadiness] = useState(false);
+    const [readiness, setReadiness] = useState({
+        lighting: "unknown",
+        face: "unknown",
+        monitor: "unknown",
+        checkedAt: 0,
+    });
+    const [readinessError, setReadinessError] = useState("");
+    const [now, setNow] = useState(Date.now());
+    const [speechLang, setSpeechLang] = useState("en-US");
+
     const [transcript, setTranscript] = useState([]);
     const [question, setQuestion] = useState(null);
     const [index, setIndex] = useState(0);
@@ -93,6 +112,7 @@ export default function InterviewRoom() {
     const [fullscreenActive, setFullscreenActive] = useState(false);
 
     const videoRef = useRef(null);
+    const readinessRanRef = useRef(false);
     const recognitionRef = useRef(null);
     const speechBaseRef = useRef("");
     const speechFinalRef = useRef("");
@@ -155,6 +175,39 @@ export default function InterviewRoom() {
             videoRef.current.play().catch(() => {});
         }
     }, [stream, step]);
+
+    // Keep a ticking clock so the readiness panel can show "checked Xs ago".
+    useEffect(() => {
+        if (step !== "check") return undefined;
+        const timer = window.setInterval(() => setNow(Date.now()), 1000);
+        return () => window.clearInterval(timer);
+    }, [step]);
+
+    // List available cameras so the candidate can pick one before starting.
+    useEffect(() => {
+        let cancelled = false;
+        const enumerate = async () => {
+            try {
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                if (cancelled) return;
+                const videoDevices = devices.filter((device) => device.kind === "videoinput");
+                setCameras(videoDevices);
+                setSelectedCameraId((current) => current || videoDevices[0]?.deviceId || "");
+            } catch {
+                setCameras([]);
+            }
+        };
+        if (step === "check" && navigator.mediaDevices?.enumerateDevices) void enumerate();
+        return () => { cancelled = true; };
+    }, [step, stream]);
+
+    // Run the readiness probe once as soon as a preview is available.
+    useEffect(() => {
+        if (step !== "check" || !stream || readinessRanRef.current) return;
+        readinessRanRef.current = true;
+        void runReadinessChecks();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [step, stream]);
 
     useEffect(() => () => {
         if (rafRef.current) cancelAnimationFrame(rafRef.current);
@@ -327,11 +380,16 @@ export default function InterviewRoom() {
         };
     }, [recordProctoringEvent, step, stream]);
 
-    const enableDevices = async (withCamera = true) => {
+    const enableDevices = async (withCamera = true, deviceId = selectedCameraId) => {
         setMediaError("");
         try {
+            // Release any previously active camera before requesting a new one.
+            stream?.getVideoTracks?.().forEach((track) => track.stop());
+            const videoConstraint = withCamera
+                ? (deviceId ? { deviceId: { exact: deviceId }, width: 640, height: 480 } : { width: 640, height: 480 })
+                : false;
             const media = await navigator.mediaDevices.getUserMedia({
-                video: withCamera ? { width: 640, height: 480 } : false,
+                video: videoConstraint,
                 audio: true,
             });
             setStream(media);
@@ -356,6 +414,71 @@ export default function InterviewRoom() {
         } catch (e) {
             setMediaError("Camera/microphone access was blocked. Please allow access in your browser and try again.");
             return null;
+        }
+    };
+
+    const changeCamera = async (deviceId) => {
+        setSelectedCameraId(deviceId);
+        await enableDevices(true, deviceId);
+    };
+
+    // One-shot readiness probe: brightness from the preview plus, best-effort, a
+    // single face check from the proctoring service so the candidate knows their
+    // face is visible before they start. Never blocks starting on monitor failure.
+    const runReadinessChecks = async () => {
+        setCheckingReadiness(true);
+        setReadinessError("");
+        try {
+            if (!stream) await enableDevices(true);
+
+            let lighting = "unknown";
+            const video = videoRef.current;
+            if (video?.videoWidth) {
+                const canvas = document.createElement("canvas");
+                canvas.width = 32;
+                canvas.height = 32;
+                const ctx = canvas.getContext("2d");
+                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                let sum = 0;
+                for (let i = 0; i < data.length; i += 4) {
+                    sum += 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+                }
+                const brightness = sum / (data.length / 4);
+                lighting = brightness < 45 ? "too_dark" : brightness > 220 ? "too_bright" : "good";
+            }
+
+            let face = "skipped";
+            let monitor = "skipped";
+            const base = import.meta.env.VITE_PROCTORING_API || "http://localhost:5050";
+            try {
+                const canvas = document.createElement("canvas");
+                canvas.width = 320;
+                canvas.height = Math.max(1, Math.round((video.videoHeight / video.videoWidth) * canvas.width));
+                canvas.getContext("2d").drawImage(video, 0, 0, canvas.width, canvas.height);
+                const image = canvas.toDataURL("image/jpeg", 0.65).split(",")[1];
+                const response = await fetch(`${base}/monitor`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ image, attemptId: `interview_${id}_readiness`, cameraActive: true }),
+                });
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                const result = await response.json();
+                monitor = "ok";
+                face = result.face_present && Number(result.face_count || 0) === 1 ? "good"
+                    : result.face_present ? "multiple" : "not_found";
+            } catch {
+                monitor = "unavailable";
+                face = "unknown";
+            }
+
+            setReadiness({ lighting, face, monitor, checkedAt: Date.now() });
+            if (lighting === "too_dark") setReadinessError("It looks dark. Add light facing you so your face is clearly visible.");
+            else if (lighting === "too_bright") setReadinessError("It looks too bright. Reduce backlight or move away from a bright window.");
+            else if (face === "not_found") setReadinessError("No face was detected. Face the camera directly and try again.");
+            else if (face === "multiple") setReadinessError("More than one face was detected. Only you should be in view.");
+        } finally {
+            setCheckingReadiness(false);
         }
     };
 
@@ -501,7 +624,7 @@ export default function InterviewRoom() {
         const recognition = new SpeechRecognition();
         recognition.continuous = true;
         recognition.interimResults = true;
-        recognition.lang = "en-US";
+        recognition.lang = speechLang;
         speechBaseRef.current = answer.trimEnd();
         speechFinalRef.current = "";
         speechManuallyEditedRef.current = false;
@@ -566,7 +689,8 @@ export default function InterviewRoom() {
         setBusy(true);
         try {
             await stopRecordingAndUpload();
-            await api.interviews.complete(id);
+            const res = await api.interviews.complete(id);
+            if (res) setInterview(res);
             if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
             setDone(true);
             setStep("done");
@@ -625,6 +749,11 @@ export default function InterviewRoom() {
                         <p className="text-sm text-slate-600 dark:text-zinc-400">
                             Your responses were saved. The coordinator can review the interview and its report.
                         </p>
+                        {interview?.report?.candidateSummary && (
+                            <p className="rounded-lg border border-violet-200 bg-violet-50/60 p-3 text-sm text-violet-900 dark:border-violet-500/30 dark:bg-violet-500/10 dark:text-violet-200">
+                                {interview.report.candidateSummary}
+                            </p>
+                        )}
                         <Button onClick={() => navigate("/student/interviews")}>
                             <ArrowLeft className="h-4 w-4" /> Back to interviews
                         </Button>
@@ -668,10 +797,11 @@ export default function InterviewRoom() {
                                 <span className="font-medium text-slate-800 dark:text-zinc-200">camera and microphone are used live</span> during the
                                 session for strict proctoring and the Placement Coordinator can review the interview and proctoring events.
                             </p>
-                            <p>
-                                Your answers are transcribed so a report can be prepared for the coordinator. You choose separately below whether to
-                                also record audio/video.
-                            </p>
+                            <ul className="list-disc space-y-1 pl-5">
+                                <li>During the session, a small camera frame is checked every couple of seconds for whether a face is visible, whether you look away, and whether a prohibited device is in view.</li>
+                                <li>Your answers are transcribed so a report can be prepared for the coordinator. A microphone level is shown so you can confirm it works; it is not used to judge answer quality.</li>
+                                <li>Recording audio/video is optional and separate from the camera check below. If you enable it, it is deleted automatically after the retention period.</li>
+                            </ul>
                             <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
                                 The interview pauses when a confirmed proctoring issue is detected. Three distinct confirmed violations terminate the session. Camera-based signals can be imperfect and are available to the coordinator for review.
                             </p>
@@ -726,23 +856,41 @@ export default function InterviewRoom() {
     }
 
     if (step === "check") {
+        const checkedSecondsAgo = readiness.checkedAt ? Math.max(0, Math.round((now - readiness.checkedAt) / 1000)) : null;
         return (
             <div className="mx-auto max-w-3xl space-y-4">
                 <Card className="border-slate-200/80 dark:border-zinc-800/80 bg-white/70 dark:bg-zinc-900/40">
                     <CardContent className="space-y-5 p-6">
-                        <h1 className="text-xl font-bold text-slate-900 dark:text-white">Device &amp; connection check</h1>
+                        <h1 className="text-xl font-bold text-slate-900 dark:text-white">Camera &amp; microphone check</h1>
                         <p className="text-sm text-slate-600 dark:text-zinc-400">
-                            Confirm your camera, microphone, and connection before starting. The coordinator can join the live session.
+                            Confirm your camera, lighting, microphone, and connection before starting. You can re-run these checks as often as you like.
                         </p>
                         <div className="grid gap-4 sm:grid-cols-2">
-                            <div className="overflow-hidden rounded-lg border border-slate-200 bg-slate-900 dark:border-zinc-800">
-                                {stream && consent.camera ? (
-                                    <video ref={videoRef} autoPlay muted playsInline className="aspect-video w-full object-cover" />
-                                ) : (
-                                    <div className="flex aspect-video items-center justify-center text-slate-500">
-                                        <VideoOff className="h-8 w-8" />
+                            <div className="space-y-2">
+                                {cameras.length > 1 && (
+                                    <div className="space-y-1.5">
+                                        <Label className="text-xs text-zinc-400">Camera</Label>
+                                        <Select value={selectedCameraId} onValueChange={(value) => changeCamera(value)}>
+                                            <SelectTrigger><SelectValue placeholder="Select a camera" /></SelectTrigger>
+                                            <SelectContent>
+                                                {cameras.map((camera) => (
+                                                    <SelectItem key={camera.deviceId} value={camera.deviceId}>
+                                                        {camera.label || `Camera ${camera.deviceId.slice(0, 6)}`}
+                                                    </SelectItem>
+                                                ))}
+                                            </SelectContent>
+                                        </Select>
                                     </div>
                                 )}
+                                <div className="overflow-hidden rounded-lg border border-slate-200 bg-slate-900 dark:border-zinc-800">
+                                    {stream && consent.camera ? (
+                                        <video ref={videoRef} autoPlay muted playsInline className="aspect-video w-full object-cover" />
+                                    ) : (
+                                        <div className="flex aspect-video items-center justify-center text-slate-500">
+                                            <VideoOff className="h-8 w-8" />
+                                        </div>
+                                    )}
+                                </div>
                             </div>
                             <div className="space-y-3">
                                 <div className="space-y-1">
@@ -758,6 +906,60 @@ export default function InterviewRoom() {
                                     <StatusPill ok={liveMicrophone} onLabel="Mic ready" offLabel="No mic" onIcon={Mic} offIcon={MicOff} />
                                     <StatusPill ok={online} onLabel="Online" offLabel="Offline" onIcon={Wifi} offIcon={WifiOff} />
                                 </div>
+
+                                <div className="space-y-2 rounded-lg border border-slate-200 p-3 dark:border-zinc-800">
+                                    <div className="flex items-center justify-between">
+                                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-zinc-500">Readiness</p>
+                                        <span className="text-xs text-slate-400 dark:text-zinc-600">
+                                            {checkedSecondsAgo == null ? "not checked yet" : `checked ${checkedSecondsAgo}s ago`}
+                                        </span>
+                                    </div>
+                                    <div className="flex flex-wrap gap-2">
+                                        <StatusPill
+                                            ok={readiness.lighting === "good"}
+                                            onLabel={readiness.lighting === "good" ? "Lighting good" : readiness.lighting === "too_dark" ? "Too dark" : readiness.lighting === "too_bright" ? "Too bright" : "Lighting ?"}
+                                            offIcon={Sun}
+                                            onIcon={CheckCircle2}
+                                        />
+                                        <StatusPill
+                                            ok={readiness.face === "good" || readiness.face === "skipped"}
+                                            onLabel={readiness.face === "good" ? "Face visible" : readiness.face === "multiple" ? "Multiple faces" : readiness.face === "not_found" ? "No face found" : readiness.face === "unavailable" ? "Face check off" : "Face ?"}
+                                            offIcon={AlertTriangle}
+                                            onIcon={ScanFace}
+                                        />
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <Button variant="outline" size="sm" onClick={runReadinessChecks} disabled={checkingReadiness} type="button">
+                                            {checkingReadiness ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />} Run checks again
+                                        </Button>
+                                        {readiness.monitor === "unavailable" && (
+                                            <span className="text-xs text-amber-600 dark:text-amber-400">AI monitor offline — checks are limited to your camera preview.</span>
+                                        )}
+                                    </div>
+                                    {readinessError && <p className="text-xs text-amber-700 dark:text-amber-300">{readinessError}</p>}
+                                </div>
+
+                                <div className="space-y-1.5">
+                                    <Label className="text-xs text-zinc-400">Speech-to-text language</Label>
+                                    <Select value={speechLang} onValueChange={setSpeechLang}>
+                                        <SelectTrigger><SelectValue /></SelectTrigger>
+                                        <SelectContent>
+                                            {[
+                                                ["en-US", "English (US)"],
+                                                ["en-GB", "English (UK)"],
+                                                ["hi-IN", "Hindi"],
+                                                ["ta-IN", "Tamil"],
+                                                ["te-IN", "Telugu"],
+                                                ["kn-IN", "Kannada"],
+                                                ["ml-IN", "Malayalam"],
+                                            ].map(([value, label]) => (
+                                                <SelectItem key={value} value={value}>{label}</SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
+                                    <p className="text-xs text-slate-400 dark:text-zinc-600">You can always type your answer instead.</p>
+                                </div>
+
                                 {!stream && (
                                     <Button variant="outline" onClick={() => enableDevices(true)}>
                                         <Video className="h-4 w-4" /> Enable devices
@@ -792,38 +994,26 @@ export default function InterviewRoom() {
                 </div>
             )}
             {(pausedReason || !canContinue) && (
-                <Card className="border-amber-300 bg-amber-50 dark:border-amber-500/40 dark:bg-amber-500/10">
-                    <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
-                        <div className="flex items-start gap-3">
-                            <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600 dark:text-amber-400" />
-                            <div>
-                                <p className="font-semibold text-amber-900 dark:text-amber-200">
-                                    Interview paused · {violationCount}/3 confirmed violations
-                                </p>
-                                <p className="text-sm text-amber-800 dark:text-amber-300">
-                                    {pausedReason || (!proctorSignal.connected
-                                        ? "Waiting for the AI camera monitor. Answers remain locked until monitoring is available."
-                                        : !fullscreenActive
-                                            ? "Re-enter fullscreen to continue."
-                                            : "Waiting for a clear camera, face, and device check.")}
-                                </p>
-                                {proctorError && <p className="mt-1 text-sm text-red-700 dark:text-red-300">{proctorError}</p>}
-                                {mediaError && <p className="mt-1 text-sm text-red-700 dark:text-red-300">{mediaError}</p>}
-                                {error && <p className="mt-1 text-sm text-red-700 dark:text-red-300">{error}</p>}
-                            </div>
-                        </div>
-                        <div className="flex flex-wrap gap-2">
-                            {(!liveCamera || !liveMicrophone) && (
-                                <Button variant="outline" onClick={() => enableDevices(true)} disabled={busy} type="button">
-                                    <Video className="h-4 w-4" /> Re-enable camera &amp; mic
-                                </Button>
-                            )}
-                            <Button onClick={resumeAfterProctoring} disabled={!canResume || busy} type="button">
-                                <Maximize className="h-4 w-4" /> Resume when compliant
-                            </Button>
-                        </div>
-                    </CardContent>
-                </Card>
+                <AssessmentPausedOverlay
+                    title={`Interview paused · ${violationCount}/3 confirmed violations`}
+                    message={
+                        pausedReason ||
+                        (!proctorSignal.connected
+                            ? "Waiting for the AI camera monitor. Answers remain locked until monitoring is available."
+                            : !fullscreenActive
+                                ? "Re-enter fullscreen to continue."
+                                : "Waiting for a clear camera, face, and device check.")
+                    }
+                    proctorError={proctorError && !pausedReason ? proctorError : undefined}
+                    mediaError={mediaError}
+                    error={error}
+                    showReenableCamera={!liveCamera || !liveMicrophone}
+                    onReenableCamera={() => enableDevices(true)}
+                    canResume={canResume}
+                    onResume={resumeAfterProctoring}
+                    resumeLabel="Resume when compliant"
+                    disabled={busy}
+                />
             )}
             <div className="grid gap-4 lg:grid-cols-3">
                 <div className="space-y-4 lg:col-span-2">

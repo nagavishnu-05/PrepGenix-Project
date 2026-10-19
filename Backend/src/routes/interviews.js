@@ -7,7 +7,7 @@ const { authenticate } = require("../middleware/auth");
 const { pushInterview } = require("../perf");
 const llm = require("../lib/llm");
 const storage = require("../lib/storage");
-const { generateQuestionPlan, generateFollowUp } = require("../lib/interview-plan");
+const { generateQuestionPlan, decideNextAction } = require("../lib/interview-plan");
 const { generateReport } = require("../lib/interview-report");
 
 const router = express.Router();
@@ -213,6 +213,8 @@ router.post("/", authenticate, async (req, res) => {
       interviewer,
       mode,
       proctoring,
+      jobRole,
+      jobDescription,
     } = req.body;
     const studentRegNos = [...new Set(
       (Array.isArray(regNos) ? regNos : [regNo])
@@ -230,6 +232,8 @@ router.post("/", authenticate, async (req, res) => {
     let groupId = typeof requestedGroupId === "string" ? requestedGroupId.trim() : "";
     let groupName = typeof interviewName === "string" ? interviewName.trim().slice(0, 120) : "";
     let interviewType = type || "Technical";
+    let groupJobRole = typeof jobRole === "string" ? jobRole.trim().slice(0, 120) : "";
+    let groupJobDescription = typeof jobDescription === "string" ? jobDescription.trim().slice(0, 2000) : "";
     if (groupId) {
       let groupInterview = await col("interviews").findOne({ groupId });
       if (!groupInterview) {
@@ -237,6 +241,8 @@ router.post("/", authenticate, async (req, res) => {
         if (groupInterview && !groupInterview.groupId) {
           groupName = groupInterview.interviewName || groupName;
           interviewType = groupInterview.type || interviewType;
+          groupJobRole = groupJobRole || groupInterview.jobRole || "";
+          groupJobDescription = groupJobDescription || groupInterview.jobDescription || "";
           const legacyGroup = {
             type: groupInterview.type,
             scheduledAt: groupInterview.scheduledAt,
@@ -250,6 +256,8 @@ router.post("/", authenticate, async (req, res) => {
       if (!groupInterview) return res.status(404).json({ error: "Interview group not found" });
       groupName = groupInterview.interviewName || groupName;
       interviewType = groupInterview.type || interviewType;
+      groupJobRole = groupJobRole || groupInterview.jobRole || "";
+      groupJobDescription = groupJobDescription || groupInterview.jobDescription || "";
       if (!groupName) return res.status(400).json({ error: "The selected interview group has no name" });
     } else {
       if (!groupName) return res.status(400).json({ error: "Interview name is required" });
@@ -289,6 +297,8 @@ router.post("/", authenticate, async (req, res) => {
         interviewName: groupName,
         groupId,
         type: interviewType,
+        jobRole: groupJobRole || null,
+        jobDescription: groupJobDescription || null,
         mode: mode || "online-proctored",
         interviewer: interviewer || req.user.username,
         scheduledAt: parsedSchedule,
@@ -480,14 +490,18 @@ router.post("/:id/answer", authenticate, async (req, res) => {
     const answeringFollowUp = String(questionId) !== baseId;
     const followUpAsked = transcript.some((turn) => turn.role === "bot" && turn.questionId === followUpId);
 
+    const decision = await decideNextAction(
+      interview,
+      interview.plan,
+      question,
+      answer,
+      answeringFollowUp || followUpAsked
+    );
+
     let nextQuestion = null;
     let nextIndex = index;
-    if (!answeringFollowUp && !followUpAsked) {
-      let followUpText = question.followUps?.[0] || null;
-      if (!followUpText) followUpText = await generateFollowUp(interview, interview.plan, question, answer);
-      if (followUpText) {
-        nextQuestion = { id: followUpId, text: followUpText, focus: "followup", basedOn: question.basedOn || "", isFollowUp: true };
-      }
+    if (decision.action === "followup" && decision.followUp) {
+      nextQuestion = { id: followUpId, text: decision.followUp, focus: "followup", basedOn: question.basedOn || "", isFollowUp: true };
     }
     if (!nextQuestion) {
       const following = questions[index + 1];
