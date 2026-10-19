@@ -90,6 +90,101 @@ router.get("/", authenticate, async (req, res) => {
   }
 });
 
+// GET /api/interviews/groups/:groupId/analytics (placement) summarize a named round
+router.get("/groups/:groupId/analytics", authenticate, async (req, res) => {
+  try {
+    if (req.user.role !== "placement") return res.status(403).json({ error: "Placement Coordinator only" });
+
+    let group = await col("interviews").findOne({ groupId: req.params.groupId });
+    let members;
+    if (group) {
+      members = await col("interviews").find({ groupId: req.params.groupId }).sort({ scheduledAt: 1 }).toArray();
+    } else {
+      const representative = await loadInterview(req.params.groupId);
+      if (!representative) return res.status(404).json({ error: "Interview group not found" });
+      const scheduledAt = new Date(representative.scheduledAt);
+      members = await col("interviews").find({
+        type: representative.type,
+        scheduledAt,
+        groupId: { $exists: false },
+      }).sort({ scheduledAt: 1 }).toArray();
+      group = representative;
+    }
+
+    const statusCounts = {};
+    const violationTypes = {};
+    let ratingTotal = 0;
+    let ratingCount = 0;
+    let reportScoreTotal = 0;
+    let reportScoreCount = 0;
+    let answeredTotal = 0;
+    let questionTotal = 0;
+    let violationTotal = 0;
+
+    const candidates = members.map((interview) => {
+      statusCounts[interview.status] = (statusCounts[interview.status] || 0) + 1;
+      if (interview.rating != null && Number.isFinite(Number(interview.rating))) {
+        ratingTotal += Number(interview.rating);
+        ratingCount += 1;
+      }
+      if (interview.report?.overall != null && Number.isFinite(Number(interview.report.overall))) {
+        reportScoreTotal += Number(interview.report.overall);
+        reportScoreCount += 1;
+      }
+      const answeredCount = Number(interview.session?.answeredCount) || 0;
+      const plannedQuestions = interview.plan?.questions?.length || 0;
+      answeredTotal += answeredCount;
+      questionTotal += plannedQuestions;
+
+      const events = Array.isArray(interview.proctoringEvents) ? interview.proctoringEvents : [];
+      const countedViolations = events.filter((event) => event.counted).length;
+      violationTotal += countedViolations;
+      for (const event of events) {
+        if (!event.counted) continue;
+        violationTypes[event.type] = (violationTypes[event.type] || 0) + 1;
+      }
+
+      return {
+        id: interview._id.toString(),
+        studentName: interview.studentName,
+        regNo: interview.regNo,
+        status: interview.status,
+        rating: interview.rating ?? null,
+        reportScore: interview.report?.overall ?? null,
+        answeredCount,
+        plannedQuestions,
+        violationCount: interview.proctoringViolationCount || 0,
+        updatedAt: interview.updatedAt || interview.scheduledAt,
+      };
+    });
+
+    res.json({
+      group: {
+        id: group.groupId || group._id.toString(),
+        name: group.interviewName || `${group.type || "Interview"} Interview`,
+        type: group.type || "Technical",
+        scheduledAt: group.scheduledAt,
+        interviewer: group.interviewer || "",
+      },
+      stats: {
+        total: members.length,
+        statuses: statusCounts,
+        averageRating: ratingCount ? Number((ratingTotal / ratingCount).toFixed(2)) : null,
+        ratedCandidates: ratingCount,
+        averageReportScore: reportScoreCount ? Number((reportScoreTotal / reportScoreCount).toFixed(2)) : null,
+        reportedCandidates: reportScoreCount,
+        questionsAnswered: answeredTotal,
+        questionsPlanned: questionTotal,
+        proctoringViolations: violationTotal,
+        violationTypes,
+      },
+      candidates,
+    });
+  } catch {
+    res.status(500).json({ error: "Failed to load interview analytics" });
+  }
+});
+
 // GET /api/interviews/:id
 router.get("/:id", authenticate, async (req, res) => {
   try {
@@ -108,43 +203,121 @@ router.get("/:id", authenticate, async (req, res) => {
 router.post("/", authenticate, async (req, res) => {
   try {
     if (req.user.role !== "placement") return res.status(403).json({ error: "Placement Coordinator only" });
-    const { regNo, type, scheduledAt, interviewer, mode, proctoring } = req.body;
-    if (!regNo || !scheduledAt) return res.status(400).json({ error: "regNo and scheduledAt are required" });
-    const student = await col("students").findOne({ regNo });
-    if (!student) return res.status(404).json({ error: "Student not found" });
-    // Step 1 of the resume-based process: the coordinator must be told before
-    // scheduling when the student's resume is missing or unreadable.
-    const readiness = await resumeReadiness(regNo);
-    if (!readiness.ok) return res.status(400).json({ error: readiness.message, code: readiness.code });
-    const result = await col("interviews").insertOne({
+    const {
       regNo,
-      studentName: student.name,
-      type: type || "Technical",
-      mode: mode || "online-proctored",
-      interviewer: interviewer || req.user.username,
-      scheduledAt: new Date(scheduledAt),
-      proctoring: {
-        enabled: proctoring?.enabled !== false,
-        camera: proctoring?.camera !== false,
-        microphone: proctoring?.microphone !== false,
-        speechToText: proctoring?.speechToText !== false,
-        backgroundCheck: proctoring?.backgroundCheck !== false,
-        faceVerification: proctoring?.faceVerification !== false,
-        fullscreenRequired: proctoring?.fullscreenRequired !== false,
-      },
-      transcript: [],
-      analysis: { face: null, speech: null, background: null },
-      plan: null,
-      consent: null,
-      report: null,
-      session: { status: "not_started", startedAt: null, endedAt: null, answeredCount: 0 },
-      status: "scheduled",
-      createdBy: req.user.userId,
-      createdAt: new Date(),
-      updatedAt: new Date(),
+      regNos,
+      interviewName,
+      groupId: requestedGroupId,
+      type,
+      scheduledAt,
+      interviewer,
+      mode,
+      proctoring,
+    } = req.body;
+    const studentRegNos = [...new Set(
+      (Array.isArray(regNos) ? regNos : [regNo])
+        .filter((value) => typeof value === "string")
+        .map((value) => value.trim())
+        .filter(Boolean)
+    )];
+    if (!studentRegNos.length || !scheduledAt) {
+      return res.status(400).json({ error: "At least one student and a date/time are required" });
+    }
+    if (studentRegNos.length > 200) return res.status(400).json({ error: "An interview group can include at most 200 students at a time" });
+    const parsedSchedule = new Date(scheduledAt);
+    if (Number.isNaN(parsedSchedule.getTime())) return res.status(400).json({ error: "A valid interview date/time is required" });
+
+    let groupId = typeof requestedGroupId === "string" ? requestedGroupId.trim() : "";
+    let groupName = typeof interviewName === "string" ? interviewName.trim().slice(0, 120) : "";
+    let interviewType = type || "Technical";
+    if (groupId) {
+      let groupInterview = await col("interviews").findOne({ groupId });
+      if (!groupInterview) {
+        groupInterview = await loadInterview(groupId);
+        if (groupInterview && !groupInterview.groupId) {
+          groupName = groupInterview.interviewName || groupName;
+          interviewType = groupInterview.type || interviewType;
+          const legacyGroup = {
+            type: groupInterview.type,
+            scheduledAt: groupInterview.scheduledAt,
+            groupId: { $exists: false },
+          };
+          await col("interviews").updateMany(legacyGroup, {
+            $set: { groupId, interviewName: groupName },
+          });
+        }
+      }
+      if (!groupInterview) return res.status(404).json({ error: "Interview group not found" });
+      groupName = groupInterview.interviewName || groupName;
+      interviewType = groupInterview.type || interviewType;
+      if (!groupName) return res.status(400).json({ error: "The selected interview group has no name" });
+    } else {
+      if (!groupName) return res.status(400).json({ error: "Interview name is required" });
+      groupId = crypto.randomUUID();
+    }
+
+    const existingMembers = await col("interviews")
+      .find({ groupId, regNo: { $in: studentRegNos } }, { projection: { regNo: 1 } })
+      .toArray();
+    if (existingMembers.length) {
+      const duplicateRegNos = existingMembers.map((member) => member.regNo);
+      return res.status(409).json({ error: `Already scheduled in this interview group: ${duplicateRegNos.join(", ")}` });
+    }
+
+    const students = await col("students").find({ regNo: { $in: studentRegNos } }).toArray();
+    const studentsByRegNo = new Map(students.map((student) => [student.regNo, student]));
+    const missingRegNos = studentRegNos.filter((studentRegNo) => !studentsByRegNo.has(studentRegNo));
+    if (missingRegNos.length) return res.status(404).json({ error: `Student not found: ${missingRegNos.join(", ")}` });
+
+    for (const studentRegNo of studentRegNos) {
+      const readiness = await resumeReadiness(studentRegNo);
+      if (!readiness.ok) {
+        const student = studentsByRegNo.get(studentRegNo);
+        return res.status(400).json({
+          error: `${student.name} (${studentRegNo}): ${readiness.message}`,
+          code: readiness.code,
+        });
+      }
+    }
+
+    const now = new Date();
+    const documents = studentRegNos.map((studentRegNo) => {
+      const student = studentsByRegNo.get(studentRegNo);
+      return {
+        regNo: studentRegNo,
+        studentName: student.name,
+        interviewName: groupName,
+        groupId,
+        type: interviewType,
+        mode: mode || "online-proctored",
+        interviewer: interviewer || req.user.username,
+        scheduledAt: parsedSchedule,
+        proctoring: {
+          enabled: proctoring?.enabled !== false,
+          camera: proctoring?.camera !== false,
+          microphone: proctoring?.microphone !== false,
+          speechToText: proctoring?.speechToText !== false,
+          backgroundCheck: proctoring?.backgroundCheck !== false,
+          faceVerification: proctoring?.faceVerification !== false,
+          fullscreenRequired: proctoring?.fullscreenRequired !== false,
+        },
+        transcript: [],
+        analysis: { face: null, speech: null, background: null },
+        plan: null,
+        consent: null,
+        report: null,
+        session: { status: "not_started", startedAt: null, endedAt: null, answeredCount: 0 },
+        status: "scheduled",
+        createdBy: req.user.userId,
+        createdAt: now,
+        updatedAt: now,
+      };
     });
-    const doc = await col("interviews").findOne({ _id: result.insertedId });
-    res.status(201).json(toId(doc));
+    const inserted = await col("interviews").insertMany(documents);
+    const interviews = await col("interviews")
+      .find({ _id: { $in: Object.values(inserted.insertedIds) } })
+      .toArray();
+    res.status(201).json({ groupId, interviews: interviews.map(toId) });
   } catch {
     res.status(500).json({ error: "Failed to schedule interview" });
   }
@@ -657,10 +830,40 @@ router.put("/:id", authenticate, async (req, res) => {
 router.delete("/:id", authenticate, async (req, res) => {
   try {
     if (req.user.role !== "placement") return res.status(403).json({ error: "Placement Coordinator only" });
-    await col("interviews").deleteOne({ _id: id(req.params.id) });
+    const interviewId = id(req.params.id);
+    const interview = await col("interviews").findOne({ _id: interviewId });
+    if (!interview) return res.status(404).json({ error: "Interview not found" });
+    if (interview.recordingPath) await storage.removePaths([interview.recordingPath]);
+    await col("interviews").deleteOne({ _id: interviewId });
     res.json({ message: "Interview deleted" });
   } catch {
     res.status(500).json({ error: "Failed to delete interview" });
+  }
+});
+
+// DELETE /api/interviews/groups/:groupId (placement) delete every candidate in a round
+router.delete("/groups/:groupId", authenticate, async (req, res) => {
+  try {
+    if (req.user.role !== "placement") return res.status(403).json({ error: "Placement Coordinator only" });
+
+    let members = await col("interviews").find({ groupId: req.params.groupId }).toArray();
+    if (!members.length) {
+      const representative = await loadInterview(req.params.groupId);
+      if (!representative) return res.status(404).json({ error: "Interview group not found" });
+      members = await col("interviews").find({
+        type: representative.type,
+        scheduledAt: new Date(representative.scheduledAt),
+        groupId: { $exists: false },
+      }).toArray();
+    }
+    if (!members.length) return res.status(404).json({ error: "Interview group not found" });
+
+    const recordings = members.map((interview) => interview.recordingPath).filter(Boolean);
+    if (recordings.length) await storage.removePaths(recordings);
+    const result = await col("interviews").deleteMany({ _id: { $in: members.map((interview) => interview._id) } });
+    res.json({ message: "Interview group deleted", deletedCount: result.deletedCount });
+  } catch {
+    res.status(500).json({ error: "Failed to delete interview group" });
   }
 });
 

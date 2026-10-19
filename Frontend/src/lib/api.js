@@ -135,6 +135,8 @@ export const api = {
         reset: (id) => request(`/interviews/${id}/reset`, { method: "POST", body: {} }),
         update: (id, data) => request(`/interviews/${id}`, { method: "PUT", body: data }),
         remove: (id) => request(`/interviews/${id}`, { method: "DELETE" }),
+        removeGroup: (groupId) => request(`/interviews/groups/${encodeURIComponent(groupId)}`, { method: "DELETE" }),
+        groupAnalytics: (groupId) => request(`/interviews/groups/${encodeURIComponent(groupId)}/analytics`),
     },
     reports: {
         overview: () => request("/reports/overview"),

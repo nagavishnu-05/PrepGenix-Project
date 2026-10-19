@@ -128,7 +128,7 @@ export function Header({ breadcrumbs = [] }) {
                     .map((interview) => ({
                         id: `interview:${interview.id}`,
                         title: "Interview scheduled",
-                        message: `${interview.type || "Interview"}${interview.studentName ? ` · ${interview.studentName}` : ""} · ${new Date(interview.scheduledAt).toLocaleString()}`,
+                        message: `${interview.interviewName || interview.type || "Interview"}${interview.studentName ? ` · ${interview.studentName}` : ""} · ${new Date(interview.scheduledAt).toLocaleString()}`,
                         time: interview.createdAt || interview.scheduledAt,
                         href: user?.role === "student" ? "/student/interviews" : user?.role === "placement" ? "/placement/interviews" : "/staff",
                     }));

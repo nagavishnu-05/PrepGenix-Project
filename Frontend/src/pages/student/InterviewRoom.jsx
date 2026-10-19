@@ -664,7 +664,7 @@ export default function InterviewRoom() {
                         </div>
                         <div className="space-y-3 text-sm text-slate-600 dark:text-zinc-400">
                             <p>
-                                This is a {interview?.type || "General"} interview{interview?.type === "Technical" ? " using questions matched to your resume skills and projects" : ""}. Your{" "}
+                                This is the {interview?.interviewName || `${interview?.type || "General"} interview`}{interview?.type === "Technical" ? ", with questions matched to your resume skills and projects" : ""}. Your{" "}
                                 <span className="font-medium text-slate-800 dark:text-zinc-200">camera and microphone are used live</span> during the
                                 session for strict proctoring and the Placement Coordinator can review the interview and proctoring events.
                             </p>

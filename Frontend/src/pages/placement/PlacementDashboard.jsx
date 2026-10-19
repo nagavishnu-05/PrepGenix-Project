@@ -61,7 +61,7 @@ export default function PlacementDashboard() {
                                 <div key={i.id} className="flex items-center justify-between rounded-lg border border-slate-200 dark:border-zinc-800 bg-slate-50 dark:bg-zinc-950/40 p-3">
                                     <div className="min-w-0">
                                         <p className="truncate text-sm font-medium text-slate-800 dark:text-zinc-200">{i.studentName}</p>
-                                        <p className="text-xs text-slate-500 dark:text-zinc-500">{i.type} • {new Date(i.scheduledAt).toLocaleString()}</p>
+                                        <p className="text-xs text-slate-500 dark:text-zinc-500">{i.interviewName || i.type} • {new Date(i.scheduledAt).toLocaleString()}</p>
                                     </div>
                                     <StatusBadge value={i.status} />
                                 </div>

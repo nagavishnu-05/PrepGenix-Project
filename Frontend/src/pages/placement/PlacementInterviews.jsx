@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Plus, Star, CalendarClock, ListChecks, FileText, Loader2, Sparkles, AlertTriangle, RotateCw, RotateCcw } from "lucide-react";
+import { Plus, Star, CalendarClock, ListChecks, FileText, Loader2, Sparkles, AlertTriangle, RotateCw, RotateCcw, ChevronDown, UserPlus, BarChart3, Trash2, Users } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,6 +10,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { PageHeader, EmptyState, LoadingState } from "@/components/portal/primitives";
 import { StatusBadge } from "@/components/portal/status-badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import { api } from "@/lib/api";
 import { getStudentSection } from "@/lib/student-section";
 
@@ -88,8 +89,14 @@ export default function PlacementInterviews() {
     const [proctoringTarget, setProctoringTarget] = useState(null);
     const [preparingId, setPreparingId] = useState(null);
     const [resettingId, setResettingId] = useState(null);
+    const [expandedGroupId, setExpandedGroupId] = useState(null);
+    const [analyticsOpen, setAnalyticsOpen] = useState(false);
+    const [analyticsLoading, setAnalyticsLoading] = useState(false);
+    const [analyticsData, setAnalyticsData] = useState(null);
+    const [deletingGroupId, setDeletingGroupId] = useState(null);
+    const [deletingInterviewId, setDeletingInterviewId] = useState(null);
     const [busy, setBusy] = useState(false);
-    const [sched, setSched] = useState({ regNo: "", type: "Technical", scheduledAt: "", interviewer: "" });
+    const [sched, setSched] = useState({ interviewName: "", groupId: "", regNos: [], existingRegNos: [], type: "Technical", scheduledAt: "", interviewer: "" });
     const [studentFilters, setStudentFilters] = useState({ batch: "all", section: "all", department: "all", search: "" });
     const [result, setResult] = useState({ rating: 3, notes: "", strengths: "", weaknesses: "", status: "completed" });
 
@@ -117,16 +124,64 @@ export default function PlacementInterviews() {
         return !query || `${student.name} ${student.regNo}`.toLowerCase().includes(query);
     });
 
+    const interviewGroups = [...interviews.reduce((groups, interview) => {
+        const legacyGroupKey = `legacy:${interview.type || "Interview"}:${new Date(interview.scheduledAt).toISOString()}`;
+        const key = interview.groupId || legacyGroupKey;
+        if (!groups.has(key)) {
+            groups.set(key, {
+                id: key,
+                name: interview.interviewName || `${interview.type || "Interview"} Interview`,
+                type: interview.type || "Technical",
+                scheduledAt: interview.scheduledAt,
+                interviewer: interview.interviewer,
+                members: [],
+            });
+        }
+        groups.get(key).members.push(interview);
+        return groups;
+    }, new Map()).values()].sort((a, b) => new Date(b.scheduledAt) - new Date(a.scheduledAt));
+
+    const openSchedule = (group = null) => {
+        setStudentFilters({ batch: "all", section: "all", department: "all", search: "" });
+        setSched({
+            interviewName: group?.name || "",
+            groupId: group ? (group.id.startsWith("legacy:") ? group.members[0]?.id : group.id) : "",
+            regNos: [],
+            existingRegNos: group?.members.map((member) => member.regNo) || [],
+            type: group?.type || "Technical",
+            scheduledAt: group ? new Date(group.scheduledAt).toISOString().slice(0, 16) : "",
+            interviewer: group?.interviewer || "",
+        });
+        setSchedOpen(true);
+    };
+
+    const toggleScheduledStudent = (regNo, checked) => {
+        setSched((current) => ({
+            ...current,
+            regNos: checked
+                ? [...new Set([...current.regNos, regNo])]
+                : current.regNos.filter((selected) => selected !== regNo),
+        }));
+    };
+    const availableScheduleStudents = filteredStudents.filter((student) => !sched.existingRegNos.includes(student.regNo));
+
     const schedule = async () => {
-        if (!sched.regNo || !sched.scheduledAt) {
-            alert("Select a student and a date/time.");
+        if (!sched.interviewName.trim() || !sched.regNos.length || !sched.scheduledAt) {
+            alert("Enter an interview name, select at least one student, and choose a date/time.");
+            return;
+        }
+        if (sched.regNos.length > 200) {
+            alert("Schedule up to 200 students at a time. Use “Schedule more” to add the remaining students to this interview group.");
             return;
         }
         setBusy(true);
         try {
-            await api.interviews.create(sched);
+            await api.interviews.create({
+                ...sched,
+                interviewName: sched.interviewName.trim(),
+            });
             setSchedOpen(false);
-            setSched({ regNo: "", type: "Technical", scheduledAt: "", interviewer: "" });
+            setSched({ interviewName: "", groupId: "", regNos: [], existingRegNos: [], type: "Technical", scheduledAt: "", interviewer: "" });
             load();
         } catch (e) {
             alert(e.message);
@@ -152,6 +207,54 @@ export default function PlacementInterviews() {
     const viewPlan = (iv) => { setPlanTarget(iv); setPlanOpen(true); };
     const viewReport = (iv) => { setReportTarget(iv); setReportOpen(true); };
     const viewProctoring = (iv) => { setProctoringTarget(iv); setProctoringOpen(true); };
+
+    const openAnalytics = async (group) => {
+        setAnalyticsLoading(true);
+        setAnalyticsOpen(true);
+        setAnalyticsData(null);
+        try {
+            const groupId = group.id.startsWith("legacy:") ? group.members[0].id : group.id;
+            const data = await api.interviews.groupAnalytics(groupId);
+            setAnalyticsData(data);
+        } catch (error) {
+            setAnalyticsOpen(false);
+            alert(`Failed to load interview analytics: ${error.message}`);
+        } finally {
+            setAnalyticsLoading(false);
+        }
+    };
+
+    const deleteGroup = async (group) => {
+        const activeCount = group.members.filter((interview) => interview.status === "in_progress").length;
+        const warning = activeCount
+            ? ` ${activeCount} interview${activeCount === 1 ? " is" : "s are"} currently in progress.`
+            : "";
+        if (!confirm(`Delete "${group.name}" and all ${group.members.length} candidate interview${group.members.length === 1 ? "" : "s"}? This cannot be undone.${warning}`)) return;
+        setDeletingGroupId(group.id);
+        try {
+            const groupId = group.id.startsWith("legacy:") ? group.members[0].id : group.id;
+            await api.interviews.removeGroup(groupId);
+            setInterviews((current) => current.filter((interview) => !group.members.some((member) => member.id === interview.id)));
+            if (expandedGroupId === group.id) setExpandedGroupId(null);
+        } catch (error) {
+            alert(`Failed to delete interview group: ${error.message}`);
+        } finally {
+            setDeletingGroupId(null);
+        }
+    };
+
+    const deleteInterview = async (interview) => {
+        if (!confirm(`Delete ${interview.studentName}'s interview from "${interview.interviewName || interview.type}"? This cannot be undone.`)) return;
+        setDeletingInterviewId(interview.id);
+        try {
+            await api.interviews.remove(interview.id);
+            setInterviews((current) => current.filter((item) => item.id !== interview.id));
+        } catch (error) {
+            alert(`Failed to delete interview: ${error.message}`);
+        } finally {
+            setDeletingInterviewId(null);
+        }
+    };
 
     const openResult = (iv) => {
         setResultTarget(iv);
@@ -213,110 +316,198 @@ export default function PlacementInterviews() {
         <div>
             <PageHeader
                 title="Interviews"
-                description="Schedule interviews and record outcomes"
-                action={<Button onClick={() => setSchedOpen(true)}><Plus className="h-4 w-4" /> Schedule Interview</Button>}
+                description="Create named interview rounds, schedule multiple students, and manage each candidate's session."
+                action={<Button onClick={() => openSchedule()}><Plus className="h-4 w-4" /> Create Interview</Button>}
             />
 
             <Card className="border-slate-200/80 dark:border-zinc-800/80 bg-white/70 dark:bg-zinc-900/40">
                 <CardContent className="p-0">
                     {loading ? (
                         <LoadingState label="Loading interviews" className="py-10" />
-                    ) : interviews.length === 0 ? (
+                    ) : interviewGroups.length === 0 ? (
                         <div className="p-10">
-                            <EmptyState icon={CalendarClock} title="No interviews" description="Schedule an interview for a shortlisted student." />
+                            <EmptyState icon={CalendarClock} title="No interviews" description="Create a named interview round and schedule it for one or more students." />
                         </div>
                     ) : (
-                        <Table>
-                            <TableHeader>
-                                <TableRow>
-                                    <TableHead>Student</TableHead>
-                                    <TableHead>Type</TableHead>
-                                    <TableHead>Scheduled</TableHead>
-                                    <TableHead>Interviewer</TableHead>
-                                    <TableHead>Status</TableHead>
-                                    <TableHead>Proctoring</TableHead>
-                                    <TableHead>Rating</TableHead>
-                                    <TableHead className="text-right">Actions</TableHead>
-                                </TableRow>
-                            </TableHeader>
-                            <TableBody>
-                                {interviews.map((iv) => (
-                                    <TableRow key={iv.id}>
-                                        <TableCell>
-                                            <p className="font-medium text-slate-800 dark:text-zinc-100">{iv.studentName}</p>
-                                            <p className="text-xs text-slate-500 dark:text-zinc-500">{iv.regNo}</p>
-                                        </TableCell>
-                                        <TableCell className="text-sm text-slate-600 dark:text-zinc-300">{iv.type}</TableCell>
-                                        <TableCell className="text-sm text-slate-600 dark:text-zinc-300">{new Date(iv.scheduledAt).toLocaleString()}</TableCell>
-                                        <TableCell className="text-sm text-slate-600 dark:text-zinc-300">{iv.interviewer}</TableCell>
-                                        <TableCell><StatusBadge value={iv.status} /></TableCell>
-                                        <TableCell>
-                                            {iv.proctoringEvents?.length ? (
-                                                <Button variant="ghost" size="sm" onClick={() => viewProctoring(iv)}>
-                                                    <AlertTriangle className="h-4 w-4 text-amber-500" />
-                                                    {iv.proctoringViolationCount || 0}/3 · Log
+                        <div className="space-y-3 p-4">
+                            {interviewGroups.map((group) => {
+                                const expanded = expandedGroupId === group.id;
+                                const scheduledCount = group.members.filter((iv) => iv.status === "scheduled").length;
+                                const activeCount = group.members.filter((iv) => iv.status === "in_progress").length;
+                                const completedCount = group.members.filter((iv) => iv.status === "completed").length;
+                                return (
+                                    <section key={group.id} className="overflow-hidden rounded-xl border border-slate-200 dark:border-zinc-800">
+                                        <div className="flex flex-wrap items-center justify-between gap-4 bg-slate-50/80 p-4 dark:bg-zinc-950/30">
+                                            <button
+                                                type="button"
+                                                className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                                                aria-expanded={expanded}
+                                                onClick={() => setExpandedGroupId(expanded ? null : group.id)}
+                                            >
+                                                <ChevronDown className={`h-4 w-4 shrink-0 text-slate-500 transition-transform ${expanded ? "rotate-180" : ""}`} />
+                                                <span className="min-w-0">
+                                                    <span className="block truncate font-semibold text-slate-900 dark:text-white">{group.name}</span>
+                                                    <span className="mt-1 block text-xs text-slate-500 dark:text-zinc-400">
+                                                        {group.type} · {group.members.length} student{group.members.length === 1 ? "" : "s"} · {new Date(group.scheduledAt).toLocaleString()}
+                                                    </span>
+                                                </span>
+                                            </button>
+                                            <div className="flex flex-wrap items-center gap-2">
+                                                <span className="rounded-full bg-blue-100 px-2.5 py-1 text-xs font-medium text-blue-700 dark:bg-blue-500/10 dark:text-blue-300">{scheduledCount} scheduled</span>
+                                                {activeCount > 0 && <span className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-700 dark:bg-amber-500/10 dark:text-amber-300">{activeCount} active</span>}
+                                                {completedCount > 0 && <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-medium text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300">{completedCount} completed</span>}
+                                                <Button variant="outline" size="sm" onClick={() => openSchedule(group)}>
+                                                    <UserPlus className="h-4 w-4" /> Schedule more
                                                 </Button>
-                                            ) : <span className="text-xs text-slate-400">No events</span>}
-                                        </TableCell>
-                                        <TableCell className="text-sm text-slate-600 dark:text-zinc-300">{iv.rating ? `${iv.rating}/5` : "—"}</TableCell>
-                                        <TableCell className="text-right">
-                                            <div className="flex items-center justify-end gap-1">
-                                                {iv.plan?.questions?.length ? (
-                                                    <>
-                                                        <Button variant="ghost" size="sm" onClick={() => viewPlan(iv)}><ListChecks className="h-4 w-4" /> Questions</Button>
-                                                        {iv.status === "scheduled" && iv.session?.status !== "in_progress" && !iv.session?.startedAt && (
-                                                            <Button variant="ghost" size="sm" onClick={() => prepare(iv)} disabled={preparingId === iv.id}>
-                                                                {preparingId === iv.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCw className="h-4 w-4" />}
-                                                                {preparingId === iv.id ? "Refreshing..." : "Refresh"}
-                                                            </Button>
-                                                        )}
-                                                    </>
-                                                ) : (
-                                                    <Button variant="ghost" size="sm" onClick={() => prepare(iv)} disabled={preparingId === iv.id}>
-                                                        {preparingId === iv.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-                                                        {preparingId === iv.id ? "Preparing..." : "Prepare"}
-                                                    </Button>
-                                                )}
-                                                {iv.report && (
-                                                    <Button variant="ghost" size="sm" onClick={() => viewReport(iv)}><FileText className="h-4 w-4" /> Report</Button>
-                                                )}
-                                                {["in_progress", "disqualified"].includes(iv.status) && (
-                                                    <Button
-                                                        variant="ghost"
-                                                        size="sm"
-                                                        onClick={() => resetInterview(iv)}
-                                                        disabled={resettingId === iv.id}
-                                                    >
-                                                        {resettingId === iv.id
-                                                            ? <Loader2 className="h-4 w-4 animate-spin" />
-                                                            : <RotateCcw className="h-4 w-4" />}
-                                                        {resettingId === iv.id ? "Resetting..." : "Reset"}
-                                                    </Button>
-                                                )}
-                                                {iv.status === "scheduled" && (
-                                                    <>
-                                                        <Button variant="ghost" size="sm" onClick={() => openResult(iv)}><Star className="h-4 w-4" /> Record</Button>
-                                                        <Button variant="ghost" size="sm" className="text-red-650 hover:text-red-500 dark:text-red-400 dark:hover:text-red-300" onClick={() => cancel(iv)}>Cancel</Button>
-                                                    </>
-                                                )}
+                                                <Button variant="outline" size="sm" onClick={() => openAnalytics(group)}>
+                                                    <BarChart3 className="h-4 w-4" /> Analytics
+                                                </Button>
+                                                <Button
+                                                    variant="ghost"
+                                                    size="icon"
+                                                    className="h-9 w-9 text-red-600 hover:bg-red-50 hover:text-red-700 dark:text-red-400 dark:hover:bg-red-500/10"
+                                                    onClick={() => deleteGroup(group)}
+                                                    disabled={deletingGroupId === group.id}
+                                                    aria-label={`Delete ${group.name} interview`}
+                                                    title="Delete interview group"
+                                                >
+                                                    {deletingGroupId === group.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                                                </Button>
                                             </div>
-                                        </TableCell>
-                                    </TableRow>
-                                ))}
-                            </TableBody>
-                        </Table>
+                                        </div>
+                                        {expanded && (
+                                            <div className="overflow-x-auto">
+                                                <Table>
+                                                    <TableHeader>
+                                                        <TableRow>
+                                                            <TableHead>Student</TableHead>
+                                                            <TableHead>Schedule</TableHead>
+                                                            <TableHead>Status</TableHead>
+                                                            <TableHead>Proctoring</TableHead>
+                                                            <TableHead>Rating</TableHead>
+                                                            <TableHead className="text-right">Actions</TableHead>
+                                                        </TableRow>
+                                                    </TableHeader>
+                                                    <TableBody>
+                                                        {group.members.map((iv) => (
+                                                            <TableRow key={iv.id}>
+                                                                <TableCell>
+                                                                    <p className="font-medium text-slate-800 dark:text-zinc-100">{iv.studentName}</p>
+                                                                    <p className="text-xs text-slate-500 dark:text-zinc-500">{iv.regNo}</p>
+                                                                </TableCell>
+                                                                <TableCell className="text-sm text-slate-600 dark:text-zinc-300">
+                                                                    <p>{new Date(iv.scheduledAt).toLocaleString()}</p>
+                                                                    <p className="text-xs text-slate-500">{iv.interviewer}</p>
+                                                                </TableCell>
+                                                                <TableCell><StatusBadge value={iv.status} /></TableCell>
+                                                                <TableCell>
+                                                                    {iv.proctoringEvents?.length ? (
+                                                                        <Button variant="ghost" size="sm" onClick={() => viewProctoring(iv)}>
+                                                                            <AlertTriangle className="h-4 w-4 text-amber-500" />
+                                                                            {iv.proctoringViolationCount || 0}/3 · Log
+                                                                        </Button>
+                                                                    ) : <span className="text-xs text-slate-400">No events</span>}
+                                                                </TableCell>
+                                                                <TableCell className="text-sm text-slate-600 dark:text-zinc-300">{iv.rating ? `${iv.rating}/5` : "—"}</TableCell>
+                                                                <TableCell className="text-right">
+                                                                    <div className="flex flex-wrap items-center justify-end gap-1">
+                                                                        {iv.plan?.questions?.length ? (
+                                                                            <>
+                                                                                <Button variant="ghost" size="sm" onClick={() => viewPlan(iv)}><ListChecks className="h-4 w-4" /> Questions</Button>
+                                                                                {iv.status === "scheduled" && !iv.session?.startedAt && (
+                                                                                    <Button variant="ghost" size="sm" onClick={() => prepare(iv)} disabled={preparingId === iv.id}>
+                                                                                        {preparingId === iv.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCw className="h-4 w-4" />}
+                                                                                        Refresh
+                                                                                    </Button>
+                                                                                )}
+                                                                            </>
+                                                                        ) : (
+                                                                            <Button variant="ghost" size="sm" onClick={() => prepare(iv)} disabled={preparingId === iv.id}>
+                                                                                {preparingId === iv.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                                                                                Prepare
+                                                                            </Button>
+                                                                        )}
+                                                                        {iv.report && <Button variant="ghost" size="sm" onClick={() => viewReport(iv)}><FileText className="h-4 w-4" /> Report</Button>}
+                                                                        {["in_progress", "disqualified"].includes(iv.status) && (
+                                                                            <Button variant="ghost" size="sm" onClick={() => resetInterview(iv)} disabled={resettingId === iv.id}>
+                                                                                {resettingId === iv.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}
+                                                                                Reset
+                                                                            </Button>
+                                                                        )}
+                                                                        {iv.status === "scheduled" && (
+                                                                            <>
+                                                                                <Button variant="ghost" size="sm" onClick={() => openResult(iv)}><Star className="h-4 w-4" /> Record</Button>
+                                                                                <Button variant="ghost" size="sm" className="text-red-650 hover:text-red-500 dark:text-red-400 dark:hover:text-red-300" onClick={() => cancel(iv)}>Cancel</Button>
+                                                                            </>
+                                                                        )}
+                                                                        <Button
+                                                                            variant="ghost"
+                                                                            size="icon"
+                                                                            className="h-8 w-8 text-red-600 hover:bg-red-50 hover:text-red-700 dark:text-red-400 dark:hover:bg-red-500/10"
+                                                                            onClick={() => deleteInterview(iv)}
+                                                                            disabled={deletingInterviewId === iv.id}
+                                                                            aria-label={`Delete interview for ${iv.studentName}`}
+                                                                            title="Delete this candidate interview"
+                                                                        >
+                                                                            {deletingInterviewId === iv.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                                                                        </Button>
+                                                                    </div>
+                                                                </TableCell>
+                                                            </TableRow>
+                                                        ))}
+                                                    </TableBody>
+                                                </Table>
+                                            </div>
+                                        )}
+                                    </section>
+                                );
+                            })}
+                        </div>
                     )}
                 </CardContent>
             </Card>
 
             <Dialog open={schedOpen} onOpenChange={setSchedOpen}>
-                <DialogContent className="max-w-2xl">
+                <DialogContent className="flex max-h-[92vh] w-[calc(100vw-2rem)] max-w-6xl flex-col overflow-hidden">
                     <DialogHeader>
-                        <DialogTitle>Schedule Interview</DialogTitle>
-                        <DialogDescription>Choose the interview type and narrow the student list by batch, section, or department.</DialogDescription>
+                        <DialogTitle>{sched.groupId ? `Schedule more for ${sched.interviewName}` : "Create Interview"}</DialogTitle>
+                        <DialogDescription>Name this interview round, choose its type and schedule, then select one or more students. Each student gets an individual session and resume-based questions.</DialogDescription>
                     </DialogHeader>
-                    <div className="space-y-4">
-                        <div className="grid gap-3 sm:grid-cols-3">
+                    <div className="grid min-h-0 flex-1 gap-5 overflow-y-auto pr-1 md:grid-cols-12 md:grid-rows-[auto_minmax(0,1fr)] md:overflow-hidden">
+                        <div className="space-y-3 md:col-span-12">
+                            <div className="grid gap-3 sm:grid-cols-2">
+                            <div className="space-y-1.5">
+                                <Label className="text-xs text-zinc-400">Interview name</Label>
+                                <Input
+                                    value={sched.interviewName}
+                                    onChange={(event) => setSched((current) => ({ ...current, interviewName: event.target.value }))}
+                                    placeholder="e.g. Full Stack Developer — Technical Round 1"
+                                    disabled={Boolean(sched.groupId)}
+                                    maxLength={120}
+                                />
+                            </div>
+                            <div className="space-y-1.5">
+                                <Label className="text-xs text-zinc-400">Interview type</Label>
+                                <Select value={sched.type} onValueChange={(value) => setSched((current) => ({ ...current, type: value }))} disabled={Boolean(sched.groupId)}>
+                                    <SelectTrigger><SelectValue /></SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="General">General</SelectItem>
+                                        <SelectItem value="Technical">Technical</SelectItem>
+                                        <SelectItem value="HR">HR</SelectItem>
+                                        <SelectItem value="Aptitude">Aptitude</SelectItem>
+                                        <SelectItem value="Final">Final</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                            </div>
+                            {sched.type === "Technical" && (
+                                <p className="rounded-lg bg-violet-50 px-3 py-2 text-xs text-violet-700 dark:bg-violet-500/10 dark:text-violet-300">
+                                Technical questions are prepared individually from each selected student's resume and matching topic banks.
+                                </p>
+                            )}
+                        </div>
+                        <div className="space-y-3 md:col-span-7 md:flex md:min-h-0 md:flex-col">
+                            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                             <div className="space-y-1.5">
                                 <Label className="text-xs text-zinc-400">Batch</Label>
                                 <Select value={studentFilters.batch} onValueChange={(value) => setStudentFilters((current) => ({ ...current, batch: value, section: "all" }))}>
@@ -347,65 +538,194 @@ export default function PlacementInterviews() {
                                     </SelectContent>
                                 </Select>
                             </div>
-                        </div>
-                        <div className="space-y-1.5">
+                            </div>
+                            <div className="space-y-1.5">
                             <Label className="text-xs text-zinc-400">Search students</Label>
                             <Input
                                 value={studentFilters.search}
                                 onChange={(event) => setStudentFilters((current) => ({ ...current, search: event.target.value }))}
                                 placeholder="Search by name or registration number"
                             />
-                        </div>
-                        <div className="space-y-1.5">
+                            </div>
+                            <div className="space-y-1.5 md:flex md:min-h-0 md:flex-1 md:flex-col">
                             <div className="flex items-center justify-between">
-                                <Label className="text-xs text-zinc-400">Student</Label>
-                                <span className="text-xs text-zinc-500">{filteredStudents.length} match{filteredStudents.length === 1 ? "" : "es"}</span>
+                                <div>
+                                    <Label className="text-xs text-zinc-400">Students</Label>
+                                    <p className="mt-1 text-xs text-zinc-500">{sched.regNos.length} selected · {availableScheduleStudents.length} available · up to 200 per schedule</p>
+                                </div>
+                                {availableScheduleStudents.length > 0 && (
+                                    <Button
+                                        type="button"
+                                        variant="ghost"
+                                        size="sm"
+                                        onClick={() => {
+                                            const visible = availableScheduleStudents.map((student) => student.regNo);
+                                            const allVisibleSelected = visible.every((regNo) => sched.regNos.includes(regNo));
+                                            setSched((current) => ({
+                                                ...current,
+                                                regNos: allVisibleSelected
+                                                    ? current.regNos.filter((regNo) => !visible.includes(regNo))
+                                                    : [...new Set([...current.regNos, ...visible])],
+                                            }));
+                                        }}
+                                    >
+                                        {availableScheduleStudents.every((student) => sched.regNos.includes(student.regNo)) ? "Clear visible" : "Select visible"}
+                                    </Button>
+                                )}
                             </div>
-                            <Select value={sched.regNo} onValueChange={(v) => setSched({ ...sched, regNo: v })}>
-                                <SelectTrigger><SelectValue placeholder="Select a student" /></SelectTrigger>
-                                <SelectContent>
-                                    {filteredStudents.map((student) => {
-                                        const section = getStudentSection(student.regNo);
-                                        const details = [student.department, student.batch, section && `Section ${section}`].filter(Boolean).join(" · ");
-                                        return (
-                                            <SelectItem key={student.regNo} value={student.regNo}>
-                                                {student.name} — {student.regNo}{details ? ` · ${details}` : ""}
-                                            </SelectItem>
-                                        );
-                                    })}
-                                </SelectContent>
-                            </Select>
-                            {filteredStudents.length === 0 && <p className="text-xs text-amber-600">No students match these filters.</p>}
+                            <div className="max-h-56 space-y-1 overflow-y-auto rounded-lg border border-slate-200 p-2 dark:border-zinc-800 md:max-h-none md:min-h-0 md:flex-1">
+                                {availableScheduleStudents.map((student) => {
+                                    const section = getStudentSection(student.regNo);
+                                    const details = [student.department, student.batch, section && `Section ${section}`].filter(Boolean).join(" · ");
+                                    return (
+                                        <label key={student.regNo} className="flex cursor-pointer items-center gap-3 rounded-md p-2 hover:bg-slate-50 dark:hover:bg-zinc-800/60">
+                                            <Checkbox
+                                                checked={sched.regNos.includes(student.regNo)}
+                                                onCheckedChange={(checked) => toggleScheduledStudent(student.regNo, checked === true)}
+                                            />
+                                            <span className="min-w-0">
+                                                <span className="block truncate text-sm font-medium text-slate-800 dark:text-zinc-200">{student.name}</span>
+                                                <span className="block truncate text-xs text-slate-500 dark:text-zinc-500">
+                                                    {student.regNo}{details ? ` · ${details}` : ""}
+                                                </span>
+                                            </span>
+                                        </label>
+                                    );
+                                })}
+                                {availableScheduleStudents.length === 0 && (
+                                    <p className="p-3 text-center text-xs text-amber-600 dark:text-amber-400">
+                                        {filteredStudents.length === 0 ? "No students match these filters." : "All matching students are already in this interview group."}
+                                    </p>
+                                )}
+                            </div>
+                            </div>
                         </div>
-                        <div className="grid grid-cols-2 gap-3">
-                            <div className="space-y-1.5">
-                                <Label className="text-xs text-zinc-400">Type</Label>
-                                <Select value={sched.type} onValueChange={(v) => setSched({ ...sched, type: v })}>
-                                    <SelectTrigger><SelectValue /></SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="General">General</SelectItem>
-                                        <SelectItem value="Technical">Technical</SelectItem>
-                                        <SelectItem value="HR">HR</SelectItem>
-                                        <SelectItem value="Aptitude">Aptitude</SelectItem>
-                                        <SelectItem value="Final">Final</SelectItem>
-                                    </SelectContent>
-                                </Select>
-                                {sched.type === "Technical" && <p className="text-xs text-violet-600 dark:text-violet-400">Question topics are selected from the student's resume and the topic banks.</p>}
-                            </div>
+                        <div className="space-y-4 md:col-span-5">
+                        <div className="grid gap-3 lg:grid-cols-2">
                             <div className="space-y-1.5">
                                 <Label className="text-xs text-zinc-400">Interviewer</Label>
                                 <Input value={sched.interviewer} onChange={(e) => setSched({ ...sched, interviewer: e.target.value })} placeholder="Panel name" />
                             </div>
+                            <div className="space-y-1.5">
+                                <Label className="text-xs text-zinc-400">Date & time</Label>
+                                <Input type="datetime-local" value={sched.scheduledAt} onChange={(e) => setSched({ ...sched, scheduledAt: e.target.value })} />
+                            </div>
                         </div>
-                        <div className="space-y-1.5">
-                            <Label className="text-xs text-zinc-400">Date & time</Label>
-                            <Input type="datetime-local" value={sched.scheduledAt} onChange={(e) => setSched({ ...sched, scheduledAt: e.target.value })} />
+                        <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600 dark:border-zinc-800 dark:bg-zinc-950/40 dark:text-zinc-400">
+                            <p className="font-medium text-slate-800 dark:text-zinc-200">Interview setup</p>
+                            <p className="mt-1">Each selected student receives a separate session, consent flow, resume-matched question plan, proctoring log, and result.</p>
                         </div>
                         <div className="flex justify-end gap-2">
                             <Button variant="outline" onClick={() => setSchedOpen(false)}>Cancel</Button>
-                            <Button onClick={schedule} disabled={busy}>{busy ? "Scheduling..." : "Schedule"}</Button>
+                            <Button onClick={schedule} disabled={busy || !sched.interviewName.trim() || !sched.regNos.length || !sched.scheduledAt}>
+                                {busy ? "Scheduling..." : `Schedule ${sched.regNos.length || ""} ${sched.regNos.length === 1 ? "student" : "students"}`}
+                            </Button>
                         </div>
                     </div>
+                    </div>
+                </DialogContent>
+            </Dialog>
+
+            <Dialog open={analyticsOpen} onOpenChange={(open) => {
+                setAnalyticsOpen(open);
+                if (!open) setAnalyticsData(null);
+            }}>
+                <DialogContent className="max-h-[90vh] max-w-5xl overflow-y-auto">
+                    <DialogHeader>
+                        <DialogTitle className="flex items-center gap-2">
+                            <BarChart3 className="h-5 w-5 text-violet-500" />
+                            Interview Analytics
+                        </DialogTitle>
+                        <DialogDescription>
+                            {analyticsData?.group?.name || "Group-level candidate progress, interview outcomes, and proctoring summary."}
+                        </DialogDescription>
+                    </DialogHeader>
+                    {analyticsLoading ? (
+                        <LoadingState label="Loading interview analytics" className="py-12" />
+                    ) : analyticsData && (
+                        <div className="space-y-5">
+                            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
+                                {[
+                                    { label: "Candidates", value: analyticsData.stats.total },
+                                    { label: "Completed", value: analyticsData.stats.statuses.completed || 0 },
+                                    { label: "In progress", value: analyticsData.stats.statuses.in_progress || 0 },
+                                    { label: "Avg. rating", value: analyticsData.stats.averageRating == null ? "—" : `${analyticsData.stats.averageRating}/5` },
+                                    { label: "AI report score", value: analyticsData.stats.averageReportScore == null ? "—" : `${analyticsData.stats.averageReportScore}/5` },
+                                    { label: "Confirmed alerts", value: analyticsData.stats.proctoringViolations },
+                                ].map((stat) => (
+                                    <div key={stat.label} className="rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-zinc-800 dark:bg-zinc-950/40">
+                                        <p className="text-xs text-slate-500 dark:text-zinc-500">{stat.label}</p>
+                                        <p className="mt-1 text-xl font-semibold text-slate-900 dark:text-white">{stat.value}</p>
+                                    </div>
+                                ))}
+                            </div>
+                            <div className="grid gap-4 lg:grid-cols-2">
+                                <section className="rounded-xl border border-slate-200 p-4 dark:border-zinc-800">
+                                    <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-800 dark:text-zinc-200">
+                                        <Users className="h-4 w-4 text-violet-500" /> Candidate status
+                                    </h3>
+                                    <div className="flex flex-wrap gap-2">
+                                        {Object.entries(analyticsData.stats.statuses).map(([status, count]) => (
+                                            <span key={status} className="rounded-full bg-slate-100 px-3 py-1 text-xs capitalize text-slate-700 dark:bg-zinc-800 dark:text-zinc-300">
+                                                {status.replace(/_/g, " ")} · {count}
+                                            </span>
+                                        ))}
+                                        {!Object.keys(analyticsData.stats.statuses).length && <p className="text-sm text-slate-500">No candidate data.</p>}
+                                    </div>
+                                    <p className="mt-4 text-xs text-slate-500 dark:text-zinc-500">
+                                        Answered {analyticsData.stats.questionsAnswered} of {analyticsData.stats.questionsPlanned} prepared questions
+                                        {analyticsData.stats.questionsPlanned
+                                            ? ` (${Math.round((analyticsData.stats.questionsAnswered / analyticsData.stats.questionsPlanned) * 100)}%)`
+                                            : ""}
+                                    </p>
+                                </section>
+                                <section className="rounded-xl border border-slate-200 p-4 dark:border-zinc-800">
+                                    <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-800 dark:text-zinc-200">
+                                        <AlertTriangle className="h-4 w-4 text-amber-500" /> Confirmed proctoring alerts
+                                    </h3>
+                                    <div className="flex flex-wrap gap-2">
+                                        {Object.entries(analyticsData.stats.violationTypes).map(([type, count]) => (
+                                            <span key={type} className="rounded-full bg-amber-50 px-3 py-1 text-xs text-amber-800 dark:bg-amber-500/10 dark:text-amber-300">
+                                                {type.replace(/_/g, " ").toLowerCase()} · {count}
+                                            </span>
+                                        ))}
+                                        {!Object.keys(analyticsData.stats.violationTypes).length && <p className="text-sm text-slate-500">No confirmed alerts recorded.</p>}
+                                    </div>
+                                </section>
+                            </div>
+                            <section className="overflow-x-auto rounded-xl border border-slate-200 dark:border-zinc-800">
+                                <Table>
+                                    <TableHeader>
+                                        <TableRow>
+                                            <TableHead>Candidate</TableHead>
+                                            <TableHead>Status</TableHead>
+                                            <TableHead>Questions</TableHead>
+                                            <TableHead>Rating</TableHead>
+                                            <TableHead>AI score</TableHead>
+                                            <TableHead>Alerts</TableHead>
+                                        </TableRow>
+                                    </TableHeader>
+                                    <TableBody>
+                                        {analyticsData.candidates.map((candidate) => (
+                                            <TableRow key={candidate.id}>
+                                                <TableCell>
+                                                    <p className="font-medium text-slate-800 dark:text-zinc-100">{candidate.studentName}</p>
+                                                    <p className="text-xs text-slate-500">{candidate.regNo}</p>
+                                                </TableCell>
+                                                <TableCell><StatusBadge value={candidate.status} /></TableCell>
+                                                <TableCell className="text-sm text-slate-600 dark:text-zinc-300">
+                                                    {candidate.answeredCount}/{candidate.plannedQuestions}
+                                                </TableCell>
+                                                <TableCell>{candidate.rating == null ? "—" : `${candidate.rating}/5`}</TableCell>
+                                                <TableCell>{candidate.reportScore == null ? "—" : `${candidate.reportScore}/5`}</TableCell>
+                                                <TableCell>{candidate.violationCount}</TableCell>
+                                            </TableRow>
+                                        ))}
+                                    </TableBody>
+                                </Table>
+                            </section>
+                        </div>
+                    )}
                 </DialogContent>
             </Dialog>
 

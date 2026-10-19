@@ -98,7 +98,7 @@ export default function StudentInterviews() {
                                         <StatusBadge value={interview.status} />
                                     </div>
                                     <h2 className="text-base font-semibold text-slate-900 dark:text-white">
-                                        {interview.type} interview
+                                        {interview.interviewName || `${interview.type} interview`}
                                     </h2>
                                     <div className="mt-3 space-y-2 text-sm text-slate-500 dark:text-zinc-400">
                                         <p className="flex items-center gap-2">
@@ -151,7 +151,7 @@ export default function StudentInterviews() {
             <Dialog open={selectedInterview !== null} onOpenChange={(open) => { if (!open) setSelectedInterview(null); }}>
                 <DialogContent className="max-h-[90vh] max-w-xl overflow-y-auto">
                     <DialogHeader>
-                        <DialogTitle>{selectedInterview?.type} interview</DialogTitle>
+                        <DialogTitle>{selectedInterview?.interviewName || `${selectedInterview?.type} interview`}</DialogTitle>
                         <DialogDescription>
                             Interview details, preparation status, and outcome.
                         </DialogDescription>
