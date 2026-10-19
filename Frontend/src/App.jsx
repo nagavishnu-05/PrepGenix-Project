@@ -5,6 +5,7 @@ import { PortalLayout } from "@/components/layout/portal-layout";
 import { useAuthStore, isInLoginGrace } from "@/store/auth-store";
 
 import StudentDashboard from "@/pages/student/StudentDashboard";
+import StudentResume from "@/pages/student/StudentResume";
 import StudentTests from "@/pages/student/StudentTests";
 import TakeTest from "@/pages/student/TakeTest";
 import StudentInterviews from "@/pages/student/StudentInterviews";
@@ -61,6 +62,7 @@ export function App() {
 
             <Route path="/student" element={<RequireRole role="student"><PortalLayout /></RequireRole>}>
                 <Route index element={<StudentDashboard />} />
+                <Route path="resume" element={<StudentResume />} />
                 <Route path="tests" element={<StudentTests />} />
                 <Route path="take/:attemptId" element={<TakeTest />} />
                 <Route path="interviews" element={<StudentInterviews />} />

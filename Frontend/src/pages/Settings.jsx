@@ -1,11 +1,10 @@
 import { useEffect, useState } from "react";
-import { User, Phone, Mail, FileText, KeyRound, Sun, Moon, Lock, Sparkles } from "lucide-react";
+import { User, Phone, Mail, KeyRound, Sun, Moon, Lock, Sparkles } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { PageHeader } from "@/components/portal/primitives";
 import { StatusBadge } from "@/components/portal/status-badge";
-import { FileInput } from "@/components/ui/file-input";
 import { useAuthStore } from "@/store/auth-store";
 import { useUIStore } from "@/store/ui-store";
 import { api } from "@/lib/api";
@@ -87,17 +86,9 @@ export default function SettingsPage() {
     const isStudent = user?.role === "student";
     const p = student || {};
     const perf = p.performance || {};
-    const [resume, setResume] = useState(null);
-    const [uploadingResume, setUploadingResume] = useState(false);
-    const [resumeError, setResumeError] = useState(null);
     const [avatarSaving, setAvatarSaving] = useState(false);
     const [avatarError, setAvatarError] = useState("");
     const [avatarDialogOpen, setAvatarDialogOpen] = useState(false);
-
-    useEffect(() => {
-        if (!isStudent || !regNo) return;
-        api.resumes.get(regNo).then(setResume).catch(() => setResume(null));
-    }, [isStudent, regNo]);
 
     return (
         <div className="space-y-6">
@@ -193,58 +184,6 @@ export default function SettingsPage() {
                                         <p className="flex items-center justify-center gap-2"><Phone className="h-4 w-4 text-slate-400 dark:text-zinc-500" />{p.mobile || "—"}</p>
                                     </div>
                                 </>
-                            )}
-                            {/* Resume Upload Card (Student) */}
-                            {isStudent && (
-                                <div className="w-full mt-4">
-                                    <Card className="border-slate-200/80 dark:border-zinc-800/80 bg-white/70 dark:bg-zinc-900/40">
-                                        <CardHeader>
-                                            <CardTitle className="text-sm font-medium text-slate-500 dark:text-zinc-400">Resume</CardTitle>
-                                            <CardDescription className="text-xs text-slate-400 dark:text-zinc-500">Upload your resume for parsing and categorization</CardDescription>
-                                        </CardHeader>
-                                        <CardContent>
-                                            <div className="space-y-3">
-                                                {resume ? (
-                                                    <div className="rounded-md border border-slate-200 dark:border-zinc-800 p-3 text-sm text-slate-700 dark:text-zinc-300">
-                                                        <p className="font-medium">{resume.fileName}</p>
-                                                        <p className="text-xs text-slate-500">Uploaded: {new Date(resume.uploadedAt).toLocaleString()}</p>
-                                                        <p className="text-xs text-slate-500">Top category: {resume.topCategory || "—"}</p>
-                                                    </div>
-                                                ) : (
-                                                    <p className="text-sm text-slate-500">No resume uploaded yet.</p>
-                                                )}
-
-                                                <FileInput
-                                                    accept=".pdf,.docx,.txt"
-                                                    placeholder="Upload resume (PDF, DOCX, TXT)"
-                                                    onChange={async (e) => {
-                                                        const f = e.target.files && e.target.files[0];
-                                                        if (!f) return;
-                                                        setResumeError(null);
-                                                        setUploadingResume(true);
-                                                        try {
-                                                            const res = await api.resumes.upload(regNo, f);
-                                                            setResume(res);
-                                                        } catch (err) {
-                                                            setResumeError(err.message);
-                                                        } finally {
-                                                            setUploadingResume(false);
-                                                        }
-                                                    }}
-                                                />
-                                                {uploadingResume && <p className="text-xs text-slate-500">Uploading...</p>}
-                                                {resume && <button className="px-3 py-1 rounded border border-slate-200 dark:border-zinc-700 text-xs text-slate-600 dark:text-zinc-300 cursor-pointer hover:bg-slate-50 dark:hover:bg-zinc-800 transition-colors" onClick={async () => {
-                                                        try {
-                                                            await api.resumes.parse(regNo);
-                                                            const updated = await api.resumes.get(regNo);
-                                                            setResume(updated);
-                                                        } catch (err) { setResumeError(err.message); }
-                                                    }}>Re-parse</button>}
-                                                {resumeError && <p className="text-xs text-red-400">{resumeError}</p>}
-                                            </div>
-                                        </CardContent>
-                                    </Card>
-                                </div>
                             )}
                         </CardContent>
                     </Card>
@@ -351,7 +290,7 @@ export default function SettingsPage() {
                         </CardContent>
                     </Card>
 
-                    {/* Student Academic & Resume Info */}
+                    {/* Student Academic Info */}
                     {isStudent && (
                         <>
                             <Card className="border-slate-200/80 dark:border-zinc-800/80 bg-white/70 dark:bg-zinc-900/40">
@@ -369,23 +308,6 @@ export default function SettingsPage() {
                                         <p className="text-2xl font-bold text-slate-900 dark:text-white">{p.cgpa || "—"}</p>
                                         <p className="text-xs text-slate-500 dark:text-zinc-500">Current CGPA</p>
                                     </div>
-                                </CardContent>
-                            </Card>
-
-                            <Card className="border-slate-200/80 dark:border-zinc-800/80 bg-white/70 dark:bg-zinc-900/40">
-                                <CardHeader><CardTitle className="flex items-center gap-2 text-sm font-medium text-slate-500 dark:text-zinc-400"><FileText className="h-4 w-4 text-violet-500 dark:text-violet-400" /> Resume Categorization</CardTitle></CardHeader>
-                                <CardContent>
-                                    {p.resumeCategories?.length ? (
-                                        <div className="flex flex-wrap gap-2">
-                                            {p.resumeCategories.map((c, i) => (
-                                                <span key={i} className="rounded-md border border-violet-200 dark:border-violet-500/30 bg-violet-50 dark:bg-violet-500/10 px-2.5 py-1 text-xs font-medium text-violet-700 dark:text-violet-300">
-                                                    {typeof c === "string" ? c : c.name}
-                                                </span>
-                                            ))}
-                                        </div>
-                                    ) : (
-                                        <p className="text-sm text-slate-500 dark:text-zinc-500">No resume categorized yet. The Placement Coordinator will upload and categorize your resume.</p>
-                                    )}
                                 </CardContent>
                             </Card>
 

@@ -91,6 +91,11 @@ router.get("/:regNo/file", authenticate, async (req, res) => {
 // GET /api/resumes/:regNo
 router.get("/:regNo", authenticate, async (req, res) => {
   try {
+    const isCoordinator = ["placement", "staff"].includes(req.user.role);
+    const isStudentOwner = req.user.role === "student" && req.user.username === req.params.regNo;
+    if (!isCoordinator && !isStudentOwner) {
+      return res.status(403).json({ error: "You cannot view this resume" });
+    }
     const resume = await col("resumes", "resume").findOne({ regNo: req.params.regNo });
     if (!resume) return res.status(404).json({ error: "Resume not found" });
     const { data, ...rest } = resume;
@@ -150,10 +155,12 @@ router.post("/:regNo/upload", authenticate, upload.single("file"), async (req, r
   }
 });
 
-// POST /api/resumes/:regNo/parse  (placement) re-parse stored resume
+// POST /api/resumes/:regNo/parse  (placement or owning student) re-parse stored resume
 router.post("/:regNo/parse", authenticate, async (req, res) => {
   try {
-    if (req.user.role !== "placement") return res.status(403).json({ error: "Placement Coordinator only" });
+    const isCoordinator = req.user.role === "placement";
+    const isStudentOwner = req.user.role === "student" && req.user.username === req.params.regNo;
+    if (!isCoordinator && !isStudentOwner) return res.status(403).json({ error: "Placement Coordinator or resume owner only" });
     const resume = await col("resumes", "resume").findOne({ regNo: req.params.regNo });
     if (!resume) return res.status(404).json({ error: "No resume uploaded for this student" });
     const ext = path.extname(resume.fileName || ".txt").toLowerCase();

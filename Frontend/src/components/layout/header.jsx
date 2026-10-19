@@ -37,6 +37,7 @@ import { LoadingState } from "@/components/portal/primitives";
 const NAV = {
     student: [
         { label: "Dashboard", href: "/student", icon: LayoutDashboard, end: true },
+        { label: "My Resume", href: "/student/resume", icon: FileText },
         { label: "My Tests", href: "/student/tests", icon: ClipboardList },
         { label: "Interviews", href: "/student/interviews", icon: Video },
         { label: "My Report", href: "/student/report", icon: BarChart3 },
