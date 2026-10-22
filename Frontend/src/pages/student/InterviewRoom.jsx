@@ -20,6 +20,7 @@ import {
     RefreshCw,
     Sun,
     Languages,
+    Square,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -28,10 +29,35 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { LoadingState } from "@/components/portal/primitives";
 import { AssessmentPausedOverlay } from "@/components/assessment/assessment-paused-overlay";
+import FaceAttentionOverlay from "@/components/assessment/face-attention-overlay";
+import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
 
 const SpeechRecognition =
     typeof window !== "undefined" ? window.SpeechRecognition || window.webkitSpeechRecognition : null;
+
+// ---- Monitoring / proctoring tuning (frontend) ----
+// The AIML service already debounces confirmed PHONE_DETECTED / EYES_CLOSED
+// violations temporally. These constants only add a light client-side guard so
+// a single transient detection never locks the UI, and so eye-visibility status
+// has a short grace period before it flips to an amber warning.
+const PHONE_CONFIRM_TICKS = 2;            // consecutive monitor ticks a confirmed phone must persist
+const EYES_INVALID_GRACE_TICKS = 2;       // consecutive invalid ticks before "Eyes not visible"
+const MONITOR_STALE_MS = 6000;            // a monitor signal older than this is treated as unavailable
+
+// Centralized monitoring state machine. Drives pause/resume/terminate UI and
+// guards answer submission so a terminated or paused interview cannot advance.
+export const MONITOR_STATE = {
+    INITIALIZING: "INITIALIZING",
+    READY: "READY",
+    RUNNING: "RUNNING",
+    PAUSED_CAMERA_UNAVAILABLE: "PAUSED_CAMERA_UNAVAILABLE",
+    PAUSED_FACE_NOT_DETECTED: "PAUSED_FACE_NOT_DETECTED",
+    PAUSED_MONITORING_UNAVAILABLE: "PAUSED_MONITORING_UNAVAILABLE",
+    TERMINATING: "TERMINATING",
+    TERMINATED: "TERMINATED",
+    COMPLETED: "COMPLETED",
+};
 
 function blobToBase64(blob) {
     return new Promise((resolve, reject) => {
@@ -111,7 +137,18 @@ export default function InterviewRoom() {
     const [violationCount, setViolationCount] = useState(0);
     const [fullscreenActive, setFullscreenActive] = useState(false);
 
+    // Centralized monitoring state + live preview signals (phone, eyes, face box).
+    const [monitorState, setMonitorState] = useState(MONITOR_STATE.INITIALIZING);
+    const [phoneWarning, setPhoneWarning] = useState(false);   // amber "possible" hint in the preview
+    const [phoneBox, setPhoneBox] = useState(null);            // last confirmed phone bbox {x,y,w,h}
+    const [eyeStatus, setEyeStatus] = useState("unknown");     // visible | not_visible | unclear | unknown
+    const [terminatedAt, setTerminatedAt] = useState(null);
+    const [terminationReason, setTerminationReason] = useState("");
+    const [confirmEndOpen, setConfirmEndOpen] = useState(false);
+    const [faceMetrics, setFaceMetrics] = useState(null);      // landmarks + attention for the preview overlay
+
     const videoRef = useRef(null);
+    const videoPipRef = useRef(null);
     const readinessRanRef = useRef(false);
     const recognitionRef = useRef(null);
     const speechBaseRef = useRef("");
@@ -124,6 +161,12 @@ export default function InterviewRoom() {
     const monitorIntervalRef = useRef(null);
     const monitorRunningRef = useRef(false);
     const proctorHealthyRef = useRef(false);
+    // Client-side confirmation guards (see constants above).
+    const phoneTicksRef = useRef(0);        // consecutive confirmed-phone ticks
+    const eyeInvalidTicksRef = useRef(0);   // consecutive eyes-not-visible ticks
+    const terminatingRef = useRef(false);   // idempotency latch for termination
+    const finalizedRef = useRef(false);     // prevents duplicate completion/cleanup
+    const monitorStateRef = useRef(MONITOR_STATE.INITIALIZING);
 
     const refConsent = interview?.consent;
 
@@ -242,6 +285,70 @@ export default function InterviewRoom() {
         }
     }, [id, stream]);
 
+    // Idempotent smartphone-confirmed termination. Repeated detector ticks call
+    // this, but the `terminatingRef` latch ensures the backend event is sent and
+    // the interview is finalized exactly once. A backend failure is surfaced but
+    // never silently swallowed, and the local lock keeps the UI terminated so a
+    // stale response cannot resume a terminated interview.
+    const terminateForPhone = useCallback(async (devices) => {
+        if (terminatingRef.current || finalizedRef.current) return;
+        terminatingRef.current = true;
+        const at = new Date();
+        setTerminatedAt(at);
+        setTerminationReason("A smartphone was detected in the camera view.");
+        setMonitorState(MONITOR_STATE.TERMINATING);
+        setPausedReason("");
+        // Stop input immediately; keep camera for a final evidence frame.
+        recognitionRef.current?.stop?.();
+        setListening(false);
+        setAnswer("");
+        const evidence = (Array.isArray(devices) ? devices : [])
+            .filter((d) => d && String(d.label || d.class || "").toLowerCase().includes("phone"))
+            .slice(0, 5);
+        const result = await recordProctoringEvent({
+            type: "PHONE_DETECTED",
+            description: "Smartphone detected during the interview. Interview terminated per proctoring policy.",
+            severity: "high",
+            metadata: {
+                devices: evidence,
+                terminatedAt: at.toISOString(),
+                reason: "smartphone_detected",
+            },
+        });
+        // Capture a final frame as evidence, then release all media.
+        try {
+            stopAllMedia();
+        } catch { /* ignore */ }
+        if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+        finalizedRef.current = true;
+        if (result && (result.terminated || result.recorded)) {
+            setMonitorState(MONITOR_STATE.TERMINATED);
+            setStep("terminated");
+            setInterview((prev) => prev ? {
+                ...prev,
+                status: "disqualified",
+                session: { ...(prev.session || {}), status: "terminated", endedAt: at, terminationReason: "smartphone_detected" },
+            } : prev);
+        } else {
+            // Backend did not confirm; keep the local lock so the candidate
+            // cannot continue on a client-only judgement, but show the overlay.
+            setMonitorState(MONITOR_STATE.TERMINATED);
+            setStep("terminated");
+        }
+    }, [recordProctoringEvent]);
+
+    // Release camera + mic + recorder in one place so termination, completion,
+    // and unmount all share the same cleanup (no duplicate stream stops).
+    const stopAllMedia = useCallback(() => {
+        if (rafRef.current) cancelAnimationFrame(rafRef.current);
+        audioCtxRef.current?.close?.().catch(() => {});
+        recognitionRef.current?.stop?.();
+        if (recorderRef.current && recorderRef.current.state === "recording") {
+            try { recorderRef.current.stop(); } catch { /* ignore */ }
+        }
+        stream?.getTracks?.().forEach((track) => track.stop());
+    }, [stream]);
+
     useEffect(() => {
         if (step !== "interview") return undefined;
 
@@ -295,6 +402,24 @@ export default function InterviewRoom() {
                 if (!response.ok) throw new Error(`Proctoring service returned HTTP ${response.status}`);
                 const result = await response.json();
                 const metrics = result.metrics || {};
+                // Phone evidence from YOLO scene detection. Only a *confirmed*
+                // device (the service applies confidence + location debounce)
+                // counts toward termination; a "possible" one is a soft hint.
+                const confirmedDevices = (Array.isArray(result.devices) ? result.devices : [])
+                    .filter((d) => d && (d.level === "confirmed" || Number(d.confidence) >= 0.35));
+                const phoneDevice = confirmedDevices.find((d) => String(d.label || d.class || "").toLowerCase().includes("phone")) || null;
+                const possiblePhone = (Array.isArray(result.devices) ? result.devices : [])
+                    .some((d) => d && d.level !== "confirmed" && String(d.label || d.class || "").toLowerCase().includes("phone"));
+                // Eye visibility: the model reports eye landmarks + closure state.
+                // "Visible" = a face with eye landmarks is present and eyes are not
+                // reported closed/prolonged. Landmark-less or absent face -> unclear.
+                const landmarkCount = Number(metrics.landmark_count || 0);
+                const eyesClosed = Boolean(metrics.eyes_closed);
+                let eyeTick = "unknown";
+                if (!result.face_present) eyeTick = "no_face";
+                else if (eyesClosed) eyeTick = "not_visible";
+                else if (landmarkCount > 0) eyeTick = "visible";
+                else eyeTick = "unclear";
                 const signal = {
                     connected: true,
                     facePresent: result.face_present === true,
@@ -304,10 +429,32 @@ export default function InterviewRoom() {
                     attention: metrics.attention_state || "unknown",
                     headDirection: metrics.head_direction || "unknown",
                     gazeDirection: metrics.gaze_direction || "unknown",
+                    metrics,
                     checkedAt: Date.now(),
                 };
                 setProctorSignal(signal);
+                setFaceMetrics(metrics);
+                setPhoneBox(phoneDevice?.box || null);
+                setPhoneWarning(Boolean(phoneDevice) || possiblePhone);
                 setProctorError("");
+
+                // Eye visibility grace period (avoids flicker on blinks/glitches).
+                if (eyeTick === "not_visible" || eyeTick === "no_face" || eyeTick === "unclear") {
+                    eyeInvalidTicksRef.current += 1;
+                } else {
+                    eyeInvalidTicksRef.current = 0;
+                }
+                const eyesInvalid = eyeInvalidTicksRef.current >= EYES_INVALID_GRACE_TICKS;
+                setEyeStatus(eyesInvalid ? (eyeTick === "no_face" ? "unclear" : "not_visible") : (eyeTick === "visible" ? "visible" : eyeStatus));
+
+                // Confirmed-phone confirmation across consecutive ticks.
+                if (phoneDevice) {
+                    phoneTicksRef.current += 1;
+                } else {
+                    phoneTicksRef.current = 0;
+                }
+                const phoneConfirmed = phoneTicksRef.current >= PHONE_CONFIRM_TICKS;
+
                 proctorHealthyRef.current = signal.facePresent
                     && signal.faceCount === 1
                     && !signal.deviceDetected
@@ -321,6 +468,11 @@ export default function InterviewRoom() {
                                 ? "Remove the detected device from the camera view."
                                 : "Look toward the screen before continuing.";
                     setPausedReason((current) => current || reason);
+                }
+
+                // Confirmed smartphone -> terminate (single idempotent call).
+                if (phoneConfirmed && !terminatingRef.current) {
+                    void terminateForPhone(signal.devices);
                 }
 
                 for (const violation of result.violations || []) {
@@ -342,6 +494,7 @@ export default function InterviewRoom() {
             } catch (e) {
                 proctorHealthyRef.current = false;
                 setProctorSignal((prev) => ({ ...prev, connected: false }));
+                setPausedReason((current) => current || "AI camera monitoring is unavailable.");
                 setProctorError(`AI camera monitoring is unavailable: ${e.message}`);
             } finally {
                 monitorRunningRef.current = false;
@@ -685,34 +838,83 @@ export default function InterviewRoom() {
         }
     };
 
+    // Single idempotent finish path. Guarded so a double-click on End Interview
+    // (or a submit racing a completion) cannot finalize the interview twice.
     const finishInterview = async () => {
+        if (finalizedRef.current || terminatingRef.current) return;
+        finalizedRef.current = true;
         setBusy(true);
+        setMonitorState(MONITOR_STATE.COMPLETED);
         try {
             await stopRecordingAndUpload();
             const res = await api.interviews.complete(id);
             if (res) setInterview(res);
+            stopAllMedia();
             if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
             setDone(true);
             setStep("done");
         } catch (e) {
-            setError(e.message);
-        } finally {
+            finalizedRef.current = false; // allow a retry on network failure
             setBusy(false);
+            setError(e.message);
+            return;
         }
+        setBusy(false);
+    };
+
+    // End Interview (top-right) -> confirmation dialog -> finalize + cleanup.
+    const confirmEndInterview = async () => {
+        setConfirmEndOpen(false);
+        await finishInterview();
     };
 
     const candidateTurns = useMemo(() => transcript.filter((t) => t.role === "candidate").length, [transcript]);
     const progress = total ? Math.min(100, Math.round((candidateTurns / total) * 100)) : 0;
     const liveCamera = Boolean(stream?.getVideoTracks?.().some((track) => track.readyState === "live"));
     const liveMicrophone = Boolean(stream?.getAudioTracks?.().some((track) => track.readyState === "live"));
+    const monitorStale = Date.now() - proctorSignal.checkedAt > MONITOR_STALE_MS;
     const cameraHealthy = proctorSignal.connected
         && proctorSignal.facePresent
         && proctorSignal.faceCount === 1
         && !proctorSignal.deviceDetected
         && proctorSignal.attention !== "distracted"
-        && Date.now() - proctorSignal.checkedAt < 5000;
+        && !monitorStale;
     const canResume = cameraHealthy && liveCamera && liveMicrophone;
-    const canContinue = canResume && fullscreenActive && online && !pausedReason;
+    const canContinue = canResume && fullscreenActive && online && !pausedReason && !terminatingRef.current
+        && monitorState !== MONITOR_STATE.TERMINATED && monitorState !== MONITOR_STATE.TERMINATING;
+
+    // Derive the centralized monitoring state whenever its inputs change.
+    useEffect(() => {
+        if (step !== "interview") return;
+        if (terminatingRef.current) return; // terminating/terminated is set imperatively
+        let next = MONITOR_STATE.RUNNING;
+        if (!liveCamera) next = MONITOR_STATE.PAUSED_CAMERA_UNAVAILABLE;
+        else if (!proctorSignal.connected || monitorStale) next = MONITOR_STATE.PAUSED_MONITORING_UNAVAILABLE;
+        else if (!proctorSignal.facePresent || proctorSignal.faceCount === 0) next = MONITOR_STATE.PAUSED_FACE_NOT_DETECTED;
+        monitorStateRef.current = next;
+        setMonitorState((prev) => (prev === next ? prev : next));
+    }, [step, liveCamera, proctorSignal.connected, proctorSignal.facePresent, proctorSignal.faceCount, monitorStale]);
+
+    // Preview status label (spec section 3): single source of truth for the PIP.
+    const previewStatus = useMemo(() => {
+        if (!liveCamera) return { label: "Camera unavailable", tone: "text-red-400" };
+        if (phoneWarning) return { label: "Smartphone detected", tone: "text-red-400" };
+        if (proctorSignal.faceCount > 1) return { label: "Multiple faces detected", tone: "text-red-400" };
+        if (!proctorSignal.connected || !proctorSignal.facePresent) return { label: "Face not detected", tone: "text-amber-400" };
+        if (eyeStatus === "not_visible") return { label: "Eyes not visible", tone: "text-amber-400" };
+        if (eyeStatus === "unclear") return { label: "Face position unclear", tone: "text-amber-400" };
+        if (eyeStatus === "visible") return { label: "Eyes visible", tone: "text-emerald-400" };
+        return { label: "Face detected", tone: "text-emerald-400" };
+    }, [liveCamera, phoneWarning, proctorSignal.connected, proctorSignal.facePresent, proctorSignal.faceCount, eyeStatus]);
+
+    // Face tracking box color: green OK, amber low-confidence/missing, red critical.
+    const faceTone = !proctorSignal.connected
+        ? { label: "Monitor offline", tone: "border-slate-300 bg-slate-100 text-slate-600 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300" }
+        : proctorSignal.faceCount > 1 || phoneWarning
+            ? { label: "Check camera", tone: "border-red-500/30 bg-red-500/10 text-red-400" }
+            : !proctorSignal.facePresent || eyeStatus === "not_visible"
+                ? { label: "Look at camera", tone: "border-amber-500/30 bg-amber-500/10 text-amber-400" }
+                : { label: "Face detected", tone: "border-emerald-500/30 bg-emerald-500/10 text-emerald-400" };
 
     if (loading) return <LoadingState label="Loading interview" className="min-h-64" />;
 
@@ -764,15 +966,30 @@ export default function InterviewRoom() {
     }
 
     if (step === "terminated") {
+        const isPhone = terminationReason?.toLowerCase().includes("smartphone")
+            || interview?.session?.terminationReason === "smartphone_detected";
         return (
             <div className="mx-auto max-w-2xl">
-                <Card className="border-red-200 bg-red-50/60 dark:border-red-500/30 dark:bg-red-500/5">
+                <Card className="border-red-300 bg-red-50/70 dark:border-red-500/40 dark:bg-red-500/10">
                     <CardContent className="space-y-4 p-8 text-center">
                         <AlertTriangle className="mx-auto h-12 w-12 text-red-500" />
-                        <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Interview stopped</h2>
-                        <p className="text-sm text-slate-600 dark:text-zinc-400">
-                            The session was terminated after three confirmed proctoring violations. Your saved answers and event log are available to the coordinator for review.
-                        </p>
+                        <h2 className="text-lg font-semibold text-slate-900 dark:text-white">INTERVIEW TERMINATED</h2>
+                        {isPhone ? (
+                            <>
+                                <p className="text-sm text-slate-700 dark:text-zinc-300">
+                                    A smartphone was detected during the interview. Your interview has been terminated according to the proctoring policy.
+                                </p>
+                                {terminatedAt && (
+                                    <p className="text-xs text-slate-500 dark:text-zinc-500">
+                                        Detected at {terminatedAt.toLocaleTimeString()} · Reason: smartphone detected in camera view
+                                    </p>
+                                )}
+                            </>
+                        ) : (
+                            <p className="text-sm text-slate-600 dark:text-zinc-400">
+                                The session was terminated after three confirmed proctoring violations. Your saved answers and event log are available to the coordinator for review.
+                            </p>
+                        )}
                         <Button onClick={() => navigate("/student/interviews")}>
                             <ArrowLeft className="h-4 w-4" /> Back to interviews
                         </Button>
@@ -985,62 +1202,80 @@ export default function InterviewRoom() {
         );
     }
 
-    // Interview
+    // Interview — dedicated full-screen shell (hides app nav; fills the viewport).
     return (
-        <div className="space-y-4">
-            {!online && (
-                <div className="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300">
-                    <WifiOff className="h-4 w-4" /> You appear to be offline. Your session is preserved; reconnect to continue submitting answers.
+        <div className="fixed inset-0 z-40 flex flex-col overflow-hidden bg-slate-50 text-slate-900 dark:bg-zinc-950 dark:text-zinc-100" style={{ height: "100dvh" }}>
+            {/* ---- Top bar ---- */}
+            <header className="flex shrink-0 items-center gap-3 border-b border-slate-200 bg-white px-4 py-2.5 dark:border-zinc-800 dark:bg-zinc-900/60">
+                <div className="flex min-w-0 flex-1 items-center gap-2">
+                    <ScanFace className="h-5 w-5 shrink-0 text-violet-500" />
+                    <div className="min-w-0">
+                        <p className="truncate text-sm font-semibold text-slate-900 dark:text-zinc-100">
+                            {interview?.interviewName || `${interview?.type || "General"} interview`}
+                        </p>
+                        <p className="text-xs text-slate-500 dark:text-zinc-500">
+                            Question {Math.min(index + 1, total)} of {total} · {consent.recording ? "Recording (opt-in)" : "Not recording"} · {violationCount}/3 violations
+                        </p>
+                    </div>
                 </div>
-            )}
-            {(pausedReason || !canContinue) && (
-                <AssessmentPausedOverlay
-                    title={`Interview paused · ${violationCount}/3 confirmed violations`}
-                    message={
-                        pausedReason ||
-                        (!proctorSignal.connected
-                            ? "Waiting for the AI camera monitor. Answers remain locked until monitoring is available."
-                            : !fullscreenActive
-                                ? "Re-enter fullscreen to continue."
-                                : "Waiting for a clear camera, face, and device check.")
-                    }
-                    proctorError={proctorError && !pausedReason ? proctorError : undefined}
-                    mediaError={mediaError}
-                    error={error}
-                    showReenableCamera={!liveCamera || !liveMicrophone}
-                    onReenableCamera={() => enableDevices(true)}
-                    canResume={canResume}
-                    onResume={resumeAfterProctoring}
-                    resumeLabel="Resume when compliant"
-                    disabled={busy}
-                />
-            )}
-            <div className="grid gap-4 lg:grid-cols-3">
-                <div className="space-y-4 lg:col-span-2">
-                    <Card className="border-slate-200/80 dark:border-zinc-800/80 bg-white/70 dark:bg-zinc-900/40">
-                        <CardContent className="space-y-4 p-6">
-                            <div className="flex flex-wrap items-center justify-between gap-2">
-                                <div className="flex flex-wrap gap-2">
-                                    <StatusPill ok={liveCamera} onLabel="Camera" offLabel="Camera off" onIcon={Video} offIcon={VideoOff} />
-                                    <StatusPill ok={liveMicrophone} onLabel="Mic" offLabel="Mic off" onIcon={Mic} offIcon={MicOff} />
-                                    <StatusPill ok={online} onLabel="Online" offLabel="Offline" onIcon={Wifi} offIcon={WifiOff} />
-                                    <StatusPill ok={proctorSignal.connected} onLabel="AI monitor" offLabel="Monitor unavailable" onIcon={ScanFace} offIcon={AlertTriangle} />
-                                </div>
-                                <span className="text-xs text-slate-500 dark:text-zinc-500">
-                                    {consent.recording ? "Recording (opt-in)" : "Not recording"} · {violationCount}/3 violations
-                                </span>
-                            </div>
+                <span className={cn(
+                    "hidden items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs sm:flex",
+                    monitorState === MONITOR_STATE.RUNNING
+                        ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-500"
+                        : "border-amber-500/30 bg-amber-500/10 text-amber-500",
+                )}>
+                    <Circle className={cn("h-2 w-2 fill-current", monitorState === MONITOR_STATE.RUNNING ? "text-emerald-500" : "text-amber-500")} />
+                    {monitorState.replace(/_/g, " ").toLowerCase()}
+                </span>
+                {!done && (
+                    <Button
+                        variant="destructive"
+                        size="sm"
+                        onClick={() => setConfirmEndOpen(true)}
+                        disabled={busy || terminatingRef.current}
+                        className="shrink-0"
+                        type="button"
+                    >
+                        <Square className="h-4 w-4" /> End interview
+                    </Button>
+                )}
+            </header>
 
-                            <div className="grid gap-2 rounded-lg border border-slate-200 p-3 text-xs text-slate-600 dark:border-zinc-800 dark:text-zinc-400 sm:grid-cols-2">
-                                <span>Face: {proctorSignal.connected ? `${proctorSignal.faceCount} detected` : "waiting for monitor"}</span>
-                                <span>Attention: {proctorSignal.attention}</span>
-                                <span>Head: {proctorSignal.headDirection}</span>
-                                <span>Gaze: {proctorSignal.gazeDirection}</span>
-                                <span>Detected devices: {proctorSignal.devices.map((device) => device.label || device.class || "device").join(", ") || "none"}</span>
-                                <span>Fullscreen: {fullscreenActive ? "active" : "required"}</span>
-                            </div>
-                            {proctorError && !pausedReason && <p className="text-sm text-red-600 dark:text-red-400">{proctorError}</p>}
+            {/* ---- Main area ---- */}
+            <main className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden p-4 lg:flex-row">
+                {!online && (
+                    <div className="flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-2 text-sm text-amber-700 dark:text-amber-300">
+                        <WifiOff className="h-4 w-4" /> You appear to be offline. Your session is preserved; reconnect to continue submitting answers.
+                    </div>
+                )}
 
+                {/* Question + answer (left/center) */}
+                <div className="flex min-h-0 flex-1 flex-col gap-3 lg:max-w-none">
+                    {(pausedReason || !canContinue) && monitorState !== MONITOR_STATE.TERMINATED && (
+                        <AssessmentPausedOverlay
+                            title={`Interview paused · ${violationCount}/3 confirmed violations`}
+                            message={
+                                pausedReason ||
+                                (!fullscreenActive
+                                    ? "Re-enter fullscreen to continue."
+                                    : !proctorSignal.connected
+                                        ? "Waiting for the AI camera monitor. Answers remain locked until monitoring is available."
+                                        : "Waiting for a clear camera, face, and device check.")
+                            }
+                            proctorError={proctorError && !pausedReason ? proctorError : undefined}
+                            mediaError={mediaError}
+                            error={error}
+                            showReenableCamera={!liveCamera || !liveMicrophone}
+                            onReenableCamera={() => enableDevices(true)}
+                            canResume={canResume}
+                            onResume={resumeAfterProctoring}
+                            resumeLabel="Resume when compliant"
+                            disabled={busy}
+                        />
+                    )}
+
+                    <Card className="min-h-0 flex-1 border-slate-200/80 dark:border-zinc-800/80 bg-white/70 dark:bg-zinc-900/40">
+                        <CardContent className="flex h-full flex-col gap-4 p-5">
                             <div className="rounded-lg border border-violet-200 bg-violet-50/60 p-5 dark:border-violet-500/20 dark:bg-violet-500/5">
                                 <p className="text-xs font-semibold uppercase tracking-wide text-violet-600 dark:text-violet-400">
                                     Question {Math.min(index + 1, total)} of {total}
@@ -1051,9 +1286,9 @@ export default function InterviewRoom() {
                                 {done && <p className="mt-2 text-sm text-emerald-600 dark:text-emerald-400">All questions answered.</p>}
                             </div>
 
-                            <div className="space-y-2">
+                            <div className="flex min-h-0 flex-1 flex-col gap-2">
                                 <Textarea
-                                    rows={5}
+                                    className="min-h-0 flex-1 resize-none"
                                     value={answer}
                                     onChange={(e) => {
                                         if (listening) {
@@ -1084,17 +1319,12 @@ export default function InterviewRoom() {
                             </div>
                         </CardContent>
                     </Card>
-
-                    {stream && consent.camera && (
-                        <div className="overflow-hidden rounded-xl border border-slate-200 bg-slate-900 dark:border-zinc-800">
-                            <video ref={videoRef} autoPlay muted playsInline className="aspect-video w-full object-cover" />
-                        </div>
-                    )}
                 </div>
 
-                <div className="space-y-4">
+                {/* Right-side panel (progress + transcript), stacks on small screens. */}
+                <aside className="flex w-full shrink-0 flex-col gap-3 lg:w-80">
                     <Card className="border-slate-200/80 dark:border-zinc-800/80 bg-white/70 dark:bg-zinc-900/40">
-                        <CardContent className="space-y-3 p-5">
+                        <CardContent className="space-y-3 p-4">
                             <div className="flex items-center gap-2 text-sm font-semibold text-slate-800 dark:text-zinc-200">
                                 <ListChecks className="h-4 w-4" /> Progress
                             </div>
@@ -1102,15 +1332,21 @@ export default function InterviewRoom() {
                                 <div className="h-full rounded-full bg-gradient-to-r from-violet-600 to-indigo-500 transition-all" style={{ width: `${progress}%` }} />
                             </div>
                             <p className="text-xs text-slate-500 dark:text-zinc-500">{candidateTurns} of {total} answered</p>
+                            <div className="flex flex-wrap gap-2 text-[11px]">
+                                <StatusPill ok={liveCamera} onLabel="Camera" offLabel="Camera off" onIcon={Video} offIcon={VideoOff} />
+                                <StatusPill ok={liveMicrophone} onLabel="Mic" offLabel="Mic off" onIcon={Mic} offIcon={MicOff} />
+                                <StatusPill ok={online} onLabel="Online" offLabel="Offline" onIcon={Wifi} offIcon={WifiOff} />
+                                <StatusPill ok={proctorSignal.connected && !monitorStale} onLabel="AI monitor" offLabel="Monitor offline" onIcon={ScanFace} offIcon={AlertTriangle} />
+                            </div>
                         </CardContent>
                     </Card>
 
-                    <Card className="border-slate-200/80 dark:border-zinc-800/80 bg-white/70 dark:bg-zinc-900/40">
-                        <CardContent className="max-h-[28rem] space-y-3 overflow-y-auto p-5">
-                            <p className="text-sm font-semibold text-slate-800 dark:text-zinc-200">Transcript</p>
+                    <Card className="min-h-0 flex-1 border-slate-200/80 dark:border-zinc-800/80 bg-white/70 dark:bg-zinc-900/40">
+                        <CardContent className="flex h-full max-h-64 flex-col overflow-y-auto p-4 lg:max-h-none">
+                            <p className="mb-2 text-sm font-semibold text-slate-800 dark:text-zinc-200">Transcript</p>
                             {transcript.length === 0 && <p className="text-xs text-slate-500 dark:text-zinc-500">Your conversation will appear here.</p>}
                             {transcript.map((turn, i) => (
-                                <div key={`${turn.questionId || "t"}-${i}`} className={`rounded-lg p-3 text-sm ${turn.role === "bot" ? "bg-slate-100 dark:bg-zinc-800/60" : "bg-violet-50 dark:bg-violet-500/10"}`}>
+                                <div key={`${turn.questionId || "t"}-${i}`} className={`mb-2 rounded-lg p-3 text-sm ${turn.role === "bot" ? "bg-slate-100 dark:bg-zinc-800/60" : "bg-violet-50 dark:bg-violet-500/10"}`}>
                                     <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-zinc-500">
                                         {turn.role === "bot" ? "Interviewer" : "You"}
                                     </p>
@@ -1119,14 +1355,80 @@ export default function InterviewRoom() {
                             ))}
                         </CardContent>
                     </Card>
+                </aside>
+            </main>
 
-                    {!done && (
-                        <Button variant="outline" className="w-full" onClick={finishInterview} disabled={busy} type="button">
-                            End interview &amp; submit
-                        </Button>
-                    )}
+            {/* ---- Bottom-right floating webcam preview ---- */}
+            {stream && consent.camera && monitorState !== MONITOR_STATE.TERMINATED && (
+                <div
+                    ref={videoPipRef}
+                    style={{ position: "fixed", right: 20, bottom: 20, width: 280, maxHeight: 200 }}
+                    className="z-50 overflow-hidden rounded-xl border border-zinc-700 bg-zinc-900 shadow-2xl"
+                >
+                    <div className="relative">
+                        <video ref={videoRef} autoPlay playsInline muted className="block w-full object-cover" style={{ aspectRatio: "4 / 3" }} />
+                        <FaceAttentionOverlay metrics={faceMetrics} width={280} height={210} />
+                        {/* Confirmed smartphone bounding box overlay (red).
+                            Detector boxes are absolute pixels in the 320px-wide
+                            monitor frame; normalize to % of the PIP. */}
+                        {phoneBox && (
+                            <div
+                                className="pointer-events-none absolute rounded border-2 border-red-500"
+                                style={{
+                                    left: `${(phoneBox.x1 / 320) * 100}%`,
+                                    top: `${(phoneBox.y1 / 240) * 100}%`,
+                                    width: `${((phoneBox.x2 - phoneBox.x1) / 320) * 100}%`,
+                                    height: `${((phoneBox.y2 - phoneBox.y1) / 240) * 100}%`,
+                                }}
+                            />
+                        )}
+                    </div>
+                    <div className="flex items-center justify-between px-2 py-1">
+                        <span className={cn("flex items-center gap-1.5 text-[11px] font-medium", previewStatus.tone)}>
+                            <span className={cn("h-1.5 w-1.5 rounded-full", previewStatus.tone.replace("text-", "bg-"))} />
+                            {previewStatus.label}
+                        </span>
+                        <span className="flex items-center gap-1 text-[10px] text-zinc-400">
+                            <span className={cn("h-1.5 w-1.5 rounded-full", faceTone.tone.includes("emerald") ? "bg-emerald-400" : faceTone.tone.includes("amber") ? "bg-amber-400" : faceTone.tone.includes("red") ? "bg-red-500" : "bg-slate-400")} />
+                            {faceTone.label}
+                        </span>
+                    </div>
                 </div>
-            </div>
+            )}
+
+            {/* ---- Smartphone-detected full-screen termination overlay ---- */}
+            {phoneWarning && !terminatingRef.current && monitorState !== MONITOR_STATE.TERMINATED && (
+                <div className="fixed inset-0 z-[90] flex items-center justify-center bg-red-950/80 p-6 backdrop-blur-sm">
+                    <div className="max-w-md rounded-xl border border-red-500/50 bg-red-900/90 p-6 text-center text-red-100 shadow-2xl">
+                        <AlertTriangle className="mx-auto mb-3 h-10 w-10 text-red-400" />
+                        <p className="text-lg font-bold tracking-wide">Smartphone detected</p>
+                        <p className="mt-2 text-sm text-red-200">Remove the phone from the camera view. The interview will be terminated if it remains visible.</p>
+                    </div>
+                </div>
+            )}
+
+            {/* ---- End Interview confirmation dialog ---- */}
+            {confirmEndOpen && (
+                <div className="fixed inset-0 z-[95] flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm">
+                    <Card className="w-full max-w-md border-slate-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
+                        <CardContent className="space-y-4 p-6">
+                            <div className="flex items-center gap-2">
+                                <AlertTriangle className="h-5 w-5 text-amber-500" />
+                                <h2 className="text-lg font-semibold text-slate-900 dark:text-white">End this interview?</h2>
+                            </div>
+                            <p className="text-sm text-slate-600 dark:text-zinc-400">
+                                Ending the interview will stop your camera and microphone and submit the {candidateTurns} answer{candidateTurns === 1 ? "" : "s"} you have given so far. This cannot be undone.
+                            </p>
+                            <div className="flex justify-end gap-2">
+                                <Button variant="outline" onClick={() => setConfirmEndOpen(false)} type="button">Keep going</Button>
+                                <Button variant="destructive" onClick={confirmEndInterview} disabled={busy} type="button">
+                                    {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Square className="h-4 w-4" />} End interview
+                                </Button>
+                            </div>
+                        </CardContent>
+                    </Card>
+                </div>
+            )}
         </div>
     );
 }
