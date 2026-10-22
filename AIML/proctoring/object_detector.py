@@ -161,8 +161,14 @@ class SceneObjectDetector:
             return {**unavailable, "error": str(exc)}
 
         # Crop inference: hunt for partial phones in overlapping tiles. Persons
-        # come only from the full frame to avoid double-counting.
-        if _CROP_INFERENCE and _CROP_TILES > 1:
+        # come only from the full frame to avoid double-counting. Crops are the
+        # expensive part (one extra YOLO pass per tile), so they only run when the
+        # full-frame pass did not already surface a phone; a clearly-visible phone
+        # is therefore caught in a single fast forward pass.
+        already_has_phone = any(
+            (d.get("label") or "").lower() == "cell phone" for d in devices
+        )
+        if _CROP_INFERENCE and _CROP_TILES > 1 and not already_has_phone:
             devices.extend(self._detect_devices_in_crops(model, frame, floor))
 
         devices = _merge_detections(devices)

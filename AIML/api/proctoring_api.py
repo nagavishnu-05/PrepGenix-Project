@@ -279,6 +279,7 @@ def enroll_frame():
     data = request.get_json(force=True)
     image_b64 = data.get("image")
     attempt_id = data.get("attemptId", "default")
+    require_identity = bool(data.get("requireIdentity"))
 
     if not image_b64:
         return jsonify({"error": "image (base64) is required"}), 400
@@ -294,6 +295,21 @@ def enroll_frame():
     if not hasattr(monitor, "_enrollment_embeddings") or not hasattr(monitor, "enroll_start"):
         return jsonify({"error": "Face monitor not available"}), 500
 
+    # A histogram fallback is not an identity descriptor. When the caller asks
+    # for identity verification we refuse to enroll rather than registering a
+    # reference that could never be matched later.
+    backend = getattr(monitor.embedding, "backend_name", "unknown")
+    if require_identity and backend not in ("insightface", "onnx_arcface"):
+        return jsonify({
+            "status": "error",
+            "error": "identity_backend_unavailable",
+            "backend": backend,
+            "message": (
+                "Identity verification is unavailable on this server. Install an "
+                "ArcFace/InsightFace embedding model before starting a proctored interview."
+            ),
+        }), 400
+
     # Enrollment is a multi-frame session: the client calls this repeatedly
     # until the reference is ready. Restarting the batch on every call pinned
     # `captured` at 1 so enrollment never completed. An already-enrolled
@@ -306,6 +322,8 @@ def enroll_frame():
             "face_detected": True,
             "face_count": 1,
             "quality": "good",
+            "backend": backend,
+            "threshold": getattr(monitor.embedding, "threshold", None),
             "message": "Face already registered for this assessment.",
         })
 

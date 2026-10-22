@@ -180,12 +180,18 @@ DEVICE_CROP_TILES = max(1, int(os.environ.get("DEVICE_CROP_TILES", "2")))
 DEVICE_CROP_OVERLAP = float(os.environ.get("DEVICE_CROP_OVERLAP", "0.2"))
 # Rolling window: at least DEVICE_WINDOW_MIN_HITS hits in the last
 # DEVICE_WINDOW_MAXLEN cycles, at a consistent on-screen location.
-DEVICE_WINDOW_MAXLEN = max(2, int(os.environ.get("DEVICE_TRACK_WINDOW", "8")))
-DEVICE_WINDOW_MIN_HITS = max(1, int(os.environ.get("DEVICE_TRACK_MIN_HITS", "3")))
+DEVICE_WINDOW_MAXLEN = max(2, int(os.environ.get("DEVICE_TRACK_WINDOW", "6")))
+DEVICE_WINDOW_MIN_HITS = max(1, int(os.environ.get("DEVICE_TRACK_MIN_HITS", "2")))
 DEVICE_LOCATION_IOU = float(os.environ.get("DEVICE_TRACK_MIN_IOU", "0.1"))
 # Confidence separating a "possible object" review signal from a confirmed
 # device. Detections below DEVICE_CONFIRMED_CONFIDENCE can only ever reach the
 # possible state; only strong detections plus temporal/location evidence confirm.
 DEVICE_CONFIRMED_CONFIDENCE = float(os.environ.get("DEVICE_CONFIRMED_CONFIDENCE", "0.35"))
+# A phone held clearly up to the camera scores far above the possible/confirmed
+# boundary. When a single frame already shows a phone at/above this confidence it
+# is confirmed immediately, with no multi-cycle tracker wait, so the violation is
+# raised on the first sighting. Weaker/partial detections still use the rolling
+# window. Only applies to the "cell phone" class (a phone is unambiguous).
+PHONE_IMMEDIATE_CONFIDENCE = float(os.environ.get("PHONE_IMMEDIATE_CONFIDENCE", "0.45"))
 # Directory for anonymized detection crops/scores saved during testing (empty = off).
 DEVICE_EVIDENCE_DIR = os.environ.get("DEVICE_EVIDENCE_DIR", "").strip()

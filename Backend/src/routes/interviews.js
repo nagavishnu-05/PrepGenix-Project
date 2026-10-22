@@ -421,6 +421,46 @@ router.post("/:id/consent", authenticate, async (req, res) => {
   }
 });
 
+// POST /api/interviews/:id/reference-face  (owning student) attest reference face
+// The embedding never reaches the backend: the AI service keeps it in memory
+// keyed by interview id. We only store proof that enrollment happened.
+router.post("/:id/reference-face", authenticate, async (req, res) => {
+  try {
+    if (req.user.role !== "student") return res.status(403).json({ error: "Candidate only" });
+    const interview = await loadInterview(req.params.id);
+    if (!interview) return res.status(404).json({ error: "Interview not found" });
+    if (interview.regNo !== req.user.username) return res.status(403).json({ error: "Access denied" });
+    if (interview.status === "completed" || interview.status === "disqualified") {
+      return res.status(400).json({ error: "This interview is no longer available" });
+    }
+    if (interview.session?.status === "terminated") {
+      return res.status(403).json({ error: "This interview was terminated after repeated proctoring violations" });
+    }
+
+    const now = new Date();
+    const capturedFrames = Number(req.body?.capturedFrames);
+    const threshold = Number(req.body?.threshold);
+    const faceReference = {
+      registered: true,
+      registeredAt: now,
+      provider: String(req.body?.provider || "insightface").slice(0, 64),
+      capturedFrames: Number.isFinite(capturedFrames) ? Math.max(0, Math.min(50, Math.round(capturedFrames))) : 0,
+      threshold: Number.isFinite(threshold) ? threshold : null,
+      candidateRegNo: interview.regNo,
+    };
+    const session = { ...(interview.session || {}), faceReference };
+
+    await col("interviews").updateOne(
+      { _id: interview._id },
+      { $set: { session, updatedAt: now } }
+    );
+    res.json({ success: true, registered: true, faceReference });
+  } catch (error) {
+    console.error("Interview reference face failed:", error.message);
+    res.status(500).json({ error: "Failed to register reference face" });
+  }
+});
+
 // POST /api/interviews/:id/session/start  (owning student) begin the interview
 router.post("/:id/session/start", authenticate, async (req, res) => {
   try {
@@ -435,6 +475,16 @@ router.post("/:id/session/start", authenticate, async (req, res) => {
     }
     if (interview.status === "completed" || interview.status === "disqualified") {
       return res.status(400).json({ error: "This interview is no longer available" });
+    }
+    // A resumed session already passed the gate when it first started, and an
+    // AI-service restart would otherwise lock the candidate out mid-interview.
+    const faceVerificationRequired = interview.proctoring?.faceVerification !== false;
+    const resuming = interview.session?.status === "in_progress";
+    if (faceVerificationRequired && !resuming && !interview.session?.faceReference?.registered) {
+      return res.status(400).json({
+        error: "Capture your reference face before starting this proctored interview",
+        code: "FACE_NOT_REGISTERED",
+      });
     }
 
     const transcript = interview.transcript || [];

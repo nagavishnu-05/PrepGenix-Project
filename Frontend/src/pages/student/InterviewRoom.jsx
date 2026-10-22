@@ -30,6 +30,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { LoadingState } from "@/components/portal/primitives";
 import { AssessmentPausedOverlay } from "@/components/assessment/assessment-paused-overlay";
 import FaceAttentionOverlay from "@/components/assessment/face-attention-overlay";
+import { InterviewFaceCapture } from "@/components/assessment/interview-face-capture";
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
 
@@ -41,7 +42,8 @@ const SpeechRecognition =
 // violations temporally. These constants only add a light client-side guard so
 // a single transient detection never locks the UI, and so eye-visibility status
 // has a short grace period before it flips to an amber warning.
-const PHONE_CONFIRM_TICKS = 2;            // consecutive monitor ticks a confirmed phone must persist
+const MONITOR_INTERVAL_MS = 1200;         // how often a frame is sent to the AI service
+const PHONE_CONFIRM_TICKS = 1;            // consecutive monitor ticks a confirmed phone must persist
 const EYES_INVALID_GRACE_TICKS = 2;       // consecutive invalid ticks before "Eyes not visible"
 const MONITOR_STALE_MS = 6000;            // a monitor signal older than this is treated as unavailable
 
@@ -139,9 +141,11 @@ export default function InterviewRoom() {
 
     // Centralized monitoring state + live preview signals (phone, eyes, face box).
     const [monitorState, setMonitorState] = useState(MONITOR_STATE.INITIALIZING);
-    const [phoneWarning, setPhoneWarning] = useState(false);   // amber "possible" hint in the preview
+    const [phoneWarning, setPhoneWarning] = useState(false);   // "possible device" hint in the preview
+    const [phoneConfirmed, setPhoneConfirmed] = useState(false); // confirmed smartphone in frame
     const [phoneBox, setPhoneBox] = useState(null);            // last confirmed phone bbox {x,y,w,h}
     const [eyeStatus, setEyeStatus] = useState("unknown");     // visible | not_visible | unclear | unknown
+    const [identityStatus, setIdentityStatus] = useState("checking");
     const [terminatedAt, setTerminatedAt] = useState(null);
     const [terminationReason, setTerminationReason] = useState("");
     const [confirmEndOpen, setConfirmEndOpen] = useState(false);
@@ -265,7 +269,9 @@ export default function InterviewRoom() {
         setProctorError("");
         try {
             const result = await api.interviews.proctoringEvent(id, event);
-            setViolationCount(result.violationCount);
+            // Events are posted fire-and-forget, so responses can arrive out of
+            // order. Never let a late response drop the displayed count.
+            setViolationCount((current) => Math.max(current, Number(result.violationCount) || 0));
             if (result.terminated) {
                 recognitionRef.current?.stop?.();
                 if (recorderRef.current?.state === "recording") recorderRef.current.stop();
@@ -402,14 +408,22 @@ export default function InterviewRoom() {
                 if (!response.ok) throw new Error(`Proctoring service returned HTTP ${response.status}`);
                 const result = await response.json();
                 const metrics = result.metrics || {};
-                // Phone evidence from YOLO scene detection. Only a *confirmed*
-                // device (the service applies confidence + location debounce)
-                // counts toward termination; a "possible" one is a soft hint.
-                const confirmedDevices = (Array.isArray(result.devices) ? result.devices : [])
-                    .filter((d) => d && (d.level === "confirmed" || Number(d.confidence) >= 0.35));
+                // Phone evidence from YOLO scene detection. The AI service owns
+                // the confirmation decision: `device_state.level` is its
+                // temporally-debounced verdict (and it may confirm a phone on the
+                // very first strong frame). Trust that verdict rather than
+                // re-deriving one from raw per-detection confidences.
+                const deviceState = result.device_state || {};
+                const deviceList = Array.isArray(result.devices) ? result.devices : [];
+                const deviceStateConfirmed = deviceState.level === "confirmed";
+                const confirmedDevices = deviceStateConfirmed
+                    ? (Array.isArray(deviceState.devices) && deviceState.devices.length ? deviceState.devices : deviceList)
+                    : deviceList.filter((d) => d && (d.level === "confirmed" || Number(d.confidence) >= 0.35));
                 const phoneDevice = confirmedDevices.find((d) => String(d.label || d.class || "").toLowerCase().includes("phone")) || null;
-                const possiblePhone = (Array.isArray(result.devices) ? result.devices : [])
-                    .some((d) => d && d.level !== "confirmed" && String(d.label || d.class || "").toLowerCase().includes("phone"));
+                const possiblePhone = !phoneDevice && (
+                    deviceState.level === "possible"
+                    || deviceList.some((d) => d && d.level !== "confirmed" && String(d.label || d.class || "").toLowerCase().includes("phone"))
+                );
                 // Eye visibility: the model reports eye landmarks + closure state.
                 // "Visible" = a face with eye landmarks is present and eyes are not
                 // reported closed/prolonged. Landmark-less or absent face -> unclear.
@@ -424,18 +438,22 @@ export default function InterviewRoom() {
                     connected: true,
                     facePresent: result.face_present === true,
                     faceCount: Number(result.face_count || 0),
-                    deviceDetected: result.device_detected === true,
+                    deviceDetected: result.device_detected === true || deviceStateConfirmed,
                     devices: Array.isArray(result.devices) ? result.devices : [],
                     attention: metrics.attention_state || "unknown",
                     headDirection: metrics.head_direction || "unknown",
                     gazeDirection: metrics.gaze_direction || "unknown",
+                    identityStatus: result.identity_status || "checking",
+                    identityBlocked: result.identity_blocked === true,
                     metrics,
                     checkedAt: Date.now(),
                 };
                 setProctorSignal(signal);
                 setFaceMetrics(metrics);
+                setIdentityStatus(signal.identityStatus);
                 setPhoneBox(phoneDevice?.box || null);
                 setPhoneWarning(Boolean(phoneDevice) || possiblePhone);
+                setPhoneConfirmed(Boolean(phoneDevice));
                 setProctorError("");
 
                 // Eye visibility grace period (avoids flicker on blinks/glitches).
@@ -453,25 +471,37 @@ export default function InterviewRoom() {
                 } else {
                     phoneTicksRef.current = 0;
                 }
-                const phoneConfirmed = phoneTicksRef.current >= PHONE_CONFIRM_TICKS;
+                const phoneConfirmedTick = phoneTicksRef.current >= PHONE_CONFIRM_TICKS;
 
-                proctorHealthyRef.current = signal.facePresent
-                    && signal.faceCount === 1
+                // Health is decided by the AIML gate where it has one. "Head
+                // turned" and "no face" are confirmed by the service only after
+                // its 30s grace window (reported through identity_status), so the
+                // client does not pause early on a passing glance or a brief
+                // frame drop. Multiple faces and a confirmed phone/mismatch stay
+                // immediate.
+                const awayStatus = signal.identityStatus === "head_turned" || signal.identityStatus === "no_face";
+                proctorHealthyRef.current = signal.connected
                     && !signal.deviceDetected
-                    && signal.attention !== "distracted";
+                    && signal.identityStatus !== "mismatch"
+                    && !(signal.faceCount > 1)
+                    && !awayStatus;
                 if (!proctorHealthyRef.current) {
-                    const reason = !signal.facePresent || signal.faceCount === 0
-                        ? "Keep your face visible to the camera."
-                        : signal.faceCount > 1
-                            ? "Only the interview candidate may be visible in the camera."
-                            : signal.deviceDetected
-                                ? "Remove the detected device from the camera view."
-                                : "Look toward the screen before continuing.";
+                    const reason = signal.faceCount > 1
+                        ? "Only the interview candidate may be visible in the camera."
+                        : signal.deviceDetected
+                            ? "Remove the detected device from the camera view."
+                            : signal.identityStatus === "mismatch"
+                                ? "Identity verification failed. Only the registered candidate may continue this interview."
+                                : signal.identityStatus === "head_turned"
+                                    ? "You have looked away from the screen for too long. Face the screen to continue."
+                                    : signal.identityStatus === "no_face"
+                                        ? "Keep your face visible to the camera."
+                                        : "Look toward the screen before continuing.";
                     setPausedReason((current) => current || reason);
                 }
 
                 // Confirmed smartphone -> terminate (single idempotent call).
-                if (phoneConfirmed && !terminatingRef.current) {
+                if (phoneConfirmedTick && !terminatingRef.current) {
                     void terminateForPhone(signal.devices);
                 }
 
@@ -488,6 +518,7 @@ export default function InterviewRoom() {
                             attention: signal.attention,
                             headDirection: signal.headDirection,
                             gazeDirection: signal.gazeDirection,
+                            identityStatus: signal.identityStatus,
                         },
                     });
                 }
@@ -502,7 +533,7 @@ export default function InterviewRoom() {
         };
 
         void monitor();
-        monitorIntervalRef.current = window.setInterval(monitor, 2000);
+        monitorIntervalRef.current = window.setInterval(monitor, MONITOR_INTERVAL_MS);
         return () => {
             document.removeEventListener("visibilitychange", onVisibilityChange);
             document.removeEventListener("fullscreenchange", onFullscreenChange);
@@ -679,6 +710,59 @@ export default function InterviewRoom() {
         }
     };
 
+    // Extracted so the consent/start path and the resume path share the same
+    // fullscreen requirement before the interview shell opens.
+    const faceVerificationRequired = interview?.proctoring?.faceVerification !== false;
+    const requiresFaceCapture = faceVerificationRequired && !interview?.session?.faceReference?.registered;
+
+    const enterFullscreen = async () => {
+        if (document.fullscreenElement) return;
+        if (!document.documentElement.requestFullscreen) {
+            throw new Error("This browser does not support fullscreen, which is required for this interview.");
+        }
+        await document.documentElement.requestFullscreen();
+        if (!document.fullscreenElement) throw new Error("Fullscreen is required to continue the interview.");
+    };
+
+    const startSessionNow = async (media) => {
+        const res = await api.interviews.startSession(id);
+        setQuestion(res.question);
+        setIndex(res.index);
+        setTotal(res.total);
+        setTranscript((prev) => (prev.some((t) => t.role === "bot" && t.questionId === res.question.id) ? prev : [...prev, { role: "bot", questionId: res.question.id, text: res.question.text }]));
+        if (consent.recording) startRecording(media);
+        setStep("interview");
+    };
+
+    // Persist the attestation returned by the backend so a later "Start" click
+    // knows the reference face exists and does not re-route to the capture gate.
+    const handleFaceVerified = useCallback((faceReference) => {
+        setInterview((prev) => (prev ? {
+            ...prev,
+            session: { ...(prev.session || {}), faceReference },
+        } : prev));
+    }, []);
+
+    // After the face gate: resume in-place when the session already started,
+    // otherwise begin the interview for the first time.
+    const continueAfterFaceCapture = async () => {
+        setBusy(true);
+        setError("");
+        try {
+            if (interview?.session?.status === "in_progress") {
+                await resumeSession();
+                return;
+            }
+            let media = stream;
+            if (!media) media = await enableDevices(true);
+            await startSessionNow(media);
+        } catch (e) {
+            setError(e.message);
+        } finally {
+            setBusy(false);
+        }
+    };
+
     const beginSession = async () => {
         setBusy(true);
         setError("");
@@ -686,13 +770,7 @@ export default function InterviewRoom() {
             if (!consent.camera || !consent.microphone) {
                 throw new Error("Camera and microphone access are required for strict proctoring.");
             }
-            if (!document.fullscreenElement) {
-                if (!document.documentElement.requestFullscreen) {
-                    throw new Error("This browser does not support fullscreen, which is required for this interview.");
-                }
-                await document.documentElement.requestFullscreen();
-            }
-            if (!document.fullscreenElement) throw new Error("Fullscreen is required to start the interview.");
+            await enterFullscreen();
             setFullscreenActive(true);
 
             let media = stream;
@@ -701,13 +779,11 @@ export default function InterviewRoom() {
             if (!media.getVideoTracks().some((track) => track.readyState === "live")) {
                 throw new Error("A live camera is required to start the interview.");
             }
-            const res = await api.interviews.startSession(id);
-            setQuestion(res.question);
-            setIndex(res.index);
-            setTotal(res.total);
-            setTranscript((prev) => (prev.some((t) => t.role === "bot" && t.questionId === res.question.id) ? prev : [...prev, { role: "bot", questionId: res.question.id, text: res.question.text }]));
-            if (consent.recording) startRecording(media);
-            setStep("interview");
+            if (requiresFaceCapture) {
+                setStep("face");
+                return;
+            }
+            await startSessionNow(media);
         } catch (e) {
             setError(e.message);
         } finally {
@@ -718,25 +794,33 @@ export default function InterviewRoom() {
     const resumeSession = async () => {
         setError("");
         try {
-            if (!document.fullscreenElement) {
-                if (!document.documentElement.requestFullscreen) {
-                    throw new Error("This browser does not support fullscreen, which is required for this interview.");
-                }
-                await document.documentElement.requestFullscreen();
-            }
-            if (!document.fullscreenElement) throw new Error("Fullscreen is required to resume the interview.");
+            await enterFullscreen();
         } catch (e) {
             setError(e.message);
             return;
         }
         setFullscreenActive(true);
+        let media = stream;
+        const liveCameraNow = Boolean(media?.getVideoTracks?.().some((track) => track.readyState === "live"));
+        const liveMicNow = Boolean(media?.getAudioTracks?.().some((track) => track.readyState === "live"));
+        if (!liveCameraNow || !liveMicNow) {
+            media = await enableDevices(true);
+            if (!media) {
+                setError("Camera and microphone must be enabled to resume the interview.");
+                return;
+            }
+        }
+        if (requiresFaceCapture) {
+            setStep("face");
+            return;
+        }
         // The last bot turn is always the current, unanswered question.
         const botTurns = transcript.filter((t) => t.role === "bot");
         const current = botTurns[botTurns.length - 1] || null;
         setQuestion(current ? { id: current.questionId, text: current.text } : null);
         setIndex(Math.max(0, (interview?.session?.answeredCount || 0)));
         setStep("interview");
-        if (consent.recording) startRecording(stream);
+        if (consent.recording) startRecording(media);
     };
 
     const resumeAfterProctoring = async () => {
@@ -874,45 +958,55 @@ export default function InterviewRoom() {
     const liveMicrophone = Boolean(stream?.getAudioTracks?.().some((track) => track.readyState === "live"));
     const monitorStale = Date.now() - proctorSignal.checkedAt > MONITOR_STALE_MS;
     const cameraHealthy = proctorSignal.connected
-        && proctorSignal.facePresent
-        && proctorSignal.faceCount === 1
+        && proctorSignal.identityStatus !== "mismatch"
+        && proctorSignal.identityStatus !== "head_turned"
+        && proctorSignal.identityStatus !== "no_face"
+        && proctorSignal.faceCount <= 1
         && !proctorSignal.deviceDetected
-        && proctorSignal.attention !== "distracted"
         && !monitorStale;
     const canResume = cameraHealthy && liveCamera && liveMicrophone;
     const canContinue = canResume && fullscreenActive && online && !pausedReason && !terminatingRef.current
+        && identityStatus !== "mismatch"
         && monitorState !== MONITOR_STATE.TERMINATED && monitorState !== MONITOR_STATE.TERMINATING;
 
-    // Derive the centralized monitoring state whenever its inputs change.
+    // Derive the centralized monitoring state whenever its inputs change. The
+    // face-away states only pause once the AIML gate confirms them (after its
+    // 30s grace), so a blink, a partial frame, or a quick glance does not stall
+    // the candidate.
     useEffect(() => {
         if (step !== "interview") return;
         if (terminatingRef.current) return; // terminating/terminated is set imperatively
         let next = MONITOR_STATE.RUNNING;
         if (!liveCamera) next = MONITOR_STATE.PAUSED_CAMERA_UNAVAILABLE;
         else if (!proctorSignal.connected || monitorStale) next = MONITOR_STATE.PAUSED_MONITORING_UNAVAILABLE;
-        else if (!proctorSignal.facePresent || proctorSignal.faceCount === 0) next = MONITOR_STATE.PAUSED_FACE_NOT_DETECTED;
+        else if (proctorSignal.faceCount > 1) next = MONITOR_STATE.PAUSED_FACE_NOT_DETECTED;
+        else if (proctorSignal.identityStatus === "no_face" || proctorSignal.identityStatus === "head_turned") next = MONITOR_STATE.PAUSED_FACE_NOT_DETECTED;
         monitorStateRef.current = next;
         setMonitorState((prev) => (prev === next ? prev : next));
-    }, [step, liveCamera, proctorSignal.connected, proctorSignal.facePresent, proctorSignal.faceCount, monitorStale]);
+    }, [step, liveCamera, proctorSignal.connected, proctorSignal.faceCount, proctorSignal.identityStatus, monitorStale]);
 
     // Preview status label (spec section 3): single source of truth for the PIP.
     const previewStatus = useMemo(() => {
         if (!liveCamera) return { label: "Camera unavailable", tone: "text-red-400" };
-        if (phoneWarning) return { label: "Smartphone detected", tone: "text-red-400" };
+        if (phoneConfirmed) return { label: "Smartphone detected", tone: "text-red-400" };
         if (proctorSignal.faceCount > 1) return { label: "Multiple faces detected", tone: "text-red-400" };
+        if (identityStatus === "mismatch") return { label: "Identity verification failed", tone: "text-red-400" };
+        if (identityStatus === "head_turned") return { label: "Looking away too long", tone: "text-red-400" };
+        if (identityStatus === "no_face") return { label: "Face not detected", tone: "text-red-400" };
+        if (phoneWarning) return { label: "Possible device in view", tone: "text-amber-400" };
         if (!proctorSignal.connected || !proctorSignal.facePresent) return { label: "Face not detected", tone: "text-amber-400" };
         if (eyeStatus === "not_visible") return { label: "Eyes not visible", tone: "text-amber-400" };
         if (eyeStatus === "unclear") return { label: "Face position unclear", tone: "text-amber-400" };
         if (eyeStatus === "visible") return { label: "Eyes visible", tone: "text-emerald-400" };
         return { label: "Face detected", tone: "text-emerald-400" };
-    }, [liveCamera, phoneWarning, proctorSignal.connected, proctorSignal.facePresent, proctorSignal.faceCount, eyeStatus]);
+    }, [liveCamera, phoneConfirmed, phoneWarning, proctorSignal.connected, proctorSignal.facePresent, proctorSignal.faceCount, identityStatus, eyeStatus]);
 
     // Face tracking box color: green OK, amber low-confidence/missing, red critical.
     const faceTone = !proctorSignal.connected
         ? { label: "Monitor offline", tone: "border-slate-300 bg-slate-100 text-slate-600 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300" }
-        : proctorSignal.faceCount > 1 || phoneWarning
+        : proctorSignal.faceCount > 1 || phoneConfirmed || identityStatus === "mismatch"
             ? { label: "Check camera", tone: "border-red-500/30 bg-red-500/10 text-red-400" }
-            : !proctorSignal.facePresent || eyeStatus === "not_visible"
+            : !proctorSignal.facePresent || eyeStatus === "not_visible" || phoneWarning
                 ? { label: "Look at camera", tone: "border-amber-500/30 bg-amber-500/10 text-amber-400" }
                 : { label: "Face detected", tone: "border-emerald-500/30 bg-emerald-500/10 text-emerald-400" };
 
@@ -1068,6 +1162,23 @@ export default function InterviewRoom() {
                         </div>
                     </CardContent>
                 </Card>
+            </div>
+        );
+    }
+
+    if (step === "face") {
+        return (
+            <div className="mx-auto max-w-3xl space-y-4">
+                <InterviewFaceCapture
+                    interviewId={id}
+                    attemptId={`interview_${id}`}
+                    stream={stream}
+                    busy={busy}
+                    onVerified={handleFaceVerified}
+                    onContinue={continueAfterFaceCapture}
+                    onExit={() => navigate("/student/interviews")}
+                />
+                {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
             </div>
         );
     }
@@ -1249,6 +1360,13 @@ export default function InterviewRoom() {
                     </div>
                 )}
 
+                {identityStatus === "mismatch" && (
+                    <div className="flex items-center gap-2 rounded-lg border border-red-500/40 bg-red-500/15 px-4 py-2 text-sm font-semibold text-red-600 dark:text-red-300">
+                        <AlertTriangle className="h-4 w-4 shrink-0" />
+                        IDENTITY VERIFICATION FAILED · Only the registered candidate may continue this interview.
+                    </div>
+                )}
+
                 {/* Question + answer (left/center) */}
                 <div className="flex min-h-0 flex-1 flex-col gap-3 lg:max-w-none">
                     {(pausedReason || !canContinue) && monitorState !== MONITOR_STATE.TERMINATED && (
@@ -1337,6 +1455,13 @@ export default function InterviewRoom() {
                                 <StatusPill ok={liveMicrophone} onLabel="Mic" offLabel="Mic off" onIcon={Mic} offIcon={MicOff} />
                                 <StatusPill ok={online} onLabel="Online" offLabel="Offline" onIcon={Wifi} offIcon={WifiOff} />
                                 <StatusPill ok={proctorSignal.connected && !monitorStale} onLabel="AI monitor" offLabel="Monitor offline" onIcon={ScanFace} offIcon={AlertTriangle} />
+                                <StatusPill
+                                    ok={identityStatus === "verified"}
+                                    onLabel="Identity verified"
+                                    offLabel={identityStatus === "mismatch" ? "Identity mismatch" : identityStatus === "unregistered" ? "Identity unavailable" : "Verifying identity"}
+                                    onIcon={ShieldCheck}
+                                    offIcon={ScanFace}
+                                />
                             </div>
                         </CardContent>
                     </Card>
@@ -1397,7 +1522,7 @@ export default function InterviewRoom() {
             )}
 
             {/* ---- Smartphone-detected full-screen termination overlay ---- */}
-            {phoneWarning && !terminatingRef.current && monitorState !== MONITOR_STATE.TERMINATED && (
+            {phoneConfirmed && !terminatingRef.current && monitorState !== MONITOR_STATE.TERMINATED && (
                 <div className="fixed inset-0 z-[90] flex items-center justify-center bg-red-950/80 p-6 backdrop-blur-sm">
                     <div className="max-w-md rounded-xl border border-red-500/50 bg-red-900/90 p-6 text-center text-red-100 shadow-2xl">
                         <AlertTriangle className="mx-auto mb-3 h-10 w-10 text-red-400" />

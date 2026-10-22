@@ -124,6 +124,7 @@ export const api = {
         plan: (id) => request(`/interviews/${id}/plan`),
         transcript: (id) => request(`/interviews/${id}/transcript`),
         consent: (id, data) => request(`/interviews/${id}/consent`, { method: "POST", body: data }),
+        registerReferenceFace: (id, data) => request(`/interviews/${id}/reference-face`, { method: "POST", body: data }),
         startSession: (id) => request(`/interviews/${id}/session/start`, { method: "POST", body: {} }),
         answer: (id, data) => request(`/interviews/${id}/answer`, { method: "POST", body: data }),
         proctoringEvent: (id, data) => request(`/interviews/${id}/proctoring-event`, { method: "POST", body: data }),

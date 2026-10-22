@@ -22,7 +22,12 @@ from .config import (
     DEVICE_WINDOW_MIN_HITS,
     DEVICE_LOCATION_IOU,
     DEVICE_CONFIRMED_CONFIDENCE,
+    PHONE_IMMEDIATE_CONFIDENCE,
 )
+
+
+def _is_phone(device: dict) -> bool:
+    return "phone" in (device.get("label") or "").lower()
 
 
 def _iou(a: dict, b: dict) -> float:
@@ -48,11 +53,13 @@ class DeviceTracker:
         min_hits: int = DEVICE_WINDOW_MIN_HITS,
         min_iou: float = DEVICE_LOCATION_IOU,
         confirmed_confidence: float = DEVICE_CONFIRMED_CONFIDENCE,
+        phone_immediate_confidence: float = PHONE_IMMEDIATE_CONFIDENCE,
     ):
         self.window = max(2, int(window))
         self.min_hits = max(1, int(min_hits))
         self.min_iou = max(0.0, float(min_iou))
         self.confirmed_confidence = float(confirmed_confidence)
+        self.phone_immediate_confidence = float(phone_immediate_confidence)
         self._hits: deque[dict | None] = deque(maxlen=self.window)
         self._last_state: dict = self._empty_state()
 
@@ -66,7 +73,28 @@ class DeviceTracker:
         best_confidence = max((h["confidence"] for h in hits), default=0.0)
         consistent = self._max_consistent_cluster(hits) >= self.min_hits if hits else False
 
-        if hit_count >= self.min_hits and consistent and best_confidence >= self.confirmed_confidence:
+        # A clearly-visible phone is unambiguous: confirm the moment one frame
+        # shows it at/above the immediate confidence, instead of waiting for the
+        # rolling window. This is what makes phone detection feel instant.
+        strong_phone = any(
+            _is_phone(h) and h.get("confidence", 0.0) >= self.phone_immediate_confidence
+            for h in hits
+        )
+
+        # Otherwise fall back to the rolling window. A phone that stays put is
+        # confirmed once enough consistent hits agree even if each individual
+        # score is only moderate; other device classes still need a strong hit.
+        persistent_phone = (
+            hit_count >= max(self.min_hits, min(3, self.window))
+            and any(_is_phone(h) for h in hits)
+        )
+        strong_evidence = (
+            hit_count >= self.min_hits
+            and consistent
+            and (best_confidence >= self.confirmed_confidence or persistent_phone)
+        )
+
+        if strong_phone or strong_evidence:
             level = "confirmed"
         elif hit_count >= 1:
             level = "possible"

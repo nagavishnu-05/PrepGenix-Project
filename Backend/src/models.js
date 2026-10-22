@@ -226,7 +226,16 @@ const models = {
       status: "not_started | consented | in_progress | completed",
       startedAt: "Date | null",
       endedAt: "Date | null",
-      answeredCount: "number"
+      answeredCount: "number",
+      // Attestation only. The reference embedding lives in the AI service.
+      faceReference: {
+        registered: "boolean",
+        registeredAt: "Date",
+        provider: "string",
+        capturedFrames: "number",
+        threshold: "number | null",
+        candidateRegNo: "string"
+      }
     },
     // Evidence-based report generated from the transcript (never accept/reject).
     report: {

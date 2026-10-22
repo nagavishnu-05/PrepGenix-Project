@@ -36,7 +36,6 @@ from face_detection.utils.config import (
     REFERENCE_CAPTURE_FRAMES,
     REFERENCE_MIN_VALID_FRAMES,
     FACE_MATCH_THRESHOLD,
-    SCENE_DETECTION_EVERY_N_CYCLES,
     ENROLLMENT_MIN_QUALITY,
     LIVENESS_ENABLED,
 )
@@ -56,6 +55,12 @@ _OBJECT_DETECTION_ENABLED = os.environ.get("PROCTORING_OBJECT_DETECTION_ENABLED"
 # Upper bound on faces embedded per frame. Enough to catch a handful of people
 # in shot while keeping the per-cycle cost predictable.
 MAX_FACES_FOR_IDENTITY = int(os.environ.get("MAX_FACES_FOR_IDENTITY", "4"))
+
+# The phone detector is the most expensive signal in a cycle. Normally it runs
+# on every other frame so a phone is confirmed quickly, but re-running it while
+# the scene has not changed (no face, identical cached detections) only adds
+# latency. This is the slower cadence used when the scene looks unchanged.
+STATIC_SCENE_EVERY_N_CYCLES = max(1, int(os.environ.get("STATIC_SCENE_EVERY_N_CYCLES", "3")))
 
 # Coarse ordering so the enrollment gate can reject anything below a threshold.
 _QUALITY_RANK = {"unusable": 0, "poor": 1, "acceptable": 2, "good": 3}
@@ -163,10 +168,11 @@ class FaceMonitor:
             }
 
         best = det["faces"][0]
-        face_crop = crop_face(frame, {
-            "x1": best["bbox"][0], "y1": best["bbox"][1],
-            "x2": best["bbox"][2], "y2": best["bbox"][3],
-        })
+        face_box = {
+            "x1": int(best["bbox"][0]), "y1": int(best["bbox"][1]),
+            "x2": int(best["bbox"][2]), "y2": int(best["bbox"][3]),
+        }
+        face_crop = crop_face(frame, face_box)
         if face_crop is None:
             return {
                 "status": "capturing",
@@ -175,6 +181,7 @@ class FaceMonitor:
                 "face_detected": True,
                 "face_count": 1,
                 "quality": "poor",
+                "box": face_box,
                 "message": "Could not extract face region.",
             }
 
@@ -189,6 +196,7 @@ class FaceMonitor:
                 "face_detected": True,
                 "face_count": 1,
                 "quality": quality_info["quality"],
+                "box": face_box,
                 "reasons": quality_info.get("reasons", []),
                 "message": self._enrollment_quality_message(quality_info),
             }
@@ -204,6 +212,7 @@ class FaceMonitor:
                 "face_detected": True,
                 "face_count": 1,
                 "quality": quality_info["quality"],
+                "box": face_box,
                 "message": "Could not generate face embedding.",
             }
 
@@ -223,6 +232,9 @@ class FaceMonitor:
                     "face_detected": True,
                     "face_count": 1,
                     "quality": quality_info["quality"],
+                    "box": face_box,
+                    "backend": self.embedding.backend_name,
+                    "threshold": self.embedding.threshold,
                     "message": "Face captured successfully. Your identity has been registered for this assessment.",
                 }
             else:
@@ -239,6 +251,7 @@ class FaceMonitor:
             "face_detected": True,
             "face_count": 1,
             "quality": quality_info["quality"],
+            "box": face_box,
             "message": f"Capturing face... ({captured}/{REFERENCE_CAPTURE_FRAMES}). Keep your face visible.",
         }
 
@@ -341,13 +354,20 @@ class FaceMonitor:
         face_present = det["face_present"]
 
         # One YOLO pass yields both extra persons and prohibited electronics. It
-        # is the most expensive signal in the cycle and phones do not move fast,
-        # so it runs on a slower cadence and the previous result is reused in
-        # between.
+        # is the most expensive signal in the cycle, but a phone must be caught
+        # quickly, so while a face is present it runs every cycle. On a *quiet*
+        # frame (no face and no cached devices/persons) it falls back to a slower
+        # cadence so an empty scene does not burn CPU at full rate.
         self._scene_cycle += 1
+        quiet_scene = (
+            not face_present
+            and not self._last_scene.get("devices")
+            and not self._last_scene.get("personCount")
+        )
+        cadence = STATIC_SCENE_EVERY_N_CYCLES if quiet_scene else 1
         run_scene = (
             self.scene_detector is not None
-            and (self._scene_cycle % max(1, SCENE_DETECTION_EVERY_N_CYCLES) == 1)
+            and (self._scene_cycle % max(1, cadence) == 1)
         )
         if run_scene:
             self._last_scene = self.scene_detector.detect(frame) or {}

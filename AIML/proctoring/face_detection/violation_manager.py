@@ -60,6 +60,10 @@ NO_FACE_ABSENCE_GRACE_SECONDS = float(os.environ.get("NO_FACE_ABSENCE_GRACE_SECO
 LOOKING_AWAY_WINDOW_SECONDS = float(os.environ.get("LOOKING_AWAY_WINDOW_SECONDS", "6"))
 EYES_CLOSED_WINDOW_SECONDS = float(os.environ.get("EYES_CLOSED_WINDOW_SECONDS", "8"))
 HEAD_TURNED_WINDOW_SECONDS = float(os.environ.get("HEAD_TURNED_WINDOW_SECONDS", "6"))
+# A candidate who looks away / turns their head away from the screen for this
+# long is treated as not present. The same window applies when the face leaves
+# the frame entirely, so "face not visible" and "head turned" behave the same.
+HEAD_TURNED_AWAY_GRACE_SECONDS = float(os.environ.get("HEAD_TURNED_AWAY_GRACE_SECONDS", "30"))
 
 _ATTENTION_VIOLATION_SEVERITY = {
     "LOOKING_AWAY": "low",
@@ -154,6 +158,21 @@ class ViolationManager:
         self._identity_signal = Sustained(
             IDENTITY_MISMATCH_CONFIRM_SECONDS, IDENTITY_MISMATCH_MIN_SAMPLES, name="identity_mismatch"
         )
+        # "Candidate is not really present" = face turned away from the screen or
+        # missing from the frame, continuously for the same 30s grace window. One
+        # shared signal (#1) drives both, plus a separate no-face timer (#2) so a
+        # missing face still counts once if the head pose is unreadable.
+        self._head_away_signal = Sustained(
+            HEAD_TURNED_AWAY_GRACE_SECONDS, 1, name="head_turned_away"
+        )
+        self._no_face_away_signal = Sustained(
+            HEAD_TURNED_AWAY_GRACE_SECONDS, 1, name="no_face_away"
+        )
+        # One continuous departure (turn away *or* leave the frame) counts once.
+        # These latches clear the moment the readable condition comes back, so an
+        # unbroken 5-minute turn is a single violation, not one every 30s.
+        self._head_away_counted = False
+        self._no_face_away_counted = False
 
         self._active_events: dict[str, dict] = {}
         self._cycle_count = 0
@@ -220,14 +239,20 @@ class ViolationManager:
         self._track_face_absence(detection_result, new_violations, new_info_logs, grace=False)
 
         no_face = not detection_result.get("face_present", True)
-        if self._no_face_signal.update(no_face):
+        # A face that is missing from the frame for the full grace window (30s by
+        # default) counts once. The latch clears when the face returns, so one
+        # unbroken absence is a single violation regardless of its length.
+        if not no_face:
+            self._no_face_away_counted = False
+        if self._no_face_away_signal.update(no_face) and not self._no_face_away_counted:
             v = self._confirm_violation("NO_FACE", {
-                "description": "No face detected in camera feed.",
+                "description": f"No face detected in the camera feed for over {HEAD_TURNED_AWAY_GRACE_SECONDS:.0f} seconds.",
                 "confidence": detection_result.get("similarity"),
-                "severity": "medium",
+                "severity": "high",
                 "absence_duration_seconds": round(self._absence_duration(), 2),
-            })
+            }, window=max(NO_FACE_CONFIRM_SECONDS, HEAD_TURNED_AWAY_GRACE_SECONDS))
             if v:
+                self._no_face_away_counted = True
                 new_violations.append(v)
 
         face_count = detection_result.get("face_count", 0)
@@ -294,6 +319,7 @@ class ViolationManager:
             self._identity_signal.update(True)
             # A visible face can never also be "no face".
             self._no_face_signal.reset()
+            self._no_face_away_signal.reset()
             if self._identity_signal.confirmed:
                 v = self._confirm_violation("IDENTITY_MISMATCH", {
                     "description": "Identity mismatch detected. A different person may be present.",
@@ -357,6 +383,10 @@ class ViolationManager:
         self._no_face_signal.reset()
         self._multiple_face_signal.reset()
         self._identity_signal.reset()
+        self._head_away_signal.reset()
+        self._no_face_away_signal.reset()
+        self._head_away_counted = False
+        self._no_face_away_counted = False
 
     def _clear_identity_gate(self):
         self._gate_blocked_since = None
@@ -378,9 +408,7 @@ class ViolationManager:
         if grace:
             # Do not accuse a candidate during the warm-up window.
             self._clear_identity_gate()
-            self._no_face_signal.reset()
-            self._multiple_face_signal.reset()
-            self._identity_signal.reset()
+            self._reset_identity_signals()
             self._gate_status = idle["identity_status"]
             return idle
         if not detection_result.get("enrolled", False):
@@ -409,11 +437,17 @@ class ViolationManager:
                 "The face on camera does not match the registered candidate. "
                 "The registered candidate must return to continue."
             )
-        elif not face_present and self._no_face_signal.confirmed:
+        elif not face_present and self._no_face_away_signal.confirmed:
             status = "no_face"
             reason = (
                 "No face is visible. The registered candidate must be in front "
                 "of the camera to continue."
+            )
+        elif detection_result.get("head_turned") and self._head_away_signal.confirmed:
+            status = "head_turned"
+            reason = (
+                "You have looked away from the screen for too long. Face the "
+                "screen to continue."
             )
         elif match is True:
             status = "verified"
@@ -445,6 +479,8 @@ class ViolationManager:
                 "no_face": self._no_face_signal.snapshot(),
                 "multiple_faces": self._multiple_face_signal.snapshot(),
                 "identity_mismatch": self._identity_signal.snapshot(),
+                "head_turned_away": self._head_away_signal.snapshot(),
+                "no_face_away": self._no_face_away_signal.snapshot(),
             },
         }
 
@@ -511,24 +547,35 @@ class ViolationManager:
                 new_violations.append(v)
 
         head_turned = bool(detection_result.get("head_turned", False))
-        # AttentionAnalyzer already applies the configured duration and frame threshold.
-        head_turned_confirmed = head_turned and not self._head_turned_active
+        # The attention analyzer confirms a head turn only after the hold window.
+        # Here we count one violation once the candidate has held the turn away
+        # from the screen for the full grace window (30s by default), matching
+        # the face-absent rule below.
+        self._head_away_signal.update(head_turned)
+        head_turned_confirmed = self._head_away_signal.confirmed
         self._head_turned_active = head_turned
+        if not head_turned:
+            # The candidate faced the screen again: the next departure is a new
+            # event and may count once more.
+            self._head_away_counted = False
         if head_turned:
             self._active_events["HEAD_TURNED_AWAY"] = {
                 "type": "HEAD_TURNED_AWAY",
                 "timestamp": time.time(),
                 "head_direction": detection_result.get("head_direction", "unknown"),
+                "held_seconds": self._head_away_signal.snapshot().get("required_seconds", 0.0),
             }
         else:
             self._active_events.pop("HEAD_TURNED_AWAY", None)
-        if head_turned_confirmed:
+        if head_turned_confirmed and not self._head_away_counted:
             v = self._confirm_violation("HEAD_TURNED_AWAY", {
-                "description": f"Head turned {detection_result.get('head_direction', 'away')} for an extended period.",
+                "description": f"Candidate looked away / head turned {detection_result.get('head_direction', 'away')} for over {HEAD_TURNED_AWAY_GRACE_SECONDS:.0f} seconds.",
                 "head_direction": detection_result.get("head_direction", "unknown"),
-                "severity": _ATTENTION_VIOLATION_SEVERITY["HEAD_TURNED_AWAY"],
-            }, window=HEAD_TURNED_WINDOW_SECONDS)
+                "held_seconds": HEAD_TURNED_AWAY_GRACE_SECONDS,
+                "severity": "high",
+            }, window=max(HEAD_TURNED_WINDOW_SECONDS, HEAD_TURNED_AWAY_GRACE_SECONDS))
             if v:
+                self._head_away_counted = True
                 new_violations.append(v)
 
         eyes_closed = bool(detection_result.get("eyes_closed", False))
@@ -658,6 +705,8 @@ class ViolationManager:
                 "no_face": self._no_face_signal.snapshot(),
                 "multiple_faces": self._multiple_face_signal.snapshot(),
                 "identity_mismatch": self._identity_signal.snapshot(),
+                "head_turned_away": self._head_away_signal.snapshot(),
+                "no_face_away": self._no_face_away_signal.snapshot(),
             },
         }
 
