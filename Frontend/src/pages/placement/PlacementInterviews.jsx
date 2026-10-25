@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Plus, Star, CalendarClock, ListChecks, FileText, Loader2, Sparkles, AlertTriangle, RotateCw, RotateCcw, ChevronDown, UserPlus, BarChart3, Trash2, Users } from "lucide-react";
+import { Plus, Star, CalendarClock, ListChecks, FileText, Loader2, AlertTriangle, RotateCcw, ChevronDown, UserPlus, BarChart3, Trash2, Users } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -92,7 +92,6 @@ export default function PlacementInterviews() {
     const [reportTarget, setReportTarget] = useState(null);
     const [proctoringOpen, setProctoringOpen] = useState(false);
     const [proctoringTarget, setProctoringTarget] = useState(null);
-    const [preparingId, setPreparingId] = useState(null);
     const [resettingId, setResettingId] = useState(null);
     const [expandedGroupId, setExpandedGroupId] = useState(null);
     const [analyticsOpen, setAnalyticsOpen] = useState(false);
@@ -194,20 +193,6 @@ export default function PlacementInterviews() {
             alert(e.message);
         } finally {
             setBusy(false);
-        }
-    };
-
-    const prepare = async (iv) => {
-        setPreparingId(iv.id);
-        try {
-            const res = await api.interviews.prepare(iv.id);
-            setPlanTarget({ ...iv, plan: res.plan });
-            setPlanOpen(true);
-            load();
-        } catch (e) {
-            alert(e.message);
-        } finally {
-            setPreparingId(null);
         }
     };
 
@@ -419,20 +404,9 @@ export default function PlacementInterviews() {
                                                                 <TableCell className="text-right">
                                                                     <div className="flex flex-wrap items-center justify-end gap-1">
                                                                         {iv.plan?.questions?.length ? (
-                                                                            <>
-                                                                                <Button variant="ghost" size="sm" onClick={() => viewPlan(iv)}><ListChecks className="h-4 w-4" /> Questions</Button>
-                                                                                {iv.status === "scheduled" && !iv.session?.startedAt && (
-                                                                                    <Button variant="ghost" size="sm" onClick={() => prepare(iv)} disabled={preparingId === iv.id}>
-                                                                                        {preparingId === iv.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCw className="h-4 w-4" />}
-                                                                                        Refresh
-                                                                                    </Button>
-                                                                                )}
-                                                                            </>
+                                                                            <Button variant="ghost" size="sm" onClick={() => viewPlan(iv)}><ListChecks className="h-4 w-4" /> AI questions</Button>
                                                                         ) : (
-                                                                            <Button variant="ghost" size="sm" onClick={() => prepare(iv)} disabled={preparingId === iv.id}>
-                                                                                {preparingId === iv.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-                                                                                Prepare
-                                                                            </Button>
+                                                                            <span className="px-2 text-xs text-slate-500 dark:text-zinc-400">AI generates at start</span>
                                                                         )}
                                                                         {iv.report && <Button variant="ghost" size="sm" onClick={() => viewReport(iv)}><FileText className="h-4 w-4" /> Report</Button>}
                                                                         {["in_progress", "disqualified"].includes(iv.status) && (
@@ -528,11 +502,9 @@ export default function PlacementInterviews() {
                                 />
                             </div>
                             </div>
-                            {sched.type === "Technical" && (
-                                <p className="rounded-lg bg-violet-50 px-3 py-2 text-xs text-violet-700 dark:bg-violet-500/10 dark:text-violet-300">
-                                Technical questions are prepared individually from each selected student's resume and matching topic banks.
-                                </p>
-                            )}
+                            <p className="rounded-lg bg-violet-50 px-3 py-2 text-xs text-violet-700 dark:bg-violet-500/10 dark:text-violet-300">
+                                AI generates personalized questions from each selected student's resume and the role when the candidate starts. No manual question preparation is needed.
+                            </p>
                         </div>
                         <div className="space-y-3 md:col-span-7 md:flex md:min-h-0 md:flex-col">
                             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">

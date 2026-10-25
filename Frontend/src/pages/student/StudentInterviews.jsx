@@ -21,6 +21,33 @@ function interviewCanStart(interview) {
         interview.session?.status !== "terminated";
 }
 
+function deduplicateInterviews(interviews) {
+    const unique = new Map();
+    const statusPriority = { completed: 3, disqualified: 2, in_progress: 1, scheduled: 0 };
+    for (const interview of interviews) {
+        const scheduledAt = new Date(interview.scheduledAt).getTime();
+        const key = interview.groupId
+            ? `group:${interview.groupId}`
+            : Number.isFinite(scheduledAt)
+                ? `legacy:${interview.type}:${scheduledAt}`
+                : `interview:${interview.id}`;
+        const existing = unique.get(key);
+        if (!existing) {
+            unique.set(key, interview);
+            continue;
+        }
+
+        const updatedAt = new Date(interview.updatedAt || interview.scheduledAt).getTime();
+        const existingUpdatedAt = new Date(existing.updatedAt || existing.scheduledAt).getTime();
+        const isNewer = Number.isFinite(updatedAt) && (!Number.isFinite(existingUpdatedAt) || updatedAt > existingUpdatedAt);
+        const sameUpdate = updatedAt === existingUpdatedAt;
+        const isMoreComplete = statusPriority[interview.status] > statusPriority[existing.status]
+            || (interview.session?.answeredCount || 0) > (existing.session?.answeredCount || 0);
+        if (isNewer || (sameUpdate && isMoreComplete)) unique.set(key, interview);
+    }
+    return [...unique.values()];
+}
+
 export default function StudentInterviews() {
     const [interviews, setInterviews] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -31,7 +58,7 @@ export default function StudentInterviews() {
         setLoading(true);
         setError("");
         try {
-            setInterviews(await api.interviews.list());
+            setInterviews(deduplicateInterviews(await api.interviews.list()));
         } catch (loadError) {
             setError(loadError.message || "Failed to load interviews.");
         } finally {
@@ -43,11 +70,11 @@ export default function StudentInterviews() {
         loadInterviews();
     }, [loadInterviews]);
 
-    const joinAction = (interview) => {
-        if (!interview.plan?.questions?.length || !interviewCanStart(interview)) return null;
+    const joinAction = (interview, className = "") => {
+        if (!interviewCanStart(interview)) return null;
         const isResuming = interview.session?.status === "in_progress";
         return (
-            <Button asChild variant={isResuming ? "default" : "outline"} onClick={(event) => event.stopPropagation()}>
+            <Button asChild className={className} variant={isResuming ? "default" : "outline"} onClick={(event) => event.stopPropagation()}>
                 <Link to={`/student/interview/${interview.id}`}>
                     {isResuming ? "Resume interview" : "Start interview"}
                     <ArrowRight className="h-4 w-4" />
@@ -58,7 +85,7 @@ export default function StudentInterviews() {
 
     return (
         <div>
-            <PageHeader title="My Interviews" description="Review your scheduled interviews, preparation, and results." />
+            <PageHeader title="My Interviews" description="Review your scheduled interviews and results. Personalized questions are generated when you start." />
             {loading ? (
                 <LoadingState label="Loading interviews" className="min-h-48" />
             ) : error ? (
@@ -67,7 +94,7 @@ export default function StudentInterviews() {
                     <Button className="mt-3" variant="outline" onClick={loadInterviews}>Try again</Button>
                 </div>
             ) : interviews.length === 0 ? (
-                <EmptyState icon={Video} title="No interviews scheduled" description="Scheduled interviews will appear here with their preparation details and results." />
+                <EmptyState icon={Video} title="No interviews scheduled" description="Scheduled interviews will appear here. Personalized questions are generated automatically when you start." />
             ) : (
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
                     {interviews.map((interview) => {
@@ -77,18 +104,7 @@ export default function StudentInterviews() {
                         return (
                             <Card
                                 key={interview.id}
-                                role="button"
-                                tabIndex={0}
-                                aria-haspopup="dialog"
-                                onClick={() => setSelectedInterview(interview)}
-                                onKeyDown={(event) => {
-                                    if (event.target !== event.currentTarget) return;
-                                    if (event.key === "Enter" || event.key === " ") {
-                                        event.preventDefault();
-                                        setSelectedInterview(interview);
-                                    }
-                                }}
-                                className="cursor-pointer border-slate-200/80 bg-white/70 transition-colors hover:border-violet-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 dark:border-zinc-800/80 dark:bg-zinc-900/40 dark:hover:border-violet-500/50"
+                                className="border-slate-200/80 bg-white/70 transition-colors hover:border-violet-300 dark:border-zinc-800/80 dark:bg-zinc-900/40 dark:hover:border-violet-500/50"
                             >
                                 <CardContent className="p-5">
                                     <div className="mb-4 flex items-start justify-between gap-3">
@@ -114,7 +130,7 @@ export default function StudentInterviews() {
                                     </div>
                                     <div className="mt-4 flex flex-wrap gap-2 text-xs text-slate-600 dark:text-zinc-300">
                                         <span className="rounded-md bg-slate-100 px-2 py-1 dark:bg-zinc-800">
-                                            {ready ? `${interview.plan.questions.length} questions` : "Preparing questions"}
+                                            {ready ? `${interview.plan.questions.length} AI questions` : "AI questions generated at start"}
                                         </span>
                                         {interview.plan?.topics?.slice(0, 3).map((topic) => (
                                             <span key={topic} className="rounded-md bg-violet-50 px-2 py-1 text-violet-700 dark:bg-violet-500/10 dark:text-violet-300">
@@ -127,20 +143,29 @@ export default function StudentInterviews() {
                                             </span>
                                         )}
                                     </div>
-                                    <div className="mt-5 flex items-center justify-between gap-3 border-t border-slate-100 pt-4 dark:border-zinc-800">
-                                        <span className="text-xs font-medium text-violet-700 dark:text-violet-300">View details</span>
-                                        {completed ? (
-                                            <span className="inline-flex items-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-400">
-                                                <CheckCircle2 className="h-4 w-4" /> Result ready
-                                            </span>
-                                        ) : resumable ? (
-                                            <span className="inline-flex items-center gap-1.5 text-xs text-amber-600 dark:text-amber-400">
-                                                <Clock3 className="h-4 w-4" /> In progress
-                                            </span>
-                                        ) : (
-                                            <ListChecks className="h-4 w-4 text-slate-400" />
-                                        )}
+                                    <div className="mt-5 flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-4 dark:border-zinc-800">
+                                        <span className="inline-flex items-center gap-1.5 text-xs text-slate-500 dark:text-zinc-400">
+                                            {completed ? (
+                                                <><CheckCircle2 className="h-4 w-4 text-emerald-500" /> Feedback ready</>
+                                            ) : resumable ? (
+                                                <><Clock3 className="h-4 w-4 text-amber-500" /> Interview in progress</>
+                                            ) : (
+                                                <><ListChecks className="h-4 w-4" /> {ready ? "Ready when you are" : "Questions generated at start"}</>
+                                            )}
+                                        </span>
+                                        <Button variant="ghost" size="sm" onClick={() => setSelectedInterview(interview)}>
+                                            Details
+                                        </Button>
                                     </div>
+                                    {joinAction(interview, "mt-3 w-full")}
+                                    {completed && (
+                                        <Button asChild className="mt-3 w-full" variant="outline">
+                                            <Link to={`/student/interview/${interview.id}`}>
+                                                View interview feedback
+                                                <ArrowRight className="h-4 w-4" />
+                                            </Link>
+                                        </Button>
+                                    )}
                                 </CardContent>
                             </Card>
                         );
@@ -153,7 +178,7 @@ export default function StudentInterviews() {
                     <DialogHeader>
                         <DialogTitle>{selectedInterview?.interviewName || `${selectedInterview?.type} interview`}</DialogTitle>
                         <DialogDescription>
-                            Interview details, preparation status, and outcome.
+                            Interview details, AI-generated questions, and outcome.
                         </DialogDescription>
                     </DialogHeader>
                     {selectedInterview && (
@@ -178,7 +203,9 @@ export default function StudentInterviews() {
                                 <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-zinc-800 dark:bg-zinc-950/40">
                                     <p className="text-xs text-slate-500 dark:text-zinc-500">Questions</p>
                                     <p className="mt-1 text-sm font-medium text-slate-900 dark:text-white">
-                                        {selectedInterview.plan?.questions?.length || 0} prepared
+                                        {selectedInterview.plan?.questions?.length
+                                            ? `${selectedInterview.plan.questions.length} AI-generated questions`
+                                            : "Questions generated when you start"}
                                         {selectedInterview.session?.answeredCount ? ` · ${selectedInterview.session.answeredCount} answered` : ""}
                                     </p>
                                 </div>
@@ -214,10 +241,6 @@ export default function StudentInterviews() {
                             ) : selectedInterview.status === "cancelled" ? (
                                 <p className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600 dark:border-zinc-800 dark:bg-zinc-950/40 dark:text-zinc-400">
                                     This interview was cancelled by the Placement Coordinator.
-                                </p>
-                            ) : !selectedInterview.plan?.questions?.length ? (
-                                <p className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300">
-                                    Your interview questions are being prepared. Check back soon.
                                 </p>
                             ) : null}
 

@@ -80,7 +80,7 @@ const VIOLATION_REASON_MAP = {
     escape_pressed: "ESCAPE_PRESSED",
 };
 
-export default function useProctoring({ attemptId, config, previewRef, onAutoSubmit }) {
+export default function useProctoring({ attemptId, config, previewRef, onAutoSubmit, faceDetectionEnabled = true }) {
     const [status, setStatus] = useState("idle");
     const [cameraActive, setCameraActive] = useState(false);
     const [micActive, setMicActive] = useState(false);
@@ -113,6 +113,8 @@ export default function useProctoring({ attemptId, config, previewRef, onAutoSub
     const graceUntilRef = useRef(0);
     const lastTickOkRef = useRef(false);
     const fullscreenRequiredRef = useRef(true);
+    const faceDetectionEnabledRef = useRef(faceDetectionEnabled);
+    faceDetectionEnabledRef.current = faceDetectionEnabled;
 
     const monitoringIntervalMs = parseInt(import.meta.env.VITE_FACE_CHECK_INTERVAL_MS || "1000", 10);
     const intervalMs = Number.isFinite(monitoringIntervalMs) && monitoringIntervalMs > 0
@@ -250,11 +252,19 @@ export default function useProctoring({ attemptId, config, previewRef, onAutoSub
             }
 
             const proctoringApiBase = import.meta.env.VITE_PROCTORING_API || "http://localhost:5050";
+            const detectionEnabledForRequest = faceDetectionEnabledRef.current;
             const r = await fetch(`${proctoringApiBase}/monitor`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ image, attemptId, cameraActive: cameraActive }),
+                body: JSON.stringify({
+                    image,
+                    attemptId,
+                    cameraActive,
+                    faceDetectionEnabled: detectionEnabledForRequest,
+                }),
             }).then((res) => res.json());
+
+            if (faceDetectionEnabledRef.current !== detectionEnabledForRequest) return;
 
             // `known` distinguishes "the detector ran and saw nothing" from "we have not
             // heard back yet". Without it the badge shows "No face" until the
@@ -304,15 +314,23 @@ export default function useProctoring({ attemptId, config, previewRef, onAutoSub
     const enrollmentGraceRef = useRef(false);
 
     const start = useCallback(async () => {
+        try {
+            await requestFullscreen();
+        } catch {
+            // The fullscreen state check below provides the user-facing failure.
+        }
+        const isFs = document.fullscreenElement != null;
+        setFullscreenActive(isFs);
+        if (!isFs) {
+            setStatus("ready");
+            throw new Error("Fullscreen is required to begin this assessment. Please allow fullscreen and try again.");
+        }
         activeRef.current = true;
         autoSubmittedRef.current = false;
         enrollmentGraceRef.current = true;
         setStatus("active");
         graceUntilRef.current = Date.now() + 1500;
-        await requestFullscreen();
-        const isFs = document.fullscreenElement != null;
-        if (isFs) hasBeenFullscreenRef.current = true;
-        setFullscreenActive(isFs);
+        hasBeenFullscreenRef.current = true;
         intervalRef.current = setInterval(tick, intervalMs);
         tick();
     }, [intervalMs, tick]);

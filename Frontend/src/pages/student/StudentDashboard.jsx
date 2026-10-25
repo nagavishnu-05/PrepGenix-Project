@@ -94,7 +94,7 @@ export default function StudentDashboard() {
                         <div>
                             <p className="font-semibold text-slate-900 dark:text-white">Resume parsing & interview profile</p>
                             <p className="mt-1 text-sm text-slate-600 dark:text-zinc-400">
-                                Upload or update your resume, review detected skills, and check the text used for interview preparation.
+                                Upload or update your resume. AI uses it to tailor interview questions to your experience.
                             </p>
                         </div>
                     </div>

@@ -177,7 +177,7 @@ export default function StudentResume() {
         <div className="space-y-5">
             <PageHeader
                 title="Resume Parsing"
-                description="Manage your resume and check the skills and career categories used to personalize your interview questions."
+                description="Upload your resume once. AI uses it and the interview role to generate personalized questions automatically when you start."
                 action={resume && (
                     <Badge variant={readiness.ready ? "success" : "warning"} className="gap-1.5 px-3 py-1.5">
                         {readiness.ready ? <CheckCircle2 className="h-3.5 w-3.5" /> : <CircleAlert className="h-3.5 w-3.5" />}
@@ -269,7 +269,7 @@ export default function StudentResume() {
                                     <BadgeCheck className="h-5 w-5 text-emerald-500" />
                                     Parsing status
                                 </CardTitle>
-                                <CardDescription>Resume details used for interview preparation.</CardDescription>
+                                <CardDescription>Resume details used to generate your interview questions automatically.</CardDescription>
                             </CardHeader>
                             <CardContent>
                                 {!resume ? (
@@ -308,7 +308,7 @@ export default function StudentResume() {
                         <EmptyState
                             icon={FileText}
                             title="Build your interview profile"
-                            description="Upload a clear, text-readable PDF, DOCX, or TXT resume. We will show the extracted skills and career categories so you can check what is used to prepare relevant interview questions."
+                            description="Upload a clear, text-readable PDF, DOCX, or TXT resume. AI will use the extracted skills and experience to ask relevant questions when your interview begins."
                         />
                     ) : (
                         <div className="grid gap-4 lg:grid-cols-2">
@@ -341,7 +341,7 @@ export default function StudentResume() {
                                         <BrainCircuit className="h-5 w-5 text-blue-500" />
                                         Career categories
                                     </CardTitle>
-                                    <CardDescription>Areas identified to support resume-based interview preparation.</CardDescription>
+                                    <CardDescription>Areas AI can use to tailor interview questions to your experience.</CardDescription>
                                 </CardHeader>
                                 <CardContent>
                                     {categories.length ? (

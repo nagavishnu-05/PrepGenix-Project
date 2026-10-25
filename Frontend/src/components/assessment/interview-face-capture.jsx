@@ -26,8 +26,11 @@ export function InterviewFaceCapture({
     attemptId,
     stream,
     onVerified,
+    onRegisterReference,
     onContinue,
     onExit,
+    continueLabel = "Start interview",
+    exitLabel = "Exit",
     busy = false,
 }) {
     const videoRef = useRef(null);
@@ -35,6 +38,7 @@ export function InterviewFaceCapture({
     const timerRef = useRef(null);
     const inFlightRef = useRef(false);
     const onVerifiedRef = useRef(onVerified);
+    const onRegisterReferenceRef = useRef(onRegisterReference);
     const [attempt, setAttempt] = useState(0);
     const [phase, setPhase] = useState(PHASE.INITIALIZING);
     const [captured, setCaptured] = useState(0);
@@ -46,6 +50,10 @@ export function InterviewFaceCapture({
     useEffect(() => {
         onVerifiedRef.current = onVerified;
     }, [onVerified]);
+
+    useEffect(() => {
+        onRegisterReferenceRef.current = onRegisterReference;
+    }, [onRegisterReference]);
 
     useEffect(() => {
         const video = videoRef.current;
@@ -116,16 +124,22 @@ export function InterviewFaceCapture({
                     }
                     setPhase(PHASE.VERIFYING);
                     setMessage("Face captured. Verifying your identity…");
-                    const saved = await api.interviews.registerReferenceFace(interviewId, {
-                        provider,
-                        capturedFrames: Number(result.captured || REQUIRED_FRAMES),
-                        threshold: result.threshold,
-                    });
+                    const registerReference = onRegisterReferenceRef.current;
+                    const saved = registerReference
+                        ? await registerReference(image)
+                        : await api.interviews.registerReferenceFace(interviewId, {
+                            provider,
+                            capturedFrames: Number(result.captured || REQUIRED_FRAMES),
+                            threshold: result.threshold,
+                        });
                     if (cancelled) return;
-                    setAttestation(saved.faceReference || null);
+                    const reference = saved?.faceReference || saved || null;
+                    setAttestation(reference);
                     setPhase(PHASE.VERIFIED);
-                    setMessage("Identity verified. Your face is registered for continuous verification during the interview.");
-                    onVerifiedRef.current?.(saved.faceReference || null);
+                    setMessage(saved?.warning
+                        ? `Identity verified. ${saved.warning}`
+                        : "Identity verified. Your face is registered for continuous verification during the assessment.");
+                    onVerifiedRef.current?.(reference);
                     return;
                 }
 
@@ -182,7 +196,7 @@ export function InterviewFaceCapture({
     const working = phase === PHASE.INITIALIZING || phase === PHASE.CAPTURING || phase === PHASE.VERIFYING;
 
     return (
-        <div className="mx-auto max-w-3xl space-y-4">
+        <div className="mx-auto w-full max-w-3xl space-y-4">
             <Card className="border-slate-200/80 bg-white/70 dark:border-zinc-800/80 dark:bg-zinc-900/40">
                 <CardContent className="space-y-5 p-6">
                     <div className="flex items-center gap-2">
@@ -278,7 +292,7 @@ export function InterviewFaceCapture({
                                 {isVerified ? (
                                     <Button onClick={onContinue} disabled={busy} type="button">
                                         {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <ScanFace className="h-4 w-4" />}
-                                        Start interview
+                                        {continueLabel}
                                     </Button>
                                 ) : (
                                     <Button variant="outline" onClick={retry} disabled={working} type="button">
@@ -286,7 +300,7 @@ export function InterviewFaceCapture({
                                     </Button>
                                 )}
                                 <Button variant="outline" onClick={onExit} disabled={busy} type="button">
-                                    Exit
+                                    {exitLabel}
                                 </Button>
                             </div>
 

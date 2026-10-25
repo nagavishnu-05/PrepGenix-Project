@@ -468,7 +468,6 @@ router.post("/:id/session/start", authenticate, async (req, res) => {
     const interview = await loadInterview(req.params.id);
     if (!interview) return res.status(404).json({ error: "Interview not found" });
     if (interview.regNo !== req.user.username) return res.status(403).json({ error: "Access denied" });
-    if (!interview.plan?.questions?.length) return res.status(400).json({ error: "Interview questions have not been prepared by the coordinator yet" });
     if (!interview.consent?.consentedAt) return res.status(400).json({ error: "Consent must be given before starting" });
     if (interview.consent.camera !== true || interview.consent.microphone !== true) {
       return res.status(400).json({ error: "Camera and microphone consent are required for a proctored interview" });
@@ -487,8 +486,22 @@ router.post("/:id/session/start", authenticate, async (req, res) => {
       });
     }
 
+    let plan = interview.plan;
+    if (!plan?.questions?.length || !resuming) {
+      const readiness = await resumeReadiness(interview.regNo);
+      if (!readiness.ok) return res.status(400).json({ error: readiness.message, code: readiness.code });
+      plan = await generateQuestionPlan(interview, readiness.resume);
+      if (!plan?.questions?.length) {
+        return res.status(500).json({ error: "Could not generate interview questions. Please try again." });
+      }
+      await col("interviews").updateOne(
+        { _id: interview._id },
+        { $set: { plan, planGeneratedAt: new Date(), updatedAt: new Date() } }
+      );
+    }
+
     const transcript = interview.transcript || [];
-    const first = interview.plan.questions[0];
+    const first = plan.questions[0];
     if (!transcript.some((turn) => turn.role === "bot" && turn.questionId === first.id)) {
       transcript.push(newTurn(first.id, "bot", first.text));
     }
@@ -502,8 +515,9 @@ router.post("/:id/session/start", authenticate, async (req, res) => {
       { _id: interview._id },
       { $set: { transcript, session, status: "in_progress", updatedAt: new Date() } }
     );
-    res.json({ question: first, index: 0, total: interview.plan.questions.length, session });
-  } catch {
+    res.json({ question: first, index: 0, total: plan.questions.length, session });
+  } catch (error) {
+    console.error("Start interview session failed:", error.message);
     res.status(500).json({ error: "Failed to start interview session" });
   }
 });

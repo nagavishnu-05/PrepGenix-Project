@@ -375,13 +375,15 @@ def verify_face():
 def monitor():
     """Continuous monitoring endpoint.
 
-    Body: { image: base64, attemptId, cameraActive: bool }
-    Returns: face detection + identity verification + violation tracking.
+    Body: { image: base64, attemptId, cameraActive: bool, faceDetectionEnabled: bool }
+    Returns face/identity checks and violations. When face detection is disabled,
+    scene-based person and device monitoring remains active.
     """
     data = request.get_json(force=True)
     image_b64 = data.get("image")
     attempt_id = data.get("attemptId", "default")
     camera_active = data.get("cameraActive", True)
+    face_detection_enabled = data.get("faceDetectionEnabled") is not False
 
     if not image_b64:
         return jsonify({"error": "image (base64) is required"}), 400
@@ -391,7 +393,11 @@ def monitor():
         return jsonify({"error": "Could not decode image"}), 400
 
     monitor_inst = _get_face_monitor(attempt_id)
-    result = monitor_inst.monitor_frame(frame, camera_active=camera_active)
+    result = monitor_inst.monitor_frame(
+        frame,
+        camera_active=camera_active,
+        face_detection_enabled=face_detection_enabled,
+    )
 
     return jsonify({
         "face_count": result["face_count"],

@@ -17,7 +17,7 @@ export function AssessmentPausedOverlay({
     onReenableCamera,
     canResume = true,
     onResume,
-    resumeLabel = "Resume when compliant",
+    resumeLabel = "Resume assessment",
     resumeIcon = <Maximize className="h-4 w-4" />,
     disabled = false,
 }) {

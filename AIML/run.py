@@ -16,9 +16,15 @@ from pathlib import Path
 
 
 def _python_can_run_proctoring(python, project_dir):
+    identity_backend_check = (
+        "from face_detection.inference.face_embedding import FaceEmbedding; "
+        "backend = FaceEmbedding().backend_name; "
+        "print(backend); "
+        "raise SystemExit(0 if backend in ('insightface', 'onnx_arcface') else 1)"
+    )
     try:
         result = subprocess.run(
-            [str(python), "-c", "from proctoring.face_detection import FaceMonitor"],
+            [str(python), "-c", identity_backend_check],
             cwd=project_dir,
             capture_output=True,
             text=True,
@@ -53,8 +59,8 @@ def run_server(host='0.0.0.0', port=5000, debug=True):
     python = _select_proctoring_python(project_dir)
     if python is None:
         raise RuntimeError(
-            "No compatible Python environment can import the proctoring dependencies. "
-            "Install AIML/requirements.txt in a project virtual environment and run this command again."
+            "No Python environment with a working ArcFace/InsightFace identity backend was found. "
+            "Install AIML/requirements.txt and the configured InsightFace model pack in the AIML environment."
         )
     if python != Path(sys.executable).resolve():
         print(f"Using the project's compatible Python environment: {python}")

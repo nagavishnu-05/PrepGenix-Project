@@ -6,9 +6,12 @@ import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent } from "@/components/ui/card";
 import { CodeEditor } from "@/components/assessment/code-editor";
 import FaceAttentionOverlay from "@/components/assessment/face-attention-overlay";
+import { InterviewFaceCapture } from "@/components/assessment/interview-face-capture";
 import { ProctoringStatusBar } from "@/components/assessment/proctoring-status-bar";
+import { TestAttemptReport } from "@/components/assessment/test-attempt-report";
 import { DifficultyBadge, LoadingState } from "@/components/portal/primitives";
 import { StatusBadge } from "@/components/portal/status-badge";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
 import useProctoring from "@/hooks/use-proctoring";
@@ -169,31 +172,29 @@ const [cameraPosition, setCameraPosition] = useState(null);
     const [error, setError] = useState("");
     const [cheatingReasonState, setCheatingReasonState] = useState(null);
     const [faceCaptureState, setFaceCaptureState] = useState("pending");
-    const [faceCaptureError, setFaceCaptureError] = useState("");
-    const [enrollProgress, setEnrollProgress] = useState({ captured: 0, required: 5 });
+    const [finalizing, setFinalizing] = useState(false);
+    const [reportOpen, setReportOpen] = useState(false);
+    const [reportLoading, setReportLoading] = useState(false);
+    const [reportError, setReportError] = useState("");
     const startAtRef = useRef(Date.now());
+    const finalizingRef = useRef(false);
 const codeBuffersRef = useRef({});
     const durationRef = useRef(30 * 60);
     const pausedTotalRef = useRef(0);
     const pausedSinceRef = useRef(null);
     const previewRef = useRef(null);
-    const faceCanvasRef = useRef(null);
     const cameraPipRef = useRef(null);
     const cameraDragRef = useRef(null);
-    const enrollIntervalRef = useRef(null);
     const didInitRef = useRef(null);
 
-    const proctored = attempt?.proctoring?.enabled !== false;
-
-    const finishWithResult = useCallback((res) => {
-        setFinished(true);
-        if (res) setResult(res);
-    }, []);
+    const proctored = true;
+    const faceVerificationEnabled = attempt?.proctoring?.faceVerification !== false;
 
     const proctoring = useProctoring({
         attemptId: attempt?.id,
         config: attempt?.proctoring,
         previewRef,
+        faceDetectionEnabled: faceVerificationEnabled,
         onAutoSubmit: (res, reason) => {
             setFinished(true);
             if (res) setResult(res);
@@ -201,24 +202,33 @@ const codeBuffersRef = useRef({});
         },
     });
 
-    const proctoringApiBase = import.meta.env.VITE_PROCTORING_API || "http://localhost:5050";
-
     // While the registered candidate is not verified (different person, extra
     // person, or no face), the assessment is blocked and the clock is paused.
     // As soon as the enrolled face returns, the gate lifts automatically.
-    const identityBlocked = proctored && !proctoring.simulated && !!proctoring.faceMonitor?.identityBlocked;
+    const faceMonitor = proctoring.faceMonitor;
+    const faceMismatch = faceVerificationEnabled
+        && faceCaptureState === "done"
+        && !proctoring.simulated
+        && faceMonitor?.known
+        && (faceMonitor.faceCount !== 1 || faceMonitor.match === false);
+    const identityBlocked = proctored && faceVerificationEnabled && !proctoring.simulated && (
+        faceCaptureState !== "done"
+        || !!faceMonitor?.identityBlocked
+        || faceMismatch
+    );
 
     // Keep one face-verification verdict in the assessment header.
-    const faceMonitor = proctoring.faceMonitor;
-    const faceStatus = !faceMonitor?.known
-        ? { label: "Starting", tone: "border-slate-300 bg-slate-100 text-slate-600 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300" }
-        : (faceMonitor.faceCount ?? 0) === 0
-            ? { label: "No face", tone: "border-amber-500/30 bg-amber-500/10 text-amber-500" }
-            : faceMonitor.match === false
-                ? { label: "Mismatch", tone: "border-red-500/30 bg-red-500/10 text-red-400" }
-                : faceMonitor.match === true
-                    ? { label: "Verified", tone: "border-emerald-500/30 bg-emerald-500/10 text-emerald-400" }
-                    : { label: "Face OK", tone: "border-slate-300 bg-slate-100 text-slate-600 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300" };
+    const faceStatus = !faceVerificationEnabled
+        ? { label: "Face checks off", tone: "border-slate-300 bg-slate-100 text-slate-600 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300" }
+        : !faceMonitor?.known
+            ? { label: "Starting", tone: "border-slate-300 bg-slate-100 text-slate-600 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300" }
+            : (faceMonitor.faceCount ?? 0) === 0
+                ? { label: "No face", tone: "border-amber-500/30 bg-amber-500/10 text-amber-500" }
+                : faceMonitor.match === false
+                    ? { label: "Mismatch", tone: "border-red-500/30 bg-red-500/10 text-red-400" }
+                    : faceMonitor.match === true
+                        ? { label: "Verified", tone: "border-emerald-500/30 bg-emerald-500/10 text-emerald-400" }
+                        : { label: "Face OK", tone: "border-slate-300 bg-slate-100 text-slate-600 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300" };
 
     useEffect(() => {
         if (identityBlocked) {
@@ -229,112 +239,76 @@ const codeBuffersRef = useRef({});
         }
     }, [identityBlocked]);
 
-    useEffect(() => {
-        if (faceCaptureState !== "pending") return;
-        let cancelled = false;
-        fetch(`${proctoringApiBase}/health`, { method: "GET", signal: AbortSignal.timeout(3000) })
-            .then((r) => { if (r.ok && !cancelled) setFaceCaptureState("pending"); })
-            .catch(() => { if (!cancelled) setFaceCaptureError("Face verification service is unavailable. Start the AIML proctoring API before continuing."); });
-        return () => { cancelled = true; };
-    }, [faceCaptureState, proctoringApiBase]);
-
-    useEffect(() => {
-        if (faceCaptureState !== "pending" || !proctored) return;
-        proctoring.reattachStream();
-    }, [faceCaptureState, proctored, proctoring.reattachStream]);
-
-    // Start a clean enrollment batch once per attempt. This must NOT run
-    // between captures: wiping the batch after each frame pinned the
-    // progress counter at 1/5 and enrollment never finished.
-    const enrollSessionKey = `${attempt?.id || "none"}:${attempt?.studentId || "none"}`;
-    useEffect(() => {
-        if (!proctored || !attempt?.id) return;
-        let cancelled = false;
-        setEnrollProgress({ captured: 0, required: 5 });
-        fetch(`${proctoringApiBase}/enroll-reset`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ attemptId: attempt.id }),
-        }).catch(() => {});
-        return () => { cancelled = true; };
-    }, [enrollSessionKey, proctored]);
-
     // Reattach camera stream when transitioning from enrollment to test view.
     // The video element changes between screens, so the stream must be re-bound.
     // Depends on `reattachStream` directly rather than the whole `proctoring`
     // object, which used to re-fire on every render.
     useEffect(() => {
-        if (faceCaptureState !== "done" || !proctored) return;
+        if (!proctored || (faceVerificationEnabled && faceCaptureState !== "done")) return;
         const timer = setTimeout(() => {
             proctoring.reattachStream();
         }, 300);
         return () => clearTimeout(timer);
-    }, [faceCaptureState, proctored, proctoring.reattachStream]);
+    }, [faceCaptureState, faceVerificationEnabled, proctored, proctoring.reattachStream]);
 
-    const captureFace = useCallback(async () => {
-        if (faceCaptureState === "capturing") return;
-        setFaceCaptureState("capturing");
-        setFaceCaptureError("");
+    const registerTestReferenceFace = useCallback(async (image) => {
         try {
-            const video = previewRef.current;
-            if (!video || !video.videoWidth) {
-                setFaceCaptureState("error");
-                setFaceCaptureError("Camera not ready. Please wait a moment and try again.");
-                return;
-            }
-            const canvas = faceCanvasRef.current || (faceCanvasRef.current = document.createElement("canvas"));
-            canvas.width = 320;
-            const h = video.videoHeight && video.videoWidth ? Math.round((video.videoHeight / video.videoWidth) * 320) : 240;
-            canvas.height = h;
-            canvas.getContext("2d").drawImage(video, 0, 0, 320, h);
-            const imageBase64 = canvas.toDataURL("image/jpeg", 0.7).split(",")[1];
-
-            const proctoringApiBase = import.meta.env.VITE_PROCTORING_API || "http://localhost:5050";
-
-            const enrollResult = await fetch(`${proctoringApiBase}/enroll-frame`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ image: imageBase64, attemptId: attempt?.id }),
-            }).then((r) => r.json());
-
-            setEnrollProgress({ captured: enrollResult.captured || 0, required: enrollResult.required_frames || 5 });
-
-            if (enrollResult.status === "ready") {
-                // Archiving the reference image is best-effort. The identity
-                // reference is already registered in the proctoring service, so
-                // a storage failure must not block the student from starting.
-                try {
-                    const registered = await api.proctoring.registerFace(attempt.id, imageBase64);
-                    if (registered?.warning) console.warn(registered.warning);
-                } catch (regErr) {
-                    console.warn("Reference face archival failed (non-fatal):", regErr.message);
-                }
-                setFaceCaptureState("done");
-                return;
-            }
-
-            if (enrollResult.status === "error") {
-                setFaceCaptureState("error");
-                setFaceCaptureError(enrollResult.message || "Face enrollment failed.");
-                return;
-            }
-
-            if (enrollResult.status === "capturing" && enrollResult.captured < (enrollResult.required_frames || 5)) {
-                setFaceCaptureError(enrollResult.message || "Keep your face visible.");
-                enrollIntervalRef.current = setTimeout(() => {
-                    setFaceCaptureState("pending");
-                }, 300);
-            }
-        } catch (e) {
-            setFaceCaptureState("error");
-            setFaceCaptureError("Face registration failed: " + e.message);
+            return await api.proctoring.registerFace(attempt.id, image);
+        } catch (registrationError) {
+            return { warning: `Identity verification is active, but the reference image could not be archived: ${registrationError.message}` };
         }
-    }, [attempt, faceCaptureState]);
+    }, [attempt?.id]);
 
-    const applyQuestion = (qr) => {
-        if (qr.finished) {
+    const continueAfterFaceCapture = useCallback(() => {
+        setFaceCaptureState("done");
+    }, []);
+
+    const completeAttempt = useCallback(async (fallbackResult, completedAttempt, realId = attempt?.id) => {
+        if (finalizingRef.current) return;
+        finalizingRef.current = true;
+        setFinalizing(true);
+        setError("");
+        try {
+            if (!completedAttempt && !realId) throw new Error("The attempt ID is unavailable.");
+            const finalAttempt = completedAttempt || await api.tests.result(realId);
+            await proctoring.stop();
+            setAttempt(finalAttempt);
+            setResult(finalAttempt.result || fallbackResult);
             setFinished(true);
-            setResult(qr.result);
+        } catch (completionError) {
+            setError(`The test has been submitted, but its result could not be loaded: ${completionError.message}`);
+        } finally {
+            finalizingRef.current = false;
+            setFinalizing(false);
+        }
+    }, [attempt?.id, proctoring.stop]);
+
+    const handleStart = async () => {
+        setError("");
+        try {
+            await proctoring.start();
+        } catch (startError) {
+            setError(startError.message);
+        }
+    };
+
+    const openFullReport = async () => {
+        if (!attempt?.id || reportLoading) return;
+        setReportOpen(true);
+        setReportLoading(true);
+        setReportError("");
+        try {
+            setAttempt(await api.tests.result(attempt.id));
+        } catch (reportLoadError) {
+            setReportError(`Could not load the full test report: ${reportLoadError.message}`);
+        } finally {
+            setReportLoading(false);
+        }
+    };
+
+    const applyQuestion = (qr, realId) => {
+        if (qr.finished) {
+            void completeAttempt(qr.result, undefined, realId);
             return;
         }
         setQuestion(qr.question);
@@ -366,15 +340,11 @@ const codeBuffersRef = useRef({});
     const loadNext = useCallback(async (realId) => {
         try {
             const qr = await api.tests.nextQuestion(realId);
-            applyQuestion(qr);
-            if (qr.finished) {
-                const full = await api.tests.result(realId);
-                setAttempt(full);
-            }
+            applyQuestion(qr, realId);
         } catch (e) {
             setError(e.message);
         }
-    }, []);
+    }, [completeAttempt]);
 
     useEffect(() => {
         // React StrictMode double-invokes effects in development. Starting the
@@ -406,7 +376,7 @@ const codeBuffersRef = useRef({});
                         if (att.durationMin) durationRef.current = att.durationMin * 60;
                         if (att.startedAt) startAtRef.current = new Date(att.startedAt).getTime();
                         const qr = await api.tests.nextQuestion(att.id);
-                        applyQuestion(qr);
+                        applyQuestion(qr, att.id);
                         return;
                     }
                 }
@@ -426,21 +396,23 @@ const codeBuffersRef = useRef({});
         const iv = setInterval(() => {
             const now = Date.now();
             const paused = pausedTotalRef.current + (pausedSinceRef.current != null ? now - pausedSinceRef.current : 0);
-            const left = Math.round(durationRef.current - (now - startAtRef.current - paused) / 1000);
+            const durationLeft = durationRef.current - (now - startAtRef.current - paused) / 1000;
+            const scheduleLeft = attempt.scheduledEndAt
+                ? (new Date(attempt.scheduledEndAt).getTime() - now) / 1000
+                : Infinity;
+            const left = Math.round(Math.min(durationLeft, scheduleLeft));
             setTimeLeft(Math.max(0, left));
             if (left <= 0) {
                 clearInterval(iv);
-                proctoring.stop();
                 api.tests.finish(attempt.id).then((f) => {
-                    setFinished(true);
-                    setResult(f.result);
-                    if (f.attempt) setAttempt(f.attempt);
-                }).catch(() => {});
+                    return completeAttempt(f.result, f.attempt);
+                }).catch((finishError) => {
+                    setError(`Could not submit the test after time expired: ${finishError.message}`);
+                });
             }
         }, 1000);
         return () => clearInterval(iv);
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [attempt, finished]);
+    }, [attempt, finished, completeAttempt]);
 
     const handleSubmit = async () => {
         if (identityBlocked || !question || feedback || submitting) return;
@@ -457,11 +429,7 @@ const codeBuffersRef = useRef({});
             const fb = await api.tests.answer(attempt.id, body);
             setFeedback(fb);
             if (fb.finished) {
-                setFinished(true);
-                setResult(fb.result);
-                proctoring.stop();
-                const full = await api.tests.result(attempt.id);
-                setAttempt(full);
+                await completeAttempt(fb.result);
                 return;
             }
             setTimeout(() => loadNext(attempt.id), 1200);
@@ -473,13 +441,11 @@ const codeBuffersRef = useRef({});
     };
 
     const handleFinish = async () => {
-        if (identityBlocked) return;
+        if (identityBlocked || submitting || finalizingRef.current) return;
         if (!confirm("Submit the test now?")) return;
-        proctoring.stop();
         try {
             const f = await api.tests.finish(attempt.id);
-            setFinished(true);
-            setResult(f.result);
+            await completeAttempt(f.result, f.attempt);
         } catch (e) {
             setError(e.message);
         }
@@ -855,10 +821,23 @@ const codeBuffersRef = useRef({});
                         </div>
                         <div className="mt-4 flex gap-3">
                             <Button onClick={() => navigate("/student/tests")}>My Tests</Button>
-                            <Button variant="outline" onClick={() => navigate("/student/report")}>Full Report</Button>
+                            <Button variant="outline" onClick={openFullReport}>Full Report</Button>
                         </div>
                     </CardContent>
                 </Card>
+                <Dialog open={reportOpen} onOpenChange={setReportOpen}>
+                    <DialogContent className="max-h-[90vh] max-w-4xl overflow-y-auto">
+                        <DialogHeader>
+                            <DialogTitle>{attempt?.testTitle || "Full Test Report"}</DialogTitle>
+                            <DialogDescription>Complete report for this test attempt.</DialogDescription>
+                        </DialogHeader>
+                        {reportLoading
+                            ? <LoadingState label="Loading full report" className="py-8" />
+                            : reportError
+                                ? <p className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-400">{reportError}</p>
+                                : <TestAttemptReport attempt={attempt} />}
+                    </DialogContent>
+                </Dialog>
             </div>
         );
     }
@@ -927,6 +906,12 @@ const codeBuffersRef = useRef({});
                             </div>
                         )}
 
+                        {error && (
+                            <p className="w-full rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-left text-xs text-red-400">
+                                {error}
+                            </p>
+                        )}
+
                         <div className="mt-2 flex flex-wrap justify-center gap-3">
                             {proctoring.status === "idle" ? (
                                 <Button onClick={() => proctoring.enable()}>
@@ -942,7 +927,7 @@ const codeBuffersRef = useRef({});
                                     </Button>
                                 </>
                             ) : (
-                                <Button onClick={() => proctoring.start()}>
+                                <Button onClick={handleStart}>
                                     <Video className="h-4 w-4" /> Begin test
                                 </Button>
                             )}
@@ -954,66 +939,17 @@ const codeBuffersRef = useRef({});
         );
     }
 
-    if (proctored && faceCaptureState !== "done") {
-        const capturePct = enrollProgress.required > 0 ? Math.round((enrollProgress.captured / enrollProgress.required) * 100) : 0;
+    if (proctored && faceVerificationEnabled && faceCaptureState !== "done") {
         return (
-            <div className="mx-auto max-w-lg">
-                <Card className="border-slate-200 bg-white dark:border-zinc-800 dark:bg-zinc-900/40">
-                    <CardContent className="flex flex-col items-center gap-4 py-10 text-center">
-                        <div className="flex h-16 w-16 items-center justify-center rounded-full bg-gradient-to-br from-violet-500 to-indigo-600">
-                            <ScanFace className="h-8 w-8 text-white" />
-                        </div>
-                        <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Face Enrollment</h2>
-                        <p className="text-sm text-slate-600 dark:text-zinc-400">
-                            Position your face inside the camera frame. We'll capture multiple frames to create a reliable identity reference.
-                        </p>
-
-                        <div className="w-full overflow-hidden rounded-xl border border-slate-200 bg-slate-100 dark:border-zinc-800 dark:bg-zinc-950">
-                            <video ref={previewRef} autoPlay playsInline muted className="h-52 w-full object-cover" />
-                            <div className="flex items-center justify-center gap-1.5 px-3 py-2 text-xs text-slate-500 dark:text-zinc-400">
-                                <Camera className="h-3.5 w-3.5 text-emerald-400" /> Camera active
-                            </div>
-                        </div>
-
-                        {faceCaptureState !== "pending" && faceCaptureState !== "error" && (
-                            <div className="w-full space-y-2">
-                                <div className="flex justify-between text-xs text-slate-500 dark:text-zinc-400">
-                                    <span>Capturing face...</span>
-                                    <span>{enrollProgress.captured} / {enrollProgress.required}</span>
-                                </div>
-                                <div className="h-2 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-zinc-800">
-                                    <div
-                                        className="h-full rounded-full bg-gradient-to-r from-violet-500 to-indigo-500 transition-all duration-300"
-                                        style={{ width: `${capturePct}%` }}
-                                    />
-                                </div>
-                                <p className="text-center text-xs text-slate-500 dark:text-zinc-400">Keep your face visible and steady</p>
-                            </div>
-                        )}
-
-                        {faceCaptureState === "error" && faceCaptureError && (
-                            <div className="w-full rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
-                                <AlertTriangle className="mr-1 inline h-3.5 w-3.5" />
-                                {faceCaptureError}
-                            </div>
-                        )}
-
-                        {faceCaptureState === "pending" && faceCaptureError && (
-                            <div className="w-full rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-xs text-blue-700 dark:text-blue-300">
-                                {faceCaptureError}
-                            </div>
-                        )}
-
-                        <div className="mt-2 flex flex-wrap justify-center gap-3">
-                            <Button onClick={captureFace} disabled={faceCaptureState === "capturing"}>
-                                <ScanFace className="h-4 w-4" />
-                                {faceCaptureState === "capturing" ? "Capturing..." : enrollProgress.captured > 0 ? "Capture Next Frame" : "Capture Face"}
-                            </Button>
-                            <Button variant="outline" onClick={() => navigate("/student/tests")}>Cancel</Button>
-                        </div>
-                    </CardContent>
-                </Card>
-            </div>
+            <InterviewFaceCapture
+                attemptId={attempt.id}
+                stream={proctoring.streamRef.current}
+                onRegisterReference={registerTestReferenceFace}
+                onContinue={continueAfterFaceCapture}
+                onExit={() => navigate("/student/tests")}
+                continueLabel="Start test"
+                exitLabel="Cancel"
+            />
         );
     }
 
@@ -1049,7 +985,9 @@ const codeBuffersRef = useRef({});
                     <Clock className="h-4 w-4 text-violet-400" /> {fmt(timeLeft)}
                 </span>
 
-                <Button variant="outline" size="sm" onClick={handleFinish}>Finish</Button>
+                <Button variant="outline" size="sm" onClick={handleFinish} disabled={finalizing || submitting}>
+                    {finalizing || submitting ? "Submitting..." : "Finish"}
+                </Button>
             </div>
 
             {/* Keep the problem and coding workspace as separate full-height views. */}
@@ -1148,7 +1086,9 @@ const codeBuffersRef = useRef({});
                 >
                     <div className="relative">
                         <video ref={previewRef} autoPlay playsInline muted className="h-28 w-full object-cover" />
-                        <FaceAttentionOverlay metrics={proctoring.faceMonitor?.metrics} width={176} height={112} />
+                        {faceVerificationEnabled && (
+                            <FaceAttentionOverlay metrics={proctoring.faceMonitor?.metrics} width={176} height={112} />
+                        )}
                     </div>
                     <button
                         type="button"
@@ -1167,6 +1107,9 @@ const codeBuffersRef = useRef({});
                         </span>
                         <Move className="h-3 w-3" />
                     </button>
+                    <p className="px-2 pb-1.5 text-center text-[9px] leading-tight text-zinc-500">
+                        {faceVerificationEnabled ? "Identity verification active" : "Face checks disabled by test staff"}
+                    </p>
                 </div>
             )}
 

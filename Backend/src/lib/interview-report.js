@@ -19,6 +19,12 @@ const DISCLAIMER =
 
 const ACTION_VERBS = /\b(led|designed|built|developed|implemented|created|optimized|improved|migrated|decided|chose|solved|debugged|tested|refactored|launched|shipped|managed|owned|automated|reduced|increased|researched|proposed|coordinated)\b/gi;
 const CHALLENGE_TERMS = /\b(challenge|difficult|problem|issue|bug|trade-?off|constraint|failure|failed|struggl|learned|mistake|obstacle)\b/gi;
+const NON_ANSWERS = /\b(?:i\s+)?(?:just\s+)?(?:read|repeat(?:ed|ing)?)\s+(?:the\s+)?question\b|\b(?:i\s+)?(?:don't|do not|cannot|can't)\s+know\b|\bno\s+answer\b/i;
+const QUESTION_STOP_WORDS = new Set([
+  "a", "an", "and", "are", "did", "do", "does", "for", "from", "how", "i",
+  "in", "is", "it", "me", "of", "on", "or", "the", "to", "was", "what",
+  "when", "where", "which", "who", "why", "with", "you", "your",
+]);
 
 function words(text) {
   return String(text || "").trim().split(/\s+/).filter(Boolean);
@@ -36,17 +42,41 @@ function baseQuestionId(questionId) {
   return String(questionId || "").split("#")[0];
 }
 
+function isSubstantiveAnswer(question, answer) {
+  const response = String(answer || "").trim();
+  if (!response || NON_ANSWERS.test(response)) return false;
+
+  const normalize = (value) => value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const normalizedAnswer = normalize(response);
+  const normalizedQuestion = normalize(question?.text);
+  if (!normalizedQuestion) return true;
+  if (normalizedAnswer === normalizedQuestion) return false;
+
+  const answerTerms = normalizedAnswer.split(/\s+/).filter((term) => term && !QUESTION_STOP_WORDS.has(term));
+  const questionTerms = new Set(normalizedQuestion.split(/\s+/).filter((term) => term && !QUESTION_STOP_WORDS.has(term)));
+  const overlap = answerTerms.filter((term) => questionTerms.has(term)).length;
+  return answerTerms.length < 3 || overlap / answerTerms.length < 0.95;
+}
+
+function substantiveTranscript(plan, transcript) {
+  const questions = new Map((plan?.questions || []).map((question) => [question.id, question]));
+  return (transcript || []).filter((turn) => {
+    if (turn.role !== "candidate") return true;
+    const question = questions.get(baseQuestionId(turn.questionId));
+    return question && isSubstantiveAnswer(question, turn.text);
+  });
+}
+
 function groupAnswers(plan, transcript) {
   const questions = plan?.questions || [];
-  const textById = new Map(questions.map((q) => [q.id, q]));
   const answers = new Map();
-  for (const turn of transcript || []) {
+  for (const turn of substantiveTranscript(plan, transcript)) {
     if (turn.role !== "candidate" || !turn.text) continue;
     const base = baseQuestionId(turn.questionId);
     if (!answers.has(base)) answers.set(base, []);
     answers.get(base).push(String(turn.text));
   }
-  return { questions, textById, answers };
+  return { questions, answers };
 }
 
 function scoreRubric(plan, transcript) {
@@ -62,6 +92,21 @@ function scoreRubric(plan, transcript) {
   const plural = count(joined, /\bwe\b/gi);
   const shortAnswers = allAnswers.filter((answer) => words(answer).length < 8).length;
   const unanswered = questions.filter((q) => !answers.has(q.id)).length;
+
+  if (!allAnswers.length) {
+    const scores = Object.fromEntries(RUBRIC.map(({ key }) => [key, 1]));
+    return {
+      rubric: Object.fromEntries(RUBRIC.map(({ key, label }) => [key, {
+        label,
+        score: 1,
+        rationale: "No substantive answer was captured for this interview.",
+      }])),
+      overall: 1,
+      questionsAnswered: 0,
+      totalQuestions: questions.length,
+      scores,
+    };
+  }
 
   const technicalUnderstanding = clampScore(3 + (specificity >= 2 ? 1 : 0) + (avgWords >= 30 ? 0.5 : 0) - (avgWords < 15 ? 1 : 0));
   const reasoning = clampScore(3 + (challenges >= 1 ? 1 : 0) + (actions >= 3 ? 1 : 0) - (challenges === 0 && actions === 0 ? 1 : 0));
@@ -95,6 +140,9 @@ function buildCandidateSummary(scored, plan, transcript) {
   const answered = scored.questionsAnswered;
   const total = scored.totalQuestions;
 
+  if (!answered) {
+    return "No substantive answers were captured, so the interview could not be meaningfully evaluated. Try answering each question with details about your own work.";
+  }
   if (!total) return "No answers were recorded, so there is nothing to summarise yet.";
   const coverageLine = answered === total
     ? `You answered all ${total} questions.`
@@ -124,7 +172,7 @@ function buildHeuristicBody(plan, transcript) {
   for (const question of questions) {
     const answerList = answers.get(question.id);
     if (!answerList || !answerList.length) {
-      clarifications.push(`No response captured for: "${question.text}"`);
+      clarifications.push(`No substantive response captured for: "${question.text}"`);
       continue;
     }
     const answer = answerList.join(" ");
@@ -142,7 +190,7 @@ function buildHeuristicBody(plan, transcript) {
   const answered = evidence.length;
   const summary = answered
     ? `The candidate responded to ${answered} of ${total} planned questions. Answers ${answered >= Math.ceil(total * 0.7) ? "covered most of the resume-grounded topics" : "left several topics with limited coverage"}. Review the transcript for the candidate's own wording.`
-    : "No candidate answers were recorded, so no assessment can be made.";
+    : "No substantive candidate answers were captured, so no assessment can be made.";
 
   return { strengths: strengths.slice(0, 6), clarifications: clarifications.slice(0, 6), evidence: evidence.slice(0, 12), summary };
 }
@@ -152,6 +200,7 @@ const REPORT_SYSTEM_PROMPT =
   "The interview was grounded in the candidate's resume and, if provided, a target job role. " +
   "Summarise what the candidate actually said. Do not recommend hiring or rejection. " +
   "Base every claim on the transcript and quote the candidate where possible. " +
+  "A candidate repeating or reading an interviewer question aloud is not an answer; do not treat it as evidence of understanding, reasoning, communication, or relevance. " +
   "Score each rubric dimension from 1 (weak) to 5 (strong) and justify it. " +
   "Also write a short, supportive, candidate-facing summary (2-3 sentences) of their strongest area and one concrete thing to improve. " +
   "Return ONLY valid JSON matching: " +
@@ -189,13 +238,13 @@ function sanitizeLlmReport(raw, plan, transcript) {
  * deterministic fallback; never throws for LLM failures.
  */
 async function generateReport(interview, plan) {
-  const transcript = interview.transcript || [];
+  const transcript = substantiveTranscript(plan, interview.transcript || []);
   const scored = scoreRubric(plan, transcript);
   const jobRole = String(plan?.jobRole || interview?.jobRole || "").trim();
   let source = "heuristic";
   let body = null;
 
-  if (llm.available()) {
+  if (llm.available() && scored.questionsAnswered > 0) {
     try {
       const condensed = transcript
         .map((turn) => `${turn.role === "bot" ? "INTERVIEWER" : "CANDIDATE"} [${turn.questionId || ""}]: ${turn.text}`)

@@ -109,6 +109,7 @@ class FaceMonitor:
             "multiple_faces": False,
             "threshold": FACE_MATCH_THRESHOLD,
         }
+        self._face_detection_enabled = True
 
     @property
     def is_enrolled(self) -> bool:
@@ -302,7 +303,12 @@ class FaceMonitor:
             "message": f"Not enough valid frames ({len(self._enrollment_embeddings)}/{REFERENCE_MIN_VALID_FRAMES}).",
         }
 
-    def monitor_frame(self, frame: np.ndarray, camera_active: bool = True) -> dict:
+    def monitor_frame(
+        self,
+        frame: np.ndarray,
+        camera_active: bool = True,
+        face_detection_enabled: bool = True,
+    ) -> dict:
         """Process one monitoring cycle during the assessment.
 
         Returns: {
@@ -349,7 +355,20 @@ class FaceMonitor:
                 "liveness": None,
             }
 
-        det = self.detector.detect(frame)
+        if self._face_detection_enabled != face_detection_enabled:
+            self.blink.reset()
+            self.analyzer.reset()
+            if self.liveness is not None:
+                self.liveness.reset()
+            self._face_detection_enabled = face_detection_enabled
+
+        det = self.detector.detect(frame) if face_detection_enabled else {
+            "face_count": 0,
+            "face_present": False,
+            "faces": [],
+            "backend": "disabled",
+            "conditions": "disabled",
+        }
         face_count = det["face_count"]
         face_present = det["face_present"]
 
@@ -381,7 +400,7 @@ class FaceMonitor:
         similarity = None
         landmarks_result = {"faces": [], "face_count": 0, "backend": self.landmarks.backend_name}
 
-        if face_present and face_count >= 1:
+        if face_detection_enabled and face_present and face_count >= 1:
             match_result = self._verify_identity(frame, det)
 
             best = max(det["faces"], key=lambda f: (f["bbox"][2] - f["bbox"][0]) * (f["bbox"][3] - f["bbox"][1]))
@@ -402,7 +421,7 @@ class FaceMonitor:
         blink_metrics = None
         primary_points = None
 
-        if face_count >= 1 and landmarks_result.get("faces"):
+        if face_detection_enabled and face_count >= 1 and landmarks_result.get("faces"):
             primary = self._primary_face(landmarks_result, frame.shape, det)
             if primary is not None:
                 points, bbox = primary
@@ -422,7 +441,7 @@ class FaceMonitor:
         )
 
         liveness_state = None
-        if self.liveness is not None:
+        if face_detection_enabled and self.liveness is not None:
             liveness_state = self.liveness.update(
                 face_present=face_present,
                 blink_count=getattr(metrics, "blink_count", None),
@@ -435,6 +454,7 @@ class FaceMonitor:
             "match": match_result["match"] if match_result else None,
             "similarity": match_result["similarity"] if match_result else None,
             "camera_active": camera_active,
+            "face_detection_enabled": face_detection_enabled,
             "quality": quality,
             "looking_away": metrics.looking_away,
             "head_turned": metrics.head_turned,
@@ -710,9 +730,14 @@ class FaceMonitor:
             "confidence": 0.0,
         }
 
-    def monitor_from_base64(self, image_b64: str, camera_active: bool = True) -> dict:
+    def monitor_from_base64(
+        self,
+        image_b64: str,
+        camera_active: bool = True,
+        face_detection_enabled: bool = True,
+    ) -> dict:
         frame = decode_base64_image(image_b64)
-        return self.monitor_frame(frame, camera_active)
+        return self.monitor_frame(frame, camera_active, face_detection_enabled)
 
     def get_state(self) -> dict:
         vm_state = self.violation_manager.get_state()
@@ -732,6 +757,7 @@ class FaceMonitor:
         self._reference_embedding = None
         self._reference_captured = False
         self._reference_face_bbox = None
+        self._face_detection_enabled = True
         self._enrollment_frames.clear()
         self._enrollment_embeddings.clear()
         self.blink.reset()

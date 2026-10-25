@@ -33,24 +33,26 @@ AIML/
 
 ## Quick Start
 
-### Setup Virtual Environment
+### Windows
 
 ```bash
 cd AIML
-python -m venv .venv
-.venv\Scripts\activate        # Windows
-pip install -r requirements.txt
+dev.bat setup
+dev.bat serve
 ```
 
-### Run Flask API (standalone)
+`setup` creates an isolated Python environment and installs dependencies. Run it
+again when `requirements.txt` changes. `serve` starts both APIs:
 
-```bash
-cd AIML
-python -m api.proctoring_api
-# API starts on http://localhost:5050
-```
+- General API: http://localhost:5000
+- Proctoring API: http://localhost:5050
 
-### API Endpoints
+Check http://localhost:5000/api/health to confirm that the service is running.
+Keep the terminal open while developing; press **Ctrl+C** to stop the services.
+See [GETTING_STARTED.md](./GETTING_STARTED.md) for Backend setup and macOS/Linux
+instructions.
+
+### Proctoring API Endpoints
 
 #### `POST /analyze`
 

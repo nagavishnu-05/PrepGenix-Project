@@ -218,6 +218,7 @@ class ViolationManager:
         }
         """
         self._cycle_count += 1
+        face_detection_enabled = detection_result.get("face_detection_enabled", True)
         new_violations = []
         new_info_logs = []
 
@@ -225,7 +226,10 @@ class ViolationManager:
 
         elapsed = time.time() - self._start_time
         if elapsed < self._grace_seconds:
-            self._track_face_absence(detection_result, new_violations, new_info_logs, grace=True)
+            if face_detection_enabled:
+                self._track_face_absence(detection_result, new_violations, new_info_logs, grace=True)
+            else:
+                self._reset_disabled_face_tracking()
             return {
                 "violations": [],
                 "violation_count": self._violation_count,
@@ -236,35 +240,38 @@ class ViolationManager:
                 **self._identity_gate(detection_result, grace=True),
             }
 
-        self._track_face_absence(detection_result, new_violations, new_info_logs, grace=False)
+        if face_detection_enabled:
+            self._track_face_absence(detection_result, new_violations, new_info_logs, grace=False)
 
-        no_face = not detection_result.get("face_present", True)
-        # A face that is missing from the frame for the full grace window (30s by
-        # default) counts once. The latch clears when the face returns, so one
-        # unbroken absence is a single violation regardless of its length.
-        if not no_face:
-            self._no_face_away_counted = False
-        if self._no_face_away_signal.update(no_face) and not self._no_face_away_counted:
-            v = self._confirm_violation("NO_FACE", {
-                "description": f"No face detected in the camera feed for over {HEAD_TURNED_AWAY_GRACE_SECONDS:.0f} seconds.",
-                "confidence": detection_result.get("similarity"),
-                "severity": "high",
-                "absence_duration_seconds": round(self._absence_duration(), 2),
-            }, window=max(NO_FACE_CONFIRM_SECONDS, HEAD_TURNED_AWAY_GRACE_SECONDS))
-            if v:
-                self._no_face_away_counted = True
-                new_violations.append(v)
+            no_face = not detection_result.get("face_present", True)
+            # A face that is missing from the frame for the full grace window (30s by
+            # default) counts once. The latch clears when the face returns, so one
+            # unbroken absence is a single violation regardless of its length.
+            if not no_face:
+                self._no_face_away_counted = False
+            if self._no_face_away_signal.update(no_face) and not self._no_face_away_counted:
+                v = self._confirm_violation("NO_FACE", {
+                    "description": f"No face detected in the camera feed for over {HEAD_TURNED_AWAY_GRACE_SECONDS:.0f} seconds.",
+                    "confidence": detection_result.get("similarity"),
+                    "severity": "high",
+                    "absence_duration_seconds": round(self._absence_duration(), 2),
+                }, window=max(NO_FACE_CONFIRM_SECONDS, HEAD_TURNED_AWAY_GRACE_SECONDS))
+                if v:
+                    self._no_face_away_counted = True
+                    new_violations.append(v)
 
-        face_count = detection_result.get("face_count", 0)
-        multiple = face_count > 1
-        if self._multiple_face_signal.update(multiple):
-            v = self._confirm_violation("MULTIPLE_FACES", {
-                "description": f"Multiple faces detected ({face_count} people).",
-                "face_count": face_count,
-                "severity": "high",
-            })
-            if v:
-                new_violations.append(v)
+            face_count = detection_result.get("face_count", 0)
+            multiple = face_count > 1
+            if self._multiple_face_signal.update(multiple):
+                v = self._confirm_violation("MULTIPLE_FACES", {
+                    "description": f"Multiple faces detected ({face_count} people).",
+                    "face_count": face_count,
+                    "severity": "high",
+                })
+                if v:
+                    new_violations.append(v)
+        else:
+            self._reset_disabled_face_tracking()
 
         # Person detection catches extra bodies the face detector may miss when
         # a second person is turned away or partially out of frame.
@@ -314,23 +321,24 @@ class ViolationManager:
             if entry:
                 new_info_logs.append(entry)
 
-        match = detection_result.get("match")
-        if match is False:
-            self._identity_signal.update(True)
-            # A visible face can never also be "no face".
-            self._no_face_signal.reset()
-            self._no_face_away_signal.reset()
-            if self._identity_signal.confirmed:
-                v = self._confirm_violation("IDENTITY_MISMATCH", {
-                    "description": "Identity mismatch detected. A different person may be present.",
-                    "similarity": detection_result.get("similarity"),
-                    "unmatched_faces": detection_result.get("unmatched_faces"),
-                    "severity": "high",
-                })
-                if v:
-                    new_violations.append(v)
-        else:
-            self._identity_signal.update(False)
+        if face_detection_enabled:
+            match = detection_result.get("match")
+            if match is False:
+                self._identity_signal.update(True)
+                # A visible face can never also be "no face".
+                self._no_face_signal.reset()
+                self._no_face_away_signal.reset()
+                if self._identity_signal.confirmed:
+                    v = self._confirm_violation("IDENTITY_MISMATCH", {
+                        "description": "Identity mismatch detected. A different person may be present.",
+                        "similarity": detection_result.get("similarity"),
+                        "unmatched_faces": detection_result.get("unmatched_faces"),
+                        "severity": "high",
+                    })
+                    if v:
+                        new_violations.append(v)
+            else:
+                self._identity_signal.update(False)
 
         camera_active = detection_result.get("camera_active", True)
         if not camera_active:
@@ -346,7 +354,7 @@ class ViolationManager:
             self._camera_frames.append(False)
 
         quality = detection_result.get("quality", "good")
-        if quality == "poor" and face_count == 1:
+        if face_detection_enabled and quality == "poor" and face_count == 1:
             self._active_events["LOW_FACE_CONFIDENCE"] = {
                 "type": "LOW_FACE_CONFIDENCE",
                 "timestamp": time.time(),
@@ -355,7 +363,8 @@ class ViolationManager:
         else:
             self._active_events.pop("LOW_FACE_CONFIDENCE", None)
 
-        new_violations.extend(self._track_attention(detection_result, new_info_logs))
+        if face_detection_enabled:
+            new_violations.extend(self._track_attention(detection_result, new_info_logs))
 
         should_submit = (
             self.auto_submit
@@ -392,6 +401,19 @@ class ViolationManager:
         self._gate_blocked_since = None
         self._gate_reason = None
 
+    def _reset_disabled_face_tracking(self):
+        self._reset_identity_signals()
+        self._clear_identity_gate()
+        self._gate_status = "disabled"
+        self._face_absent_since = None
+        self._absence_logged = False
+        self._looking_away_signal.reset()
+        self._head_turned_active = False
+        self._eyes_closed_frames.clear()
+        self._head_away_counted = False
+        for event_type in ("LOOKING_AWAY", "HEAD_TURNED_AWAY", "EYES_CLOSED", "LOW_FACE_CONFIDENCE"):
+            self._active_events.pop(event_type, None)
+
     def _identity_gate(self, detection_result: dict, grace: bool = False) -> dict:
         """Live gate state deciding whether the candidate may continue.
 
@@ -405,6 +427,14 @@ class ViolationManager:
             "identity_block_reason": None,
             "identity_block_seconds": 0.0,
         }
+        if not detection_result.get("face_detection_enabled", True):
+            self._reset_disabled_face_tracking()
+            return {
+                "identity_blocked": False,
+                "identity_status": "disabled",
+                "identity_block_reason": None,
+                "identity_block_seconds": 0.0,
+            }
         if grace:
             # Do not accuse a candidate during the warm-up window.
             self._clear_identity_gate()

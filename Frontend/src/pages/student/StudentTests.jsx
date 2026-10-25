@@ -6,13 +6,14 @@ import { Button } from "@/components/ui/button";
 import { PageHeader, EmptyState, LoadingState } from "@/components/portal/primitives";
 import { StatusBadge } from "@/components/portal/status-badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { TestAttemptReport } from "@/components/assessment/test-attempt-report";
 import { api } from "@/lib/api";
-import { cn } from "@/lib/utils";
 
 export default function StudentTests() {
     const navigate = useNavigate();
     const [tests, setTests] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [now, setNow] = useState(Date.now());
 
     // Popup result state
     const [selectedAttempt, setSelectedAttempt] = useState(null);
@@ -20,6 +21,11 @@ export default function StudentTests() {
 
     useEffect(() => {
         api.tests.list().then(setTests).catch(() => {}).finally(() => setLoading(false));
+    }, []);
+
+    useEffect(() => {
+        const timer = window.setInterval(() => setNow(Date.now()), 10_000);
+        return () => window.clearInterval(timer);
     }, []);
 
     const act = async (t) => {
@@ -52,7 +58,13 @@ export default function StudentTests() {
                 <EmptyState icon={ClipboardList} title="No tests assigned yet" description="Once a test is assigned to your batch it will appear here." />
             ) : (
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-                    {tests.map((t) => (
+                    {tests.map((t) => {
+                        const availability = t.startsAt && now < new Date(t.startsAt).getTime()
+                            ? "upcoming"
+                            : t.endsAt && now >= new Date(t.endsAt).getTime()
+                                ? "ended"
+                                : "available";
+                        return (
                         <Card key={t.id} className="border-slate-200/80 dark:border-zinc-800/80 bg-white/70 dark:bg-zinc-900/40 transition-colors hover:border-slate-300 dark:hover:border-zinc-700">
                             <CardContent className="p-5">
                                 <div className="mb-3 flex items-start justify-between gap-2">
@@ -63,6 +75,20 @@ export default function StudentTests() {
                                 </div>
                                 <h3 className="text-base font-semibold text-slate-900 dark:text-white">{t.title}</h3>
                                 <p className="mt-1 line-clamp-2 text-sm text-slate-500 dark:text-zinc-400">{t.description}</p>
+                                {(t.topics || []).length > 0 && (
+                                    <div className="mt-2 flex flex-wrap gap-1">
+                                        {t.topics.map((topic) => <span key={topic} className="rounded bg-violet-500/10 px-2 py-0.5 text-[11px] text-violet-700 dark:text-violet-300">{topic}</span>)}
+                                    </div>
+                                )}
+                                {t.startsAt && t.endsAt && (
+                                    <p className="mt-2 text-xs text-slate-500 dark:text-zinc-500">
+                                        {availability === "upcoming"
+                                            ? `Available from ${new Date(t.startsAt).toLocaleString()}`
+                                            : availability === "ended"
+                                                ? `Availability ended ${new Date(t.endsAt).toLocaleString()}`
+                                                : `Available until ${new Date(t.endsAt).toLocaleString()}`}
+                                    </p>
+                                )}
                                 <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-zinc-400">
                                     <span className="rounded-md bg-slate-100 dark:bg-zinc-800/70 px-2 py-1">{t.type === "coding" ? "Coding" : "Aptitude"}</span>
                                     <span className="rounded-md bg-slate-100 dark:bg-zinc-800/70 px-2 py-1">{t.mode === "adaptive" ? "Adaptive" : "Fixed"}</span>
@@ -70,9 +96,18 @@ export default function StudentTests() {
                                     <span className="flex items-center gap-1 rounded-md bg-slate-100 dark:bg-zinc-800/70 px-2 py-1"><Clock className="h-3 w-3" />{t.durationMin} min</span>
                                 </div>
                                 <div className="mt-5">
-                                    <Button className="w-full" variant={t.attempt?.status === "in_progress" || !t.attempt ? "default" : "outline"} onClick={() => act(t)}>
+                                    <Button
+                                        className="w-full"
+                                        variant={t.attempt?.status === "in_progress" || !t.attempt ? "default" : "outline"}
+                                        disabled={attemptLoading || (!t.attempt && availability !== "available")}
+                                        onClick={() => act(t)}
+                                    >
                                         {!t.attempt
-                                            ? "Start Test"
+                                            ? availability === "upcoming"
+                                                ? "Not available yet"
+                                                : availability === "ended"
+                                                    ? "Test window ended"
+                                                    : "Start Test"
                                             : t.attempt.status === "in_progress"
                                                 ? "Resume Test"
                                                 : t.attempt.status === "flagged"
@@ -84,78 +119,19 @@ export default function StudentTests() {
                                 </div>
                             </CardContent>
                         </Card>
-                    ))}
+                        );
+                    })}
                 </div>
             )}
 
             <Dialog open={selectedAttempt !== null} onOpenChange={(open) => { if (!open) setSelectedAttempt(null); }}>
-                <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
+                <DialogContent className="max-h-[90vh] max-w-4xl overflow-y-auto">
                     <DialogHeader>
                         <DialogTitle>{selectedAttempt?.testTitle || "Test Results"}</DialogTitle>
-                        <DialogDescription>Detailed attempt analytics and question breakdown.</DialogDescription>
+                        <DialogDescription>Full test report with score, timing, topics, and response breakdown.</DialogDescription>
                     </DialogHeader>
                     {selectedAttempt && (
-                        <div className="space-y-6 pt-2">
-                            {/* Summary stats */}
-                            <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-                                <div className="rounded-lg border border-slate-200 dark:border-zinc-800 bg-slate-50 dark:bg-zinc-950/40 p-3 text-center">
-                                    <p className="text-2xl font-bold text-slate-900 dark:text-white">
-                                        {selectedAttempt.score}/{selectedAttempt.totalScore}
-                                    </p>
-                                    <p className="text-[10px] text-slate-500 dark:text-zinc-550 uppercase font-bold tracking-wider mt-1">Score</p>
-                                </div>
-                                <div className="rounded-lg border border-slate-200 dark:border-zinc-800 bg-slate-50 dark:bg-zinc-950/40 p-3 text-center">
-                                    <p className="text-2xl font-bold text-slate-900 dark:text-white">
-                                        {Math.round((selectedAttempt.score / (selectedAttempt.totalScore || 1)) * 100)}%
-                                    </p>
-                                    <p className="text-[10px] text-slate-500 dark:text-zinc-550 uppercase font-bold tracking-wider mt-1">Percentage</p>
-                                </div>
-                                <div className="rounded-lg border border-slate-200 dark:border-zinc-800 bg-slate-50 dark:bg-zinc-950/40 p-3 text-center">
-                                    <p className="text-2xl font-bold text-slate-900 dark:text-white capitalize">
-                                        {selectedAttempt.result || "Completed"}
-                                    </p>
-                                    <p className="text-[10px] text-slate-500 dark:text-zinc-550 uppercase font-bold tracking-wider mt-1">Outcome</p>
-                                </div>
-                                <div className="rounded-lg border border-slate-200 dark:border-zinc-800 bg-slate-50 dark:bg-zinc-950/40 p-3 text-center">
-                                    <p className="text-2xl font-bold text-amber-600 dark:text-amber-500">
-                                        {selectedAttempt.violations ?? 0}
-                                    </p>
-                                    <p className="text-[10px] text-slate-500 dark:text-zinc-550 uppercase font-bold tracking-wider mt-1">Violations</p>
-                                </div>
-                            </div>
-
-                            {/* Details list */}
-                            <div className="space-y-3">
-                                <h4 className="text-xs font-bold text-slate-700 dark:text-zinc-300 uppercase tracking-wider">Question Breakdown</h4>
-                                <div className="divide-y divide-slate-100 dark:divide-zinc-900 rounded-lg border border-slate-250 dark:border-zinc-800 bg-white/50 dark:bg-zinc-900/10 overflow-hidden">
-                                    {(selectedAttempt.answers || []).map((ans, idx) => (
-                                        <div key={idx} className="flex items-center justify-between p-3.5 text-xs sm:text-sm">
-                                            <div className="min-w-0 flex-1">
-                                                <p className="font-semibold text-slate-800 dark:text-zinc-200 truncate">
-                                                    Question {idx + 1}
-                                                </p>
-                                                <p className="text-[11px] text-slate-500 dark:text-zinc-500 mt-0.5">
-                                                    Time taken: {ans.timeTakenMs ? `${(ans.timeTakenMs / 1000).toFixed(1)}s` : "—"} • Difficulty: {ans.difficulty || "medium"}
-                                                </p>
-                                            </div>
-                                            <div className="flex items-center gap-3">
-                                                <span className="text-[11px] font-semibold text-slate-500 dark:text-zinc-400">
-                                                    {ans.points ?? 1} pts
-                                                </span>
-                                                <span className={cn(
-                                                    "rounded px-2 py-0.5 text-[10px] font-bold uppercase",
-                                                    ans.correct 
-                                                        ? "bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" 
-                                                        : "bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400"
-                                                )}>
-                                                    {ans.correct ? "Correct" : "Incorrect"}
-                                                </span>
-                                            </div>
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-                        </div>
+                        <TestAttemptReport attempt={selectedAttempt} />
                     )}
                 </DialogContent>
             </Dialog>

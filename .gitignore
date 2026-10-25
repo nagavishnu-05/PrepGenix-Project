@@ -63,6 +63,8 @@ Frontend/tsconfig.tsbuildinfo
 docker-compose.override.yml
 
 # python / ml
+/.venv/
+/AIML/venv/
 AIML/.venv/
 AIML/data/places365/
 AIML/models/places365/

@@ -27,6 +27,7 @@ const DIFFICULTIES = ["easy", "medium", "hard"];
 
 const PROCTOR_DEFAULT = {
   enabled: true,
+  faceVerification: true,
   maxViolations: 1,
   autoSubmit: true,
   reviewOnly: true,
@@ -36,7 +37,8 @@ const PROCTOR_DEFAULT = {
 function normalizeProctoring(body) {
   const p = body && typeof body === "object" ? body : {};
   return {
-    enabled: p.enabled !== false,
+    enabled: true,
+    faceVerification: p.faceVerification !== false,
     maxViolations: Math.max(1, Number(p.maxViolations) || 1),
     autoSubmit: p.autoSubmit !== false,
     // Default to review-only: record violations for staff without locking the
@@ -107,11 +109,49 @@ function attemptDurationMin(attempt) {
 async function expireIfOverdue(attempt) {
   if (!attempt || attempt.status !== "in_progress") return attempt;
   const startedMs = attempt.startedAt ? new Date(attempt.startedAt).getTime() : Date.now();
-  const deadline = startedMs + attemptDurationMin(attempt) * 60 * 1000;
+  const durationDeadline = startedMs + attemptDurationMin(attempt) * 60 * 1000;
+  const scheduledDeadline = attempt.scheduledEndAt ? new Date(attempt.scheduledEndAt).getTime() : Infinity;
+  const deadline = Math.min(durationDeadline, scheduledDeadline);
   if (Date.now() < deadline) return attempt;
   await finalizeAttempt(attempt);
-  await col("attempts").updateOne({ _id: attempt._id }, { $set: { timedOut: true } });
+  await col("attempts").updateOne(
+    { _id: attempt._id },
+    {
+      $set: {
+        timedOut: Date.now() >= durationDeadline,
+        scheduleEnded: Date.now() >= scheduledDeadline,
+      },
+    }
+  );
   return (await col("attempts").findOne({ _id: attempt._id })) || attempt;
+}
+
+async function expireScheduledAttempts(now = new Date()) {
+  const overdue = await col("attempts")
+    .find({ status: "in_progress", scheduledEndAt: { $lte: now } })
+    .toArray();
+  for (const attempt of overdue) {
+    await expireIfOverdue(attempt);
+  }
+  return overdue.length;
+}
+
+function startScheduledTestExpirySweep() {
+  const run = () => expireScheduledAttempts().catch((error) => {
+    console.error("Scheduled test expiry failed:", error.message);
+  });
+  run();
+  const timer = setInterval(run, 10_000);
+  timer.unref();
+  return timer;
+}
+
+function testAvailability(test, now = new Date()) {
+  const startsAt = test.startsAt ? new Date(test.startsAt) : null;
+  const endsAt = test.endsAt ? new Date(test.endsAt) : null;
+  if (startsAt && now < startsAt) return "upcoming";
+  if (endsAt && now >= endsAt) return "ended";
+  return "available";
 }
 
 // GET /api/tests  (staff sees all; students see assigned only)
@@ -140,6 +180,7 @@ router.get("/", authenticate, async (req, res) => {
           if (attempt) attempt = await expireIfOverdue(attempt);
           return {
             ...toId(t),
+            availabilityStatus: testAvailability(t),
             _count: { questions: t.mode === "fixed" ? (t.fixedQuestionIds || []).length : t.adaptive?.totalQuestions },
             attempt: attempt ? { id: attempt._id.toString(), status: attempt.status, score: attempt.score, result: attempt.result } : null,
           };
@@ -314,10 +355,19 @@ router.post("/", authenticate, async (req, res) => {
     if (req.user.role !== "staff") return res.status(403).json({ error: "Staff Coordinator only" });
     const body = req.body;
     if (!body.title || !body.type) return res.status(400).json({ error: "title and type are required" });
+    if (!body.startsAt || !body.endsAt) return res.status(400).json({ error: "Test start and end times are required" });
+    if (!Array.isArray(body.topics) || !body.topics.some((topic) => String(topic).trim())) {
+      return res.status(400).json({ error: "At least one test topic is required" });
+    }
     const mode = body.mode === "adaptive" ? "adaptive" : "fixed";
     const test = {
       title: String(body.title).trim(),
       description: body.description || "",
+      topics: Array.isArray(body.topics)
+        ? [...new Set(body.topics.map((topic) => String(topic).trim()).filter(Boolean))]
+        : [],
+      startsAt: body.startsAt ? new Date(body.startsAt) : null,
+      endsAt: body.endsAt ? new Date(body.endsAt) : null,
       type: body.type === "coding" ? "coding" : "aptitude",
       mode,
       adaptive: body.adaptive || { totalQuestions: 10, questionFilter: null },
@@ -333,6 +383,11 @@ router.post("/", authenticate, async (req, res) => {
       createdAt: new Date(),
       updatedAt: new Date(),
     };
+    if (Number.isNaN(test.startsAt.getTime())) return res.status(400).json({ error: "Invalid test start time" });
+    if (Number.isNaN(test.endsAt.getTime())) return res.status(400).json({ error: "Invalid test end time" });
+    if (test.startsAt && test.endsAt && test.startsAt >= test.endsAt) {
+      return res.status(400).json({ error: "Test end time must be after its start time" });
+    }
     const result = await col("tests").insertOne(test);
     res.status(201).json(toId({ ...test, _id: result.insertedId }));
   } catch {
@@ -348,6 +403,27 @@ router.put("/:id", authenticate, async (req, res) => {
     const set = { updatedAt: new Date() };
     if (body.title !== undefined) set.title = body.title;
     if (body.description !== undefined) set.description = body.description;
+    if (body.topics !== undefined) {
+      if (!Array.isArray(body.topics)) return res.status(400).json({ error: "topics must be an array" });
+      set.topics = [...new Set(body.topics.map((topic) => String(topic).trim()).filter(Boolean))];
+    }
+    if (body.startsAt !== undefined) {
+      const startsAt = body.startsAt ? new Date(body.startsAt) : null;
+      if (startsAt && Number.isNaN(startsAt.getTime())) return res.status(400).json({ error: "Invalid test start time" });
+      set.startsAt = startsAt;
+    }
+    if (body.endsAt !== undefined) {
+      const endsAt = body.endsAt ? new Date(body.endsAt) : null;
+      if (endsAt && Number.isNaN(endsAt.getTime())) return res.status(400).json({ error: "Invalid test end time" });
+      set.endsAt = endsAt;
+    }
+    const currentTest = await col("tests").findOne({ _id: id(req.params.id) });
+    if (!currentTest) return res.status(404).json({ error: "Test not found" });
+    const nextStart = set.startsAt !== undefined ? set.startsAt : currentTest.startsAt;
+    const nextEnd = set.endsAt !== undefined ? set.endsAt : currentTest.endsAt;
+    if (nextStart && nextEnd && new Date(nextStart) >= new Date(nextEnd)) {
+      return res.status(400).json({ error: "Test end time must be after its start time" });
+    }
     if (body.adaptive !== undefined) set.adaptive = body.adaptive;
     if (body.fixedQuestionIds !== undefined) set.fixedQuestionIds = body.fixedQuestionIds.map(String);
     if (body.autoPick !== undefined) set.autoPick = body.autoPick;
@@ -512,9 +588,20 @@ router.post("/:id/start", authenticate, async (req, res) => {
       return res.json(toId(existing));
     }
 
+    const now = new Date();
+    if (test.startsAt && now < new Date(test.startsAt)) {
+      return res.status(403).json({ error: "This test is not available yet.", startsAt: test.startsAt });
+    }
+    if (test.endsAt && now >= new Date(test.endsAt)) {
+      return res.status(403).json({ error: "The availability window for this test has ended.", endsAt: test.endsAt });
+    }
+
     let attemptDoc = {
       testId: test._id.toString(),
       testTitle: test.title,
+      topics: test.topics || [],
+      scheduledStartAt: test.startsAt || null,
+      scheduledEndAt: test.endsAt || null,
       type: test.type,
       mode: test.mode,
       studentRegNo: student.regNo,
@@ -923,12 +1010,40 @@ router.post("/attempts/:attemptId/finish", authenticate, async (req, res) => {
 // GET /api/tests/attempts/:attemptId/result
 router.get("/attempts/:attemptId/result", authenticate, async (req, res) => {
   try {
-    const attempt = await col("attempts").findOne({ _id: id(req.params.attemptId) });
+    let attempt = await col("attempts").findOne({ _id: id(req.params.attemptId) });
     if (!attempt) return res.status(404).json({ error: "Attempt not found" });
     if (req.user.role === "student" && attempt.studentRegNo !== req.user.username) {
       return res.status(403).json({ error: "Access denied" });
     }
-    res.json(toId(attempt));
+    attempt = await expireIfOverdue(attempt);
+    if (!TERMINAL_ATTEMPT_STATUSES.includes(attempt.status)) {
+      return res.json(toId(attempt));
+    }
+    const answerQuestionIds = [...new Set((attempt.answers || []).map((answer) => answer.questionId).filter(Boolean))];
+    const questionRows = answerQuestionIds.length
+      ? await col("questions").find({ _id: { $in: answerQuestionIds.map(id) } }).toArray()
+      : [];
+    const questionById = new Map(questionRows.map((question) => [question._id.toString(), question]));
+    const answers = (attempt.answers || []).map((answer) => {
+      const question = questionById.get(String(answer.questionId));
+      if (!question) return answer;
+      const reportQuestion = {
+        title: question.title,
+        description: question.description,
+        type: question.type,
+        format: question.format,
+        options: question.options,
+        codeSnippet: question.codeSnippet,
+        constraints: question.constraints,
+        inputFormat: question.inputFormat,
+        outputFormat: question.outputFormat,
+        examples: question.examples,
+        correctOption: question.correctOption,
+        correctAnswer: question.answer,
+      };
+      return { ...answer, question: reportQuestion };
+    });
+    res.json(toId({ ...attempt, answers }));
   } catch {
     res.status(500).json({ error: "Failed to fetch result" });
   }
@@ -938,3 +1053,6 @@ module.exports = router;
 module.exports.finalizeAttempt = finalizeAttempt;
 module.exports.disqualifyAttempt = disqualifyAttempt;
 module.exports.PROCTOR_DEFAULT = PROCTOR_DEFAULT;
+module.exports.testAvailability = testAvailability;
+module.exports.startScheduledTestExpirySweep = startScheduledTestExpirySweep;
+module.exports.expireScheduledAttempts = expireScheduledAttempts;

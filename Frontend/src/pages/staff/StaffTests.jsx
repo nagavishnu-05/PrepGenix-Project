@@ -133,6 +133,21 @@ export default function StaffTests() {
 
     const create = async () => {
         if (!f.title.trim()) return;
+        const topics = f.topicsText.split(/[,;]/).map((topic) => topic.trim()).filter(Boolean);
+        if (!topics.length) {
+            alert("Add at least one test topic.");
+            return;
+        }
+        if (!f.startsAt || !f.endsAt) {
+            alert("Set both the test start and end time.");
+            return;
+        }
+        const startsAt = new Date(f.startsAt);
+        const endsAt = new Date(f.endsAt);
+        if (Number.isNaN(startsAt.getTime()) || Number.isNaN(endsAt.getTime()) || startsAt >= endsAt) {
+            alert("The test end time must be later than its start time.");
+            return;
+        }
         
         const testType = f.testTypeSelection === "aptitude_mcq" ? "aptitude" : "coding";
         const manualType = f.testTypeSelection === "coding_programming" ? "programming" : "mcq";
@@ -159,12 +174,16 @@ export default function StaffTests() {
             const payload = {
                 title: f.title,
                 description: f.description,
+                topics,
+                startsAt: startsAt.toISOString(),
+                endsAt: endsAt.toISOString(),
                 type: testType,
                 mode: f.mode,
                 durationMin: Number(f.durationMin) || 30,
                 passingScore: Number(f.passingScore) || 50,
                 proctoring: {
-                    enabled: f.proctoringEnabled,
+                    enabled: true,
+                    faceVerification: f.faceVerificationEnabled,
                     maxViolations: Number(f.proctoringMax) || 1,
                     autoSubmit: f.proctoringAuto,
                     reviewOnly: f.proctoringReviewOnly,
@@ -282,6 +301,14 @@ export default function StaffTests() {
                                                     {t.title}
                                                 </p>
                                                 <p className="max-w-[200px] sm:max-w-[240px] truncate text-xs text-slate-500 dark:text-zinc-500">{t.description}</p>
+                                                <p className="mt-1 max-w-[260px] truncate text-[11px] text-violet-600 dark:text-violet-400">
+                                                    {(t.topics || []).join(", ") || "No topics"}
+                                                </p>
+                                                {t.startsAt && t.endsAt && (
+                                                    <p className="mt-1 text-[10px] text-slate-500 dark:text-zinc-500">
+                                                        {new Date(t.startsAt).toLocaleString()} – {new Date(t.endsAt).toLocaleString()}
+                                                    </p>
+                                                )}
                                             </div>
                                         </TableCell>
                                         <TableCell>
@@ -374,6 +401,26 @@ export default function StaffTests() {
                                 <Label className="text-xs text-zinc-400">Passing score (%)</Label>
                                 <Input type="number" value={f.passingScore} onChange={(e) => set({ passingScore: e.target.value })} />
                             </div>
+                            <div className="col-span-2 space-y-1.5">
+                                <Label className="text-xs text-zinc-400">Test topics</Label>
+                                <Input
+                                    value={f.topicsText}
+                                    onChange={(e) => set({ topicsText: e.target.value })}
+                                    placeholder="e.g. Percentages, Averages or Mixed"
+                                />
+                                <p className="text-[11px] text-slate-500 dark:text-zinc-500">Enter one or more topics separated by commas.</p>
+                            </div>
+                            <div className="space-y-1.5">
+                                <Label className="text-xs text-zinc-400">Test available from</Label>
+                                <Input type="datetime-local" value={f.startsAt} onChange={(e) => set({ startsAt: e.target.value })} />
+                            </div>
+                            <div className="space-y-1.5">
+                                <Label className="text-xs text-zinc-400">Test available until</Label>
+                                <Input type="datetime-local" value={f.endsAt} onChange={(e) => set({ endsAt: e.target.value })} />
+                            </div>
+                            <p className="col-span-2 text-[11px] text-slate-500 dark:text-zinc-500">
+                                Times use your local timezone. Students can start only during this window; unfinished attempts are automatically submitted at the end time.
+                            </p>
                         </div>
 
                         {f.mode === "fixed" ? (
@@ -466,34 +513,33 @@ export default function StaffTests() {
                         <div className="rounded-lg border border-slate-200 dark:border-zinc-800 bg-slate-50 dark:bg-zinc-950/40 p-3">
                             <p className="mb-2 flex items-center gap-1.5 text-sm font-medium text-slate-800 dark:text-zinc-200"><ShieldCheck className="h-4 w-4 text-amber-500 dark:text-amber-400" /> Proctoring</p>
                             <div className="space-y-2">
-                                <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-zinc-300">
-                                    <Checkbox checked={f.proctoringEnabled} onCheckedChange={(v) => set({ proctoringEnabled: !!v })} />
-                                    Enable proctoring (camera + mic + fullscreen + AI face/voice analysis)
+                                <label className="flex items-start gap-2 text-sm text-slate-700 dark:text-zinc-300">
+                                    <Checkbox checked={f.faceVerificationEnabled} onCheckedChange={(v) => set({ faceVerificationEnabled: !!v })} />
+                                    <span>Verify the same candidate's face throughout the test</span>
                                 </label>
-                                {f.proctoringEnabled && (
-                                    <div className="grid grid-cols-3 gap-3 pt-1">
-                                        <div className="space-y-1">
-                                            <Label className="text-xs text-zinc-500">Max violations</Label>
-                                            <Input type="number" value={f.proctoringMax} onChange={(e) => set({ proctoringMax: e.target.value })} />
-                                        </div>
-                                        <div className="space-y-1">
-                                            <Label className="text-xs text-zinc-500">Snapshot every (sec)</Label>
-                                            <Input type="number" value={f.proctoringInterval} onChange={(e) => set({ proctoringInterval: e.target.value })} />
-                                        </div>
-                                        <div className="flex items-end pb-1">
-                                            <label className="flex items-center gap-2 text-sm text-zinc-300">
-                                                <Checkbox checked={f.proctoringAuto} onCheckedChange={(v) => set({ proctoringAuto: !!v })} />
-                                                Auto-submit at limit
-                                            </label>
-                                        </div>
+                                <p className="text-xs text-slate-500 dark:text-zinc-500">
+                                    Camera, microphone, fullscreen, and other proctoring checks stay enabled. Only face identity verification can be turned off.
+                                </p>
+                                <div className="grid grid-cols-3 gap-3 pt-1">
+                                    <div className="space-y-1">
+                                        <Label className="text-xs text-zinc-500">Max violations</Label>
+                                        <Input type="number" value={f.proctoringMax} onChange={(e) => set({ proctoringMax: e.target.value })} />
                                     </div>
-                                )}
-                                {f.proctoringEnabled && (
-                                    <label className="flex items-start gap-2 pt-1 text-sm text-slate-700 dark:text-zinc-300">
-                                        <Checkbox className="mt-0.5" checked={f.proctoringReviewOnly} onCheckedChange={(v) => set({ proctoringReviewOnly: !!v })} />
-                                        <span>Review only &mdash; record violations with snapshots for staff, but never auto-submit or lock the student</span>
-                                    </label>
-                                )}
+                                    <div className="space-y-1">
+                                        <Label className="text-xs text-zinc-500">Snapshot every (sec)</Label>
+                                        <Input type="number" value={f.proctoringInterval} onChange={(e) => set({ proctoringInterval: e.target.value })} />
+                                    </div>
+                                    <div className="flex items-end pb-1">
+                                        <label className="flex items-center gap-2 text-sm text-zinc-300">
+                                            <Checkbox checked={f.proctoringAuto} onCheckedChange={(v) => set({ proctoringAuto: !!v })} />
+                                            Auto-submit at limit
+                                        </label>
+                                    </div>
+                                </div>
+                                <label className="flex items-start gap-2 pt-1 text-sm text-slate-700 dark:text-zinc-300">
+                                    <Checkbox className="mt-0.5" checked={f.proctoringReviewOnly} onCheckedChange={(v) => set({ proctoringReviewOnly: !!v })} />
+                                    <span>Review only &mdash; record violations with snapshots for staff, but never auto-submit or lock the student</span>
+                                </label>
                             </div>
                         </div>
 
@@ -761,6 +807,9 @@ function emptyForm() {
     return {
         title: "",
         description: "",
+        topicsText: "",
+        startsAt: "",
+        endsAt: "",
         testTypeSelection: "aptitude_mcq",
         mode: "fixed",
         manualType: "mcq",
@@ -770,7 +819,7 @@ function emptyForm() {
         assignedToAll: true,
         assignedBatch: "",
         assignedRegNos: "",
-        proctoringEnabled: true,
+        faceVerificationEnabled: true,
         proctoringMax: 5,
         proctoringAuto: true,
         proctoringReviewOnly: true,

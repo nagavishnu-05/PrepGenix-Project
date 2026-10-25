@@ -157,7 +157,6 @@ export default function InterviewRoom() {
     const recognitionRef = useRef(null);
     const speechBaseRef = useRef("");
     const speechFinalRef = useRef("");
-    const speechManuallyEditedRef = useRef(false);
     const recorderRef = useRef(null);
     const chunksRef = useRef([]);
     const audioCtxRef = useRef(null);
@@ -185,13 +184,11 @@ export default function InterviewRoom() {
             setViolationCount(data.proctoringViolationCount || 0);
             if (data.status === "disqualified") {
                 setStep("terminated");
-            } else if (!data.plan?.questions?.length) {
-                setStep("blocked");
-            } else if (!data.consent?.consentedAt) {
-                setStep("consent");
             } else if (data.status === "completed") {
                 setDone(true);
                 setStep("done");
+            } else if (!data.consent?.consentedAt) {
+                setStep("consent");
             } else {
                 setStep("check");
             }
@@ -864,7 +861,6 @@ export default function InterviewRoom() {
         recognition.lang = speechLang;
         speechBaseRef.current = answer.trimEnd();
         speechFinalRef.current = "";
-        speechManuallyEditedRef.current = false;
         recognition.onresult = (event) => {
             let interim = "";
             for (let i = event.resultIndex; i < event.results.length; i += 1) {
@@ -877,9 +873,7 @@ export default function InterviewRoom() {
         };
         recognition.onend = () => {
             const spoken = speechFinalRef.current.trim();
-            if (!speechManuallyEditedRef.current) {
-                setAnswer([speechBaseRef.current, spoken].filter(Boolean).join(speechBaseRef.current && spoken ? " " : ""));
-            }
+            setAnswer([speechBaseRef.current, spoken].filter(Boolean).join(speechBaseRef.current && spoken ? " " : ""));
             setListening(false);
         };
         recognition.onerror = (event) => {
@@ -897,7 +891,6 @@ export default function InterviewRoom() {
         setError("");
         try {
             if (listening) {
-                speechManuallyEditedRef.current = true;
                 recognitionRef.current?.stop?.();
                 setListening(false);
             }
@@ -968,6 +961,9 @@ export default function InterviewRoom() {
     const canContinue = canResume && fullscreenActive && online && !pausedReason && !terminatingRef.current
         && identityStatus !== "mismatch"
         && monitorState !== MONITOR_STATE.TERMINATED && monitorState !== MONITOR_STATE.TERMINATING;
+    const identityBlocked = step === "interview" && (
+        proctorSignal.identityBlocked || identityStatus === "mismatch" || proctorSignal.faceCount > 1
+    );
 
     // Derive the centralized monitoring state whenever its inputs change. The
     // face-away states only pause once the AIML gate confirms them (after its
@@ -1019,12 +1015,10 @@ export default function InterviewRoom() {
                     <CardContent className="space-y-4 p-8 text-center">
                         <AlertTriangle className="mx-auto h-10 w-10 text-amber-500" />
                         <h2 className="text-lg font-semibold text-slate-900 dark:text-white">
-                            {error || "This interview is not ready yet"}
+                            {error || "This interview is unavailable"}
                         </h2>
                         <p className="text-sm text-slate-600 dark:text-zinc-400">
-                            {!error
-                                ? "The coordinator has not prepared your resume-based questions yet. Please check back shortly."
-                                : "You can return to your interviews list and try again."}
+                            You can return to your interviews list and try again.
                         </p>
                         <Button variant="outline" onClick={() => navigate("/student/interviews")}>
                             <ArrowLeft className="h-4 w-4" /> Back to interviews
@@ -1168,7 +1162,7 @@ export default function InterviewRoom() {
 
     if (step === "face") {
         return (
-            <div className="mx-auto max-w-3xl space-y-4">
+            <div className="mx-auto flex min-h-[calc(100vh-8rem)] w-full max-w-3xl flex-col items-center justify-center gap-4 py-4">
                 <InterviewFaceCapture
                     interviewId={id}
                     attemptId={`interview_${id}`}
@@ -1387,7 +1381,7 @@ export default function InterviewRoom() {
                             onReenableCamera={() => enableDevices(true)}
                             canResume={canResume}
                             onResume={resumeAfterProctoring}
-                            resumeLabel="Resume when compliant"
+                            resumeLabel="Resume interview"
                             disabled={busy}
                         />
                     )}
@@ -1406,19 +1400,15 @@ export default function InterviewRoom() {
 
                             <div className="flex min-h-0 flex-1 flex-col gap-2">
                                 <Textarea
-                                    className="min-h-0 flex-1 resize-none"
+                                    className="min-h-0 flex-1 resize-none read-only:cursor-default"
                                     value={answer}
-                                    onChange={(e) => {
-                                        if (listening) {
-                                            speechManuallyEditedRef.current = true;
-                                            recognitionRef.current?.stop?.();
-                                            setListening(false);
-                                        }
-                                        setAnswer(e.target.value);
-                                    }}
-                                    placeholder="Type your answer, or use the microphone to speak."
+                                    readOnly
+                                    placeholder="Your spoken answer will appear here."
                                     disabled={busy || done || !canContinue}
                                 />
+                                <p className="text-xs text-slate-500 dark:text-zinc-500">
+                                    Speak your answer using the microphone. The transcript cannot be edited.
+                                </p>
                                 {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
                                 <div className="flex flex-wrap items-center justify-between gap-2">
                                     <div className="flex gap-2">
@@ -1429,6 +1419,11 @@ export default function InterviewRoom() {
                                             </Button>
                                         )}
                                     </div>
+                                    {!SpeechRecognition && (
+                                        <p role="status" className="text-xs text-amber-700 dark:text-amber-300">
+                                            Speech recognition is not supported in this browser. Open the interview in a browser with speech recognition to answer.
+                                        </p>
+                                    )}
                                     <Button onClick={submitAnswer} disabled={busy || done || !answer.trim() || !canContinue} type="button">
                                         {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
                                         {index + 1 >= total ? "Submit & finish" : "Submit answer"}
@@ -1518,6 +1513,29 @@ export default function InterviewRoom() {
                             {faceTone.label}
                         </span>
                     </div>
+                </div>
+            )}
+
+            {identityBlocked && (
+                <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/80 p-4 backdrop-blur-sm">
+                    <Card className="w-full max-w-md border-amber-500/40 bg-white dark:bg-zinc-900">
+                        <CardContent className="flex flex-col items-center gap-4 py-10 text-center">
+                            <div className="flex h-16 w-16 items-center justify-center rounded-full bg-amber-500/15 text-amber-500">
+                                <ScanFace className="h-8 w-8" />
+                            </div>
+                            <h2 className="text-xl font-bold text-slate-900 dark:text-white">Candidate verification required</h2>
+                            <p className="text-sm text-slate-600 dark:text-zinc-300">
+                                {proctorSignal.faceCount > 1
+                                    ? "More than one person is visible. Only the registered candidate may continue."
+                                    : "The registered candidate could not be verified. Please return to the camera."}
+                            </p>
+                            <div className="flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+                                <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                                Answers are locked and the timer is paused until verification succeeds.
+                            </div>
+                            <p className="text-xs text-slate-400 dark:text-zinc-500">This screen will close automatically when the registered candidate is verified.</p>
+                        </CardContent>
+                    </Card>
                 </div>
             )}
 

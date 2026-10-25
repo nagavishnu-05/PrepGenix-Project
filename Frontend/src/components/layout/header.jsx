@@ -82,6 +82,7 @@ export function Header({ breadcrumbs = [] }) {
     const [notifications, setNotifications] = useState([]);
     const [notificationError, setNotificationError] = useState("");
     const [notificationLoading, setNotificationLoading] = useState(true);
+    const [dismissedIds, setDismissedIds] = useState([]);
     const [readIds, setReadIds] = useState(() => {
         try {
             return JSON.parse(localStorage.getItem(`notification-read:${user?.id || user?.username || "guest"}`) || "[]");
@@ -96,6 +97,11 @@ export function Header({ breadcrumbs = [] }) {
             setReadIds(JSON.parse(localStorage.getItem(readStorageKey) || "[]"));
         } catch {
             setReadIds([]);
+        }
+        try {
+            setDismissedIds(JSON.parse(localStorage.getItem(`notification-dismissed:${user?.id || user?.username || "guest"}`) || "[]"));
+        } catch {
+            setDismissedIds([]);
         }
     }, [readStorageKey]);
 
@@ -156,16 +162,28 @@ export function Header({ breadcrumbs = [] }) {
         return () => { cancelled = true; };
     }, [user?.id, user?.role, user?.username]);
 
-    const unreadCount = useMemo(() => notifications.filter((notification) => !readIds.includes(notification.id)).length, [notifications, readIds]);
+    const visibleNotifications = useMemo(
+        () => notifications.filter((notification) => !dismissedIds.includes(notification.id)),
+        [notifications, dismissedIds]
+    );
+    const unreadCount = useMemo(
+        () => visibleNotifications.filter((notification) => !readIds.includes(notification.id)).length,
+        [visibleNotifications, readIds]
+    );
     const markRead = (notificationId) => {
         const next = [...new Set([...readIds, notificationId])];
         setReadIds(next);
         localStorage.setItem(readStorageKey, JSON.stringify(next));
     };
     const markAllRead = () => {
-        const next = [...new Set([...readIds, ...notifications.map((notification) => notification.id)])];
+        const next = [...new Set([...readIds, ...visibleNotifications.map((notification) => notification.id)])];
         setReadIds(next);
         localStorage.setItem(readStorageKey, JSON.stringify(next));
+    };
+    const clearNotifications = () => {
+        const next = [...new Set([...dismissedIds, ...visibleNotifications.map((notification) => notification.id)])];
+        setDismissedIds(next);
+        localStorage.setItem(`notification-dismissed:${user?.id || user?.username || "guest"}`, JSON.stringify(next));
     };
     const userInitials = user?.name
         ?.split(" ")
@@ -361,10 +379,17 @@ export function Header({ breadcrumbs = [] }) {
                     <DropdownMenuContent align="end" className="w-80">
                         <div className="flex items-center justify-between px-2">
                             <DropdownMenuLabel className="px-0">Notifications</DropdownMenuLabel>
-                            {unreadCount > 0 && (
-                                <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={markAllRead}>
-                                    <CheckCheck className="h-3.5 w-3.5" /> Mark all read
-                                </Button>
+                            {visibleNotifications.length > 0 && (
+                                <div className="flex items-center gap-1">
+                                    {unreadCount > 0 && (
+                                        <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={markAllRead}>
+                                            <CheckCheck className="h-3.5 w-3.5" /> Mark all read
+                                        </Button>
+                                    )}
+                                    <Button variant="ghost" size="sm" className="h-7 px-2 text-xs text-red-600 hover:text-red-700 dark:text-red-400" onClick={clearNotifications}>
+                                        Clear all
+                                    </Button>
+                                </div>
                             )}
                         </div>
                         <DropdownMenuSeparator />
@@ -372,9 +397,9 @@ export function Header({ breadcrumbs = [] }) {
                             <LoadingState label="Loading notifications" className="px-3 py-5 text-xs" />
                         ) : notificationError ? (
                             <p role="alert" className="px-3 py-4 text-xs text-red-500">{notificationError}</p>
-                        ) : notifications.length === 0 ? (
+                        ) : visibleNotifications.length === 0 ? (
                             <p className="px-3 py-5 text-center text-xs text-slate-500 dark:text-zinc-400">You’re all caught up.</p>
-                        ) : notifications.map((notification) => (
+                        ) : visibleNotifications.map((notification) => (
                             <DropdownMenuItem
                                 key={notification.id}
                                 onSelect={() => {
