@@ -99,6 +99,7 @@ Returns `{"status": "ok", "service": "proctoring-api"}`.
 | Variable | Default | Description |
 |---|---|---|
 | `PROCTORING_PORT` | `5050` | Flask API port |
+| `PROCTORING_ALLOWED_ORIGINS` | `https://prep-genix-project.vercel.app,http://localhost:5173,http://127.0.0.1:5173` | Comma-separated browser origins allowed to call the proctoring API |
 | `PHONE_CONFIDENCE` | `0.50` | YOLOv8 confidence threshold |
 | `FACE_CONFIDENCE` | `0.60` | Face detection confidence threshold |
 
@@ -126,6 +127,10 @@ For a standalone hosted proctoring service, use this start command (replace
 ```sh
 gunicorn --bind 0.0.0.0:$PORT --workers 1 --worker-class gthread --threads 4 api.proctoring_api:app
 ```
+
+If the frontend uses a different Vercel production domain or preview domain,
+add its exact origin to `PROCTORING_ALLOWED_ORIGINS` in the hosting environment
+and redeploy the proctoring service.
 
 ## Integration with Backend
 

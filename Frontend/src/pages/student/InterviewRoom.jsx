@@ -75,6 +75,38 @@ function blobToBase64(blob) {
     });
 }
 
+function waitForVideoFrame(video, timeoutMs = 10000) {
+    if (video?.videoWidth > 0 && video?.videoHeight > 0) return Promise.resolve();
+    if (!video) return Promise.reject(new Error("Camera preview is not available."));
+
+    return new Promise((resolve, reject) => {
+        let timeoutId;
+        const cleanup = () => {
+            ["loadedmetadata", "loadeddata", "canplay"].forEach((eventName) => {
+                video.removeEventListener(eventName, checkReady);
+            });
+            window.clearTimeout(timeoutId);
+        };
+        const finish = (error) => {
+            cleanup();
+            if (error) reject(error);
+            else resolve();
+        };
+        const checkReady = () => {
+            if (video.videoWidth > 0 && video.videoHeight > 0) finish();
+        };
+
+        ["loadedmetadata", "loadeddata", "canplay"].forEach((eventName) => {
+            video.addEventListener(eventName, checkReady);
+        });
+        timeoutId = window.setTimeout(
+            () => finish(new Error("Camera preview did not produce a frame in time.")),
+            timeoutMs,
+        );
+        checkReady();
+    });
+}
+
 function StatusPill({ ok, onLabel, offLabel, onIcon: OnIcon, offIcon: OffIcon }) {
     const Icon = ok ? OnIcon : OffIcon;
     return (
@@ -622,6 +654,14 @@ export default function InterviewRoom() {
 
             let lighting = "unknown";
             const video = videoRef.current;
+            let monitorError = "";
+            let frameReady = false;
+            try {
+                await waitForVideoFrame(video);
+                frameReady = true;
+            } catch (error) {
+                monitorError = error.message;
+            }
             if (video?.videoWidth) {
                 const canvas = document.createElement("canvas");
                 canvas.width = 32;
@@ -639,26 +679,33 @@ export default function InterviewRoom() {
 
             let face = "skipped";
             let monitor = "skipped";
-            const base = getProctoringApiBase();
-            try {
-                const canvas = document.createElement("canvas");
-                canvas.width = 320;
-                canvas.height = Math.max(1, Math.round((video.videoHeight / video.videoWidth) * canvas.width));
-                canvas.getContext("2d").drawImage(video, 0, 0, canvas.width, canvas.height);
-                const image = canvas.toDataURL("image/jpeg", 0.65).split(",")[1];
-                const response = await fetch(`${base}/monitor`, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ image, attemptId: `interview_${id}`, cameraActive: true }),
-                });
-                if (!response.ok) throw new Error(`HTTP ${response.status}`);
-                const result = await response.json();
-                monitor = "ok";
-                face = result.face_present && Number(result.face_count || 0) === 1 ? "good"
-                    : result.face_present ? "multiple" : "not_found";
-            } catch {
-                monitor = "unavailable";
-                face = "unknown";
+            if (frameReady) {
+                try {
+                    const canvas = document.createElement("canvas");
+                    canvas.width = 320;
+                    canvas.height = Math.max(1, Math.round((video.videoHeight / video.videoWidth) * canvas.width));
+                    canvas.getContext("2d").drawImage(video, 0, 0, canvas.width, canvas.height);
+                    const image = canvas.toDataURL("image/jpeg", 0.65).split(",")[1];
+                    if (!image) throw new Error("Camera preview did not produce an image.");
+                    const base = getProctoringApiBase();
+                    const response = await fetch(`${base}/monitor`, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ image, attemptId: `interview_${id}`, cameraActive: true }),
+                    });
+                    if (!response.ok) {
+                        const body = await response.json().catch(() => ({}));
+                        throw new Error(body.error || `HTTP ${response.status}`);
+                    }
+                    const result = await response.json();
+                    monitor = "ok";
+                    face = result.face_present && Number(result.face_count || 0) === 1 ? "good"
+                        : result.face_present ? "multiple" : "not_found";
+                } catch (error) {
+                    monitor = "unavailable";
+                    face = "unknown";
+                    monitorError = error.message || "The proctoring service could not be reached.";
+                }
             }
 
             setReadiness({ lighting, face, monitor, checkedAt: Date.now() });
@@ -666,6 +713,12 @@ export default function InterviewRoom() {
             else if (lighting === "too_bright") setReadinessError("It looks too bright. Reduce backlight or move away from a bright window.");
             else if (face === "not_found") setReadinessError("No face was detected. Face the camera directly and try again.");
             else if (face === "multiple") setReadinessError("More than one face was detected. Only you should be in view.");
+            else if (monitorError) {
+                const corsHint = monitorError.toLowerCase().includes("fetch")
+                    ? " Check that the proctoring service allows this Vercel origin in PROCTORING_ALLOWED_ORIGINS."
+                    : "";
+                setReadinessError(`AI camera check unavailable: ${monitorError}.${corsHint}`);
+            }
         } finally {
             setCheckingReadiness(false);
         }
@@ -1174,7 +1227,7 @@ export default function InterviewRoom() {
 
     if (step === "face") {
         return (
-            <div className="mx-auto flex min-h-[calc(100vh-8rem)] w-full max-w-3xl flex-col items-center justify-center gap-4 py-4">
+            <div className="mx-auto flex min-h-[calc(100dvh-4rem)] w-full max-w-3xl flex-col items-center justify-center gap-4 px-4 py-6">
                 <InterviewFaceCapture
                     interviewId={id}
                     attemptId={`interview_${id}`}
@@ -1192,7 +1245,8 @@ export default function InterviewRoom() {
     if (step === "check") {
         const checkedSecondsAgo = readiness.checkedAt ? Math.max(0, Math.round((now - readiness.checkedAt) / 1000)) : null;
         return (
-            <div className="mx-auto max-w-3xl space-y-4">
+            <div className="mx-auto flex min-h-[calc(100dvh-4rem)] w-full items-center justify-center px-4 py-6">
+              <div className="w-full max-w-3xl">
                 <Card className="border-slate-200/80 dark:border-zinc-800/80 bg-white/70 dark:bg-zinc-900/40">
                     <CardContent className="space-y-5 p-6">
                         <h1 className="text-xl font-bold text-slate-900 dark:text-white">Camera &amp; microphone check</h1>
@@ -1262,7 +1316,7 @@ export default function InterviewRoom() {
                                             onIcon={ScanFace}
                                         />
                                     </div>
-                                    <div className="flex items-center gap-2">
+                                    <div className="flex flex-wrap items-center gap-2">
                                         <Button variant="outline" size="sm" onClick={runReadinessChecks} disabled={checkingReadiness} type="button">
                                             {checkingReadiness ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />} Run checks again
                                         </Button>
@@ -1315,6 +1369,7 @@ export default function InterviewRoom() {
                         </div>
                     </CardContent>
                 </Card>
+              </div>
             </div>
         );
     }

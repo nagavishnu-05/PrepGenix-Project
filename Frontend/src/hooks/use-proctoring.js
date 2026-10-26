@@ -466,7 +466,6 @@ export default function useProctoring({ attemptId, config, previewRef, onAutoSub
                 submitAndStop("camera_lost");
             });
             if (aTrack) aTrack.addEventListener("ended", () => { setMicActive(false); submitAndStop("mic_lost"); });
-            await requestFullscreen().catch(() => {});
             if (document.fullscreenElement != null) hasBeenFullscreenRef.current = true;
             setStatus("ready");
             return "ready";

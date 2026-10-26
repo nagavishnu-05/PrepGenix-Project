@@ -34,7 +34,22 @@ from flask import Flask, jsonify, request
 from flask_cors import CORS
 
 app = Flask(__name__)
-CORS(app)
+_default_allowed_origins = (
+    "https://prep-genix-project.vercel.app,"
+    "http://localhost:5173,http://127.0.0.1:5173"
+)
+_allowed_origins = [
+    origin.strip()
+    for origin in os.environ.get("PROCTORING_ALLOWED_ORIGINS", _default_allowed_origins).split(",")
+    if origin.strip()
+]
+CORS(
+    app,
+    resources={r"/*": {"origins": _allowed_origins}},
+    allow_headers=["Content-Type"],
+    methods=["GET", "POST", "OPTIONS"],
+    max_age=600,
+)
 
 _engines = {}
 _engines_lock = Lock()
