@@ -15,7 +15,7 @@ const editorFallback = (<div className="flex h-full w-full flex-col gap-2 p-4">
       <Skeleton className="h-4 w-48"/>
       <Skeleton className="h-4 w-60"/>
     </div>);
-export function CodeEditor({ language, value, onChange }) {
+export function CodeEditor({ language, value, onChange, readOnly = false }) {
     const [isLoaded, setIsLoaded] = useState(false);
     const [cursorPosition, setCursorPosition] = useState({ line: 1, column: 1 });
     useEffect(() => {
@@ -51,6 +51,7 @@ export function CodeEditor({ language, value, onChange }) {
             fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
             fontLigatures: true,
             automaticLayout: true,
+            readOnly,
             overviewRulerBorder: false,
             hideCursorInOverviewRuler: true,
             overviewRulerLanes: 0,

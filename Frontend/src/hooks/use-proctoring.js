@@ -61,6 +61,51 @@ function toWavBase64(audioBuffer, targetRate = 16000) {
     return btoa(bin);
 }
 
+function requestMediaWithTimeout(constraints, timeoutMs = 30000) {
+    const mediaRequest = navigator.mediaDevices.getUserMedia(constraints);
+    let timeoutId;
+    return Promise.race([
+        mediaRequest,
+        new Promise((_, reject) => {
+            timeoutId = window.setTimeout(() => reject(new Error("Camera permission timed out. Check the browser permission prompt and try again.")), timeoutMs);
+        }),
+    ]).catch((error) => {
+        mediaRequest.then((stream) => stream.getTracks().forEach((track) => track.stop()), () => {});
+        throw error;
+    }).finally(() => window.clearTimeout(timeoutId));
+}
+
+function waitForVideoFrame(video, timeoutMs = 10000) {
+    if (video.videoWidth > 0 && video.videoHeight > 0) return Promise.resolve();
+
+    return new Promise((resolve, reject) => {
+        let timeoutId;
+        const cleanup = () => {
+            ["loadedmetadata", "loadeddata", "canplay"].forEach((eventName) => {
+                video.removeEventListener(eventName, checkReady);
+            });
+            window.clearTimeout(timeoutId);
+        };
+        const finish = (error) => {
+            cleanup();
+            if (error) reject(error);
+            else resolve();
+        };
+        const checkReady = () => {
+            if (video.videoWidth > 0 && video.videoHeight > 0) finish();
+        };
+
+        ["loadedmetadata", "loadeddata", "canplay"].forEach((eventName) => {
+            video.addEventListener(eventName, checkReady);
+        });
+        timeoutId = window.setTimeout(
+            () => finish(new Error("The camera connected but did not produce a video frame. Check that it is not being used by another app, then retry.")),
+            timeoutMs,
+        );
+        checkReady();
+    });
+}
+
 const VIOLATION_REASON_MAP = {
     fullscreen_exit: "FULLSCREEN_EXIT",
     multiple_faces: "MULTIPLE_FACES",
@@ -88,6 +133,8 @@ const VIOLATION_REASON_MAP = {
 export default function useProctoring({ attemptId, config, previewRef, onAutoSubmit, faceDetectionEnabled = true }) {
     const [status, setStatus] = useState("idle");
     const [cameraActive, setCameraActive] = useState(false);
+    const [cameraReady, setCameraReady] = useState(false);
+    const [cameraError, setCameraError] = useState("");
     const [micActive, setMicActive] = useState(false);
     const [fullscreenActive, setFullscreenActive] = useState(false);
     const [simulated, setSimulated] = useState(false);
@@ -139,6 +186,7 @@ export default function useProctoring({ attemptId, config, previewRef, onAutoSub
         streamRef.current = null;
         if (previewRef?.current) previewRef.current.srcObject = null;
         setCameraActive(false);
+        setCameraReady(false);
         setMicActive(false);
         exitFullscreen();
     }, [attemptId, previewRef]);
@@ -330,6 +378,9 @@ export default function useProctoring({ attemptId, config, previewRef, onAutoSub
     const enrollmentGraceRef = useRef(false);
 
     const start = useCallback(async () => {
+        if (!cameraReady || !cameraActive) {
+            throw new Error("A live camera frame is required before the assessment can begin.");
+        }
         try {
             await requestFullscreen();
         } catch {
@@ -349,75 +400,84 @@ export default function useProctoring({ attemptId, config, previewRef, onAutoSub
         hasBeenFullscreenRef.current = true;
         intervalRef.current = setInterval(tick, intervalMs);
         tick();
-    }, [intervalMs, tick]);
+    }, [cameraActive, cameraReady, intervalMs, tick]);
 
     const enable = useCallback(async (allowSimulated = false) => {
-        setStatus("ready");
+        setStatus("starting");
+        setCameraError("");
+        setCameraReady(false);
         setSimulated(false);
+        let stream = null;
         try {
             await requestFullscreen().catch(() => {});
-            let stream = null;
+            if (!navigator.mediaDevices?.getUserMedia) {
+                throw new Error("This browser does not support camera access. Open the test in a supported browser over HTTPS.");
+            }
             try {
-                stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 }, audio: true });
-            } catch {
+                stream = await requestMediaWithTimeout({ video: { width: 640, height: 480 }, audio: true });
+            } catch (mediaError) {
+                if (mediaError.message.includes("timed out")) throw mediaError;
                 try {
-                    stream = await navigator.mediaDevices.getUserMedia({ video: true });
-                } catch {
-                    try {
-                        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                    } catch {
-                        const hostname = typeof window !== "undefined" ? window.location.hostname : "";
-                        const isLocal = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "0.0.0.0" || hostname === "::1" || hostname.endsWith(".local");
-                        if (allowSimulated || isLocal) {
-                            setSimulated(true);
-                            const canvas = document.createElement("canvas");
-                            canvas.width = 640;
-                            canvas.height = 480;
-                            const ctx = canvas.getContext("2d");
-                            const draw = () => {
-                                ctx.fillStyle = "#09090b";
-                                ctx.fillRect(0, 0, 640, 480);
-                                ctx.fillStyle = "#818cf8";
-                                ctx.font = "bold 20px sans-serif";
-                                ctx.fillText("Proctored Camera Feed (Active)", 150, 220);
-                                ctx.fillStyle = "#a1a1aa";
-                                ctx.font = "14px sans-serif";
-                                ctx.fillText(`Localhost • ${new Date().toLocaleTimeString()}`, 220, 260);
-                            };
-                            draw();
-                            setInterval(draw, 1000);
-                            stream = canvas.captureStream(15);
-                            try {
-                                const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-                                const osc = audioCtx.createOscillator();
-                                const dst = audioCtx.createMediaStreamDestination();
-                                osc.connect(dst);
-                                osc.start();
-                                const aTrack = dst.stream.getAudioTracks()[0];
-                                if (aTrack) stream.addTrack(aTrack);
-                            } catch {}
-                        } else {
-                            throw new Error("No media devices available");
-                        }
+                    stream = await requestMediaWithTimeout({ video: true });
+                } catch (cameraError) {
+                    const hostname = typeof window !== "undefined" ? window.location.hostname : "";
+                    const isLocal = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "0.0.0.0" || hostname === "::1" || hostname.endsWith(".local");
+                    if (!allowSimulated || !isLocal) {
+                        throw new Error(`The camera could not be started: ${cameraError.message || "permission denied or no camera found"}`);
                     }
+                    setSimulated(true);
+                    const canvas = document.createElement("canvas");
+                    canvas.width = 640;
+                    canvas.height = 480;
+                    const ctx = canvas.getContext("2d");
+                    const draw = () => {
+                        ctx.fillStyle = "#09090b";
+                        ctx.fillRect(0, 0, 640, 480);
+                        ctx.fillStyle = "#818cf8";
+                        ctx.font = "bold 20px sans-serif";
+                        ctx.fillText("Proctored Camera Feed (Active)", 150, 220);
+                        ctx.fillStyle = "#a1a1aa";
+                        ctx.font = "14px sans-serif";
+                        ctx.fillText(`Localhost • ${new Date().toLocaleTimeString()}`, 220, 260);
+                    };
+                    draw();
+                    stream = canvas.captureStream(15);
                 }
             }
 
-            streamRef.current = stream;
             const vTrack = stream.getVideoTracks()[0];
             const aTrack = stream.getAudioTracks()[0];
-            setCameraActive(!!vTrack);
-            setMicActive(!!aTrack);
-            if (vTrack) vTrack.addEventListener("ended", () => { setCameraActive(false); submitAndStop("camera_lost"); });
-            if (aTrack) aTrack.addEventListener("ended", () => { setMicActive(false); submitAndStop("mic_lost"); });
-            if (previewRef?.current) {
-                previewRef.current.srcObject = stream;
-                await previewRef.current.play().catch(() => {});
+            if (!vTrack || vTrack.readyState !== "live") {
+                throw new Error("A working camera is required to start this test.");
             }
+            const preview = previewRef?.current;
+            if (!preview) throw new Error("The camera preview is not ready. Please retry.");
+
+            streamRef.current = stream;
+            preview.srcObject = stream;
+            await preview.play();
+            await waitForVideoFrame(preview);
+            setCameraActive(true);
+            setCameraReady(true);
+            setMicActive(!!aTrack);
+            vTrack.addEventListener("ended", () => {
+                setCameraActive(false);
+                setCameraReady(false);
+                submitAndStop("camera_lost");
+            });
+            if (aTrack) aTrack.addEventListener("ended", () => { setMicActive(false); submitAndStop("mic_lost"); });
             await requestFullscreen().catch(() => {});
             if (document.fullscreenElement != null) hasBeenFullscreenRef.current = true;
+            setStatus("ready");
             return "ready";
-        } catch {
+        } catch (error) {
+            if (stream) stream.getTracks().forEach((track) => track.stop());
+            streamRef.current = null;
+            if (previewRef?.current) previewRef.current.srcObject = null;
+            setCameraActive(false);
+            setCameraReady(false);
+            setMicActive(false);
+            setCameraError(error.message || "Could not start the camera. Please check browser permissions and try again.");
             setStatus("denied");
             return "denied";
         }
@@ -570,6 +630,8 @@ export default function useProctoring({ attemptId, config, previewRef, onAutoSub
         () => ({
             status,
             cameraActive,
+            cameraReady,
+            cameraError,
             micActive,
             fullscreenActive,
             simulated,
@@ -586,6 +648,8 @@ export default function useProctoring({ attemptId, config, previewRef, onAutoSub
         [
             status,
             cameraActive,
+            cameraReady,
+            cameraError,
             micActive,
             fullscreenActive,
             simulated,

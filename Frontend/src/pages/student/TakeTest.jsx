@@ -188,6 +188,8 @@ const codeBuffersRef = useRef({});
     const didInitRef = useRef(null);
 
     const proctored = true;
+    const isLocalDevelopment = ["localhost", "127.0.0.1", "0.0.0.0", "::1"].includes(window.location.hostname)
+        || window.location.hostname.endsWith(".local");
     const faceVerificationEnabled = attempt?.proctoring?.faceVerification !== false;
 
     const proctoring = useProctoring({
@@ -213,9 +215,11 @@ const codeBuffersRef = useRef({});
         && (faceMonitor.faceCount !== 1 || faceMonitor.match === false);
     const identityBlocked = proctored && faceVerificationEnabled && !proctoring.simulated && (
         faceCaptureState !== "done"
+        || !faceMonitor?.known
         || !!faceMonitor?.identityBlocked
         || faceMismatch
     );
+    const answerBlocked = identityBlocked || (proctored && (!proctoring.cameraReady || !proctoring.cameraActive));
 
     // Keep one face-verification verdict in the assessment header.
     const faceStatus = !faceVerificationEnabled
@@ -231,13 +235,13 @@ const codeBuffersRef = useRef({});
                         : { label: "Face OK", tone: "border-slate-300 bg-slate-100 text-slate-600 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300" };
 
     useEffect(() => {
-        if (identityBlocked) {
+        if (answerBlocked) {
             if (pausedSinceRef.current == null) pausedSinceRef.current = Date.now();
         } else if (pausedSinceRef.current != null) {
             pausedTotalRef.current += Date.now() - pausedSinceRef.current;
             pausedSinceRef.current = null;
         }
-    }, [identityBlocked]);
+    }, [answerBlocked]);
 
     // Reattach camera stream when transitioning from enrollment to test view.
     // The video element changes between screens, so the stream must be re-bound.
@@ -415,7 +419,7 @@ const codeBuffersRef = useRef({});
     }, [attempt, finished, completeAttempt]);
 
     const handleSubmit = async () => {
-        if (identityBlocked || !question || feedback || submitting) return;
+        if (answerBlocked || !question || feedback || submitting) return;
         setSubmitting(true);
         setError("");
         try {
@@ -441,7 +445,7 @@ const codeBuffersRef = useRef({});
     };
 
     const handleFinish = async () => {
-        if (identityBlocked || submitting || finalizingRef.current) return;
+        if (answerBlocked || submitting || finalizingRef.current) return;
         if (!confirm("Submit the test now?")) return;
         try {
             const f = await api.tests.finish(attempt.id);
@@ -612,6 +616,7 @@ const codeBuffersRef = useRef({});
                     {(question.options || []).map((opt, i) => (
                         <button
                             key={i}
+                            disabled={answerBlocked}
                             onClick={() => setAnswer(i)}
                             className={cn(
                                 "flex w-full items-center gap-3 rounded-lg border px-4 py-3 text-left text-sm transition-all",
@@ -626,17 +631,17 @@ const codeBuffersRef = useRef({});
                     ))}
                 </div>
             ) : (
-                <Textarea value={answer} onChange={(e) => setAnswer(e.target.value)} placeholder="Type your answer here..." rows={4} />
+                <Textarea disabled={answerBlocked} value={answer} onChange={(e) => setAnswer(e.target.value)} placeholder="Type your answer here..." rows={4} />
             )}
             {question.format === "code_snippet" && (
-                <Textarea className="mt-3" value={answer} onChange={(e) => setAnswer(e.target.value)} placeholder="What is the output?" rows={3} />
+                <Textarea disabled={answerBlocked} className="mt-3" value={answer} onChange={(e) => setAnswer(e.target.value)} placeholder="What is the output?" rows={3} />
             )}
         </>
     );
 
     const renderSubmitRow = () => (
         <div className="mt-4 flex gap-3">
-            <Button className="flex-1" onClick={handleSubmit} disabled={submitting || !!feedback || !isCoding && answer === undefined}>
+            <Button className="flex-1" onClick={handleSubmit} disabled={answerBlocked || submitting || !!feedback || !isCoding && answer === undefined}>
                 <Send className="h-4 w-4" />
                 {submitting ? "Submitting..." : feedback ? "Next question loading..." : "Submit Answer"}
             </Button>
@@ -888,12 +893,18 @@ const codeBuffersRef = useRef({});
                             Any violation of the proctoring rules will result in immediate test submission and disqualification.
                         </p>
 
-                        {proctoring.status === "ready" && (
+                        {(proctoring.status === "starting" || proctoring.status === "ready") && (
                             <div className="w-full overflow-hidden rounded-xl border border-slate-200 bg-slate-100 dark:border-zinc-800 dark:bg-zinc-950">
                                 <video ref={previewRef} autoPlay playsInline muted className="h-52 w-full object-cover" />
                                 <div className="flex items-center justify-between px-3 py-2 text-xs text-slate-500 dark:text-zinc-400">
-                                    <span className="flex items-center gap-1.5"><Camera className="h-3.5 w-3.5 text-emerald-400" /> Camera on</span>
-                                    <span className="flex items-center gap-1.5"><Mic className="h-3.5 w-3.5 text-emerald-400" /> Mic on</span>
+                                    <span className="flex items-center gap-1.5">
+                                        {proctoring.status === "starting" ? <Loader2 className="h-3.5 w-3.5 animate-spin text-amber-400" /> : <Camera className="h-3.5 w-3.5 text-emerald-400" />}
+                                        {proctoring.status === "starting" ? "Starting camera..." : "Camera ready"}
+                                    </span>
+                                    <span className="flex items-center gap-1.5">
+                                        {proctoring.micActive ? <Mic className="h-3.5 w-3.5 text-emerald-400" /> : <MicOff className="h-3.5 w-3.5 text-slate-400" />}
+                                        {proctoring.micActive ? "Mic on" : "Mic unavailable"}
+                                    </span>
                                 </div>
                             </div>
                         )}
@@ -901,7 +912,7 @@ const codeBuffersRef = useRef({});
                         {proctoring.status === "denied" && (
                             <div className="w-full space-y-2">
                                 <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
-                                    Hardware camera or microphone permission was denied or unavailable on this device.
+                                    {proctoring.cameraError || "The camera could not be started. Check browser permissions and retry."}
                                 </p>
                             </div>
                         )}
@@ -922,10 +933,16 @@ const codeBuffersRef = useRef({});
                                     <Button onClick={() => proctoring.enable(false)}>
                                         <Maximize2 className="h-4 w-4" /> Retry camera &amp; mic
                                     </Button>
-                                    <Button variant="outline" onClick={() => proctoring.enable(true)}>
-                                        <Video className="h-4 w-4" /> Continue in Dev / Local Stream Mode
-                                    </Button>
+                                    {isLocalDevelopment && (
+                                        <Button variant="outline" onClick={() => proctoring.enable(true)}>
+                                            <Video className="h-4 w-4" /> Continue in Dev / Local Stream Mode
+                                        </Button>
+                                    )}
                                 </>
+                            ) : proctoring.status === "starting" ? (
+                                <Button disabled>
+                                    <Loader2 className="h-4 w-4 animate-spin" /> Starting camera...
+                                </Button>
                             ) : (
                                 <Button onClick={handleStart}>
                                     <Video className="h-4 w-4" /> Begin test
@@ -985,7 +1002,7 @@ const codeBuffersRef = useRef({});
                     <Clock className="h-4 w-4 text-violet-400" /> {fmt(timeLeft)}
                 </span>
 
-                <Button variant="outline" size="sm" onClick={handleFinish} disabled={finalizing || submitting}>
+                <Button variant="outline" size="sm" onClick={handleFinish} disabled={answerBlocked || finalizing || submitting}>
                     {finalizing || submitting ? "Submitting..." : "Finish"}
                 </Button>
             </div>
@@ -1018,6 +1035,7 @@ const codeBuffersRef = useRef({});
                                             aria-label="Programming language"
                                             value={language}
                                             onChange={(e) => handleLanguageChange(e.target.value)}
+                                            disabled={answerBlocked}
                                             className="h-9 min-w-40 appearance-none rounded-lg border border-slate-300 bg-white py-1.5 pl-9 pr-9 text-sm font-medium text-slate-700 shadow-sm transition hover:border-violet-400 focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:border-violet-500"
                                         >
                                             {LANGUAGES.map((l) => (
@@ -1026,10 +1044,10 @@ const codeBuffersRef = useRef({});
                                         </select>
                                         <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500 dark:text-zinc-400" />
                                     </div>
-                                    <Button size="sm" variant="outline" onClick={handleRun} disabled={running}>
+                                    <Button size="sm" variant="outline" onClick={handleRun} disabled={answerBlocked || running}>
                                         <Play className="h-3.5 w-3.5" /> {running ? "Running..." : "Run code"}
                                     </Button>
-                                    <Button size="sm" variant="ghost" onClick={() => setCode(STARTER[language] || "")} disabled={running} title="Restore the starter template">
+                                    <Button size="sm" variant="ghost" onClick={() => setCode(STARTER[language] || "")} disabled={answerBlocked || running} title="Restore the starter template">
                                         <RotateCcw className="h-3.5 w-3.5" /> Reset
                                     </Button>
                                     <span className="ml-auto hidden text-xs text-slate-500 dark:text-zinc-500 lg:block">
@@ -1037,10 +1055,10 @@ const codeBuffersRef = useRef({});
                                     </span>
                                 </div>
                                 <div className="min-h-0 flex-1">
-                                    <CodeEditor language={MONACO_LANGUAGE[language] || "python"} value={code} onChange={setCode} />
+                                    <CodeEditor language={MONACO_LANGUAGE[language] || "python"} value={code} onChange={setCode} readOnly={answerBlocked} />
                                 </div>
                                 <div className="flex flex-wrap items-center gap-3 border-t border-slate-200 px-3 py-2 dark:border-zinc-800">
-                                    <Button onClick={handleSubmit} disabled={submitting || !!feedback}>
+                                    <Button onClick={handleSubmit} disabled={answerBlocked || submitting || !!feedback}>
                                         <Send className="h-4 w-4" />
                                         {submitting ? "Submitting..." : feedback ? "Next question loading..." : "Submit Answer"}
                                     </Button>
@@ -1114,26 +1132,38 @@ const codeBuffersRef = useRef({});
             )}
 
             {/* Identity gate: blocks the test until the enrolled face is verified */}
-            {identityBlocked && (
+            {answerBlocked && (
                 <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/80 p-4 backdrop-blur-sm">
                     <Card className="w-full max-w-md border-amber-500/40 bg-white dark:bg-zinc-900">
                         <CardContent className="flex flex-col items-center gap-4 py-10 text-center">
                             <div className="flex h-16 w-16 items-center justify-center rounded-full bg-amber-500/15 text-amber-500">
-                                <ScanFace className="h-8 w-8" />
+                                {!proctoring.cameraReady || !proctoring.cameraActive
+                                    ? <Camera className="h-8 w-8" />
+                                    : <ScanFace className="h-8 w-8" />}
                             </div>
                             <h2 className="text-xl font-bold text-slate-900 dark:text-white">
-                                Identity verification required
+                                {!proctoring.cameraReady || !proctoring.cameraActive
+                                    ? "Camera verification required"
+                                    : "Identity verification required"}
                             </h2>
                             <p className="text-sm text-slate-600 dark:text-zinc-300">
-                                {proctoring.faceMonitor?.identityBlockReason ||
-                                    "The registered candidate is not verified on camera."}
+                                {!proctoring.cameraReady || !proctoring.cameraActive
+                                    ? "Waiting for a live camera frame. Check that your camera is enabled and keep this page open."
+                                    : proctoring.faceMonitor?.identityBlockReason
+                                        || (!proctoring.faceMonitor?.known
+                                            ? "Camera is on. Starting the face and proctoring checks..."
+                                            : "The registered candidate is not verified on camera.")}
                             </p>
                             <div className="flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
                                 <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-                                Answering is blocked and the timer is paused until verification succeeds.
+                                Answering is blocked and the timer is paused until the camera and identity checks are ready.
                             </div>
                             <p className="text-xs text-slate-400 dark:text-zinc-500">
-                                Waiting for the registered candidate to return to the camera...
+                                {!proctoring.cameraReady || !proctoring.cameraActive
+                                    ? "If the camera does not start, exit and enable camera access in your browser."
+                                    : proctoring.faceMonitor?.identityStatus === "unavailable"
+                                        ? "The proctoring service is unavailable. Contact the test administrator before continuing."
+                                        : "Keep your face visible while verification completes."}
                             </p>
                         </CardContent>
                     </Card>
