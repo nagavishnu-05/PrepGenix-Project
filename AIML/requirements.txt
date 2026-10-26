@@ -2,6 +2,7 @@ opencv-python>=4.8,<5
 numpy>=1.24
 flask>=3.0
 flask-cors>=4.0
+gunicorn>=22,<24
 python-dotenv>=1.0
 ultralytics>=8.0
 onnxruntime>=1.16
