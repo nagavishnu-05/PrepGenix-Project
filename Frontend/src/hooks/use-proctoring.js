@@ -298,6 +298,16 @@ export default function useProctoring({ attemptId, config, previewRef, onAutoSub
         if (Date.now() < graceUntilRef.current) return;
         runningRef.current = true;
         try {
+            const video = previewRef?.current;
+            const stream = streamRef.current;
+            if (video && stream) {
+                if (video.srcObject !== stream) {
+                    video.srcObject = stream;
+                }
+                if (video.paused || video.ended) {
+                    video.play().catch(() => {});
+                }
+            }
             const image = captureFrame();
             if (!image) {
                 // The video element has not produced a frame yet. Keep reporting

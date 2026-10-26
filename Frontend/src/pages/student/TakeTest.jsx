@@ -249,11 +249,16 @@ const codeBuffersRef = useRef({});
     // object, which used to re-fire on every render.
     useEffect(() => {
         if (!proctored || (faceVerificationEnabled && faceCaptureState !== "done")) return;
-        const timer = setTimeout(() => {
-            proctoring.reattachStream();
-        }, 300);
-        return () => clearTimeout(timer);
-    }, [faceCaptureState, faceVerificationEnabled, proctored, proctoring.reattachStream]);
+        proctoring.reattachStream();
+        const t1 = setTimeout(() => proctoring.reattachStream(), 150);
+        const t2 = setTimeout(() => proctoring.reattachStream(), 500);
+        const t3 = setTimeout(() => proctoring.reattachStream(), 1200);
+        return () => {
+            clearTimeout(t1);
+            clearTimeout(t2);
+            clearTimeout(t3);
+        };
+    }, [faceCaptureState, faceVerificationEnabled, proctored, question, proctoring.reattachStream]);
 
     const registerTestReferenceFace = useCallback(async (image) => {
         try {

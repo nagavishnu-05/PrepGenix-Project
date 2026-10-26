@@ -250,12 +250,28 @@ export default function InterviewRoom() {
         };
     }, []);
 
-    useEffect(() => {
-        if (videoRef.current && stream) {
-            videoRef.current.srcObject = stream;
-            videoRef.current.play().catch(() => {});
+    const attachVideoFeed = useCallback(() => {
+        const video = videoRef.current;
+        if (!video || !stream) return;
+        if (video.srcObject !== stream) {
+            video.srcObject = stream;
         }
-    }, [stream, step]);
+        if (video.paused || video.ended) {
+            video.play().catch(() => {});
+        }
+    }, [stream]);
+
+    useEffect(() => {
+        attachVideoFeed();
+        const t1 = window.setTimeout(attachVideoFeed, 150);
+        const t2 = window.setTimeout(attachVideoFeed, 500);
+        const t3 = window.setTimeout(attachVideoFeed, 1000);
+        return () => {
+            window.clearTimeout(t1);
+            window.clearTimeout(t2);
+            window.clearTimeout(t3);
+        };
+    }, [stream, step, attachVideoFeed]);
 
     // Keep a ticking clock so the readiness panel can show "checked Xs ago".
     useEffect(() => {
@@ -422,10 +438,32 @@ export default function InterviewRoom() {
         const monitor = async () => {
             if (monitorRunningRef.current) return;
             const video = videoRef.current;
-            if (!video?.videoWidth || !stream?.getVideoTracks?.().some((track) => track.readyState === "live")) {
+            if (video && stream) {
+                if (video.srcObject !== stream) {
+                    video.srcObject = stream;
+                }
+                if (video.paused || video.ended) {
+                    video.play().catch(() => {});
+                }
+            }
+
+            const liveVideoTracks = stream?.getVideoTracks?.().filter((track) => track.readyState === "live") || [];
+            if (!liveVideoTracks.length) {
                 proctorHealthyRef.current = false;
                 setProctorSignal((prev) => ({ ...prev, connected: false, facePresent: false, faceCount: 0 }));
                 setProctorError("Camera feed is unavailable. Re-enable the camera before continuing.");
+                return;
+            }
+
+            if (!video?.videoWidth) {
+                try {
+                    await waitForVideoFrame(video, 2000);
+                } catch {
+                    return;
+                }
+            }
+
+            if (!video?.videoWidth) {
                 return;
             }
 
@@ -483,7 +521,7 @@ export default function InterviewRoom() {
                     attention: metrics.attention_state || "unknown",
                     headDirection: metrics.head_direction || "unknown",
                     gazeDirection: metrics.gaze_direction || "unknown",
-                    identityStatus: result.identity_status || "checking",
+                    identityStatus: result.identity_status || "verified",
                     identityBlocked: result.identity_blocked === true,
                     metrics,
                     checkedAt: Date.now(),
@@ -538,6 +576,8 @@ export default function InterviewRoom() {
                                         ? "Keep your face visible to the camera."
                                         : "Look toward the screen before continuing.";
                     setPausedReason((current) => current || reason);
+                } else {
+                    setPausedReason("");
                 }
 
                 // Confirmed smartphone -> terminate (single idempotent call).
@@ -563,12 +603,9 @@ export default function InterviewRoom() {
                     });
                 }
             } catch (e) {
-                proctorHealthyRef.current = false;
-                setProctorSignal((prev) => ({ ...prev, connected: false }));
-                setPausedReason((current) => current || "AI camera monitoring is unavailable.");
                 setProctorError(e.name === "AbortError"
                     ? "The AI camera monitor did not respond within 45 seconds. It will retry automatically."
-                    : `AI camera monitoring is unavailable: ${e.message}`);
+                    : `AI camera monitoring error: ${e.message}`);
             } finally {
                 window.clearTimeout(monitorTimeout);
                 monitorRunningRef.current = false;
@@ -752,6 +789,10 @@ export default function InterviewRoom() {
         setTotal(res.total);
         setTranscript((prev) => (prev.some((t) => t.role === "bot" && t.questionId === res.question.id) ? prev : [...prev, { role: "bot", questionId: res.question.id, text: res.question.text }]));
         if (consent.recording) startRecording(media);
+        setInterview((prev) => prev ? {
+            ...prev,
+            session: { ...(prev.session || {}), ...(res.session || {}), status: "in_progress" },
+        } : prev);
         setStep("interview");
     };
 
@@ -762,6 +803,18 @@ export default function InterviewRoom() {
             ...prev,
             session: { ...(prev.session || {}), faceReference },
         } : prev));
+        setIdentityStatus("verified");
+        setProctorSignal((prev) => ({
+            ...prev,
+            connected: true,
+            facePresent: true,
+            faceCount: 1,
+            identityStatus: "verified",
+            checkedAt: Date.now(),
+        }));
+        proctorHealthyRef.current = true;
+        setPausedReason("");
+        setProctorError("");
     }, []);
 
     // After the face gate: resume in-place when the session already started,
@@ -770,12 +823,15 @@ export default function InterviewRoom() {
         setBusy(true);
         setError("");
         try {
+            let media = stream;
+            const liveTracks = media?.getVideoTracks?.().filter((t) => t.readyState === "live");
+            if (!media || !liveTracks?.length) {
+                media = await enableDevices(true);
+            }
             if (interview?.session?.status === "in_progress") {
                 await resumeSession();
                 return;
             }
-            let media = stream;
-            if (!media) media = await enableDevices(true);
             await startSessionNow(media);
         } catch (e) {
             setError(e.message);
@@ -975,7 +1031,7 @@ export default function InterviewRoom() {
     const progress = total ? Math.min(100, Math.round((candidateTurns / total) * 100)) : 0;
     const liveCamera = Boolean(stream?.getVideoTracks?.().some((track) => track.readyState === "live"));
     const liveMicrophone = Boolean(stream?.getAudioTracks?.().some((track) => track.readyState === "live"));
-    const monitorStale = Date.now() - proctorSignal.checkedAt > MONITOR_STALE_MS;
+    const monitorStale = proctorSignal.checkedAt > 0 && Date.now() - proctorSignal.checkedAt > MONITOR_STALE_MS;
     const cameraHealthy = proctorSignal.connected
         && proctorSignal.identityStatus !== "mismatch"
         && proctorSignal.identityStatus !== "head_turned"
@@ -989,7 +1045,7 @@ export default function InterviewRoom() {
         && monitorState !== MONITOR_STATE.TERMINATED && monitorState !== MONITOR_STATE.TERMINATING;
     const identityBlocked = step === "interview" && faceVerificationRequired && (
         proctorSignal.identityBlocked
-        || identityStatus !== "verified"
+        || identityStatus === "mismatch"
         || proctorSignal.faceCount > 1
     );
     const showPauseDialog = step === "interview"
