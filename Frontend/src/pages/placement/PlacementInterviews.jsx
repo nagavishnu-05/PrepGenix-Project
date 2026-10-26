@@ -15,6 +15,13 @@ import { api } from "@/lib/api";
 import { getProctoringApiBase } from "@/lib/proctoring-config";
 import { getStudentSection } from "@/lib/student-section";
 
+function toDatetimeLocal(value) {
+    if (!value) return "";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "";
+    return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
+}
+
 function ReportBody({ report }) {
     if (!report) return null;
     const rubric = report.rubric || {};
@@ -101,7 +108,7 @@ export default function PlacementInterviews() {
     const [deletingGroupId, setDeletingGroupId] = useState(null);
     const [deletingInterviewId, setDeletingInterviewId] = useState(null);
     const [busy, setBusy] = useState(false);
-    const [sched, setSched] = useState({ interviewName: "", groupId: "", regNos: [], existingRegNos: [], type: "Technical", scheduledAt: "", interviewer: "", jobRole: "", jobDescription: "" });
+    const [sched, setSched] = useState({ interviewName: "", groupId: "", regNos: [], existingRegNos: [], type: "Technical", startsAt: "", endsAt: "", interviewer: "", jobRole: "", jobDescription: "" });
     const [studentFilters, setStudentFilters] = useState({ batch: "all", section: "all", department: "all", search: "" });
     const [result, setResult] = useState({ rating: 3, notes: "", strengths: "", weaknesses: "", status: "completed" });
 
@@ -138,6 +145,8 @@ export default function PlacementInterviews() {
                 name: interview.interviewName || `${interview.type || "Interview"} Interview`,
                 type: interview.type || "Technical",
                 scheduledAt: interview.scheduledAt,
+                startsAt: interview.startsAt || interview.scheduledAt,
+                endsAt: interview.endsAt || null,
                 interviewer: interview.interviewer,
                 members: [],
             });
@@ -154,7 +163,8 @@ export default function PlacementInterviews() {
             regNos: [],
             existingRegNos: group?.members.map((member) => member.regNo) || [],
             type: group?.type || "Technical",
-            scheduledAt: group ? new Date(group.scheduledAt).toISOString().slice(0, 16) : "",
+            startsAt: toDatetimeLocal(group?.startsAt || group?.scheduledAt),
+            endsAt: toDatetimeLocal(group?.endsAt),
             interviewer: group?.interviewer || "",
             jobRole: group?.members?.[0]?.jobRole || "",
             jobDescription: group?.members?.[0]?.jobDescription || "",
@@ -173,8 +183,14 @@ export default function PlacementInterviews() {
     const availableScheduleStudents = filteredStudents.filter((student) => !sched.existingRegNos.includes(student.regNo));
 
     const schedule = async () => {
-        if (!sched.interviewName.trim() || !sched.regNos.length || !sched.scheduledAt) {
-            alert("Enter an interview name, select at least one student, and choose a date/time.");
+        if (!sched.interviewName.trim() || !sched.regNos.length || !sched.startsAt || !sched.endsAt) {
+            alert("Enter an interview name, select at least one student, and set both availability dates.");
+            return;
+        }
+        const startsAt = new Date(sched.startsAt);
+        const endsAt = new Date(sched.endsAt);
+        if (Number.isNaN(startsAt.getTime()) || Number.isNaN(endsAt.getTime()) || startsAt >= endsAt) {
+            alert("The interview end time must be later than its start time.");
             return;
         }
         if (sched.regNos.length > 200) {
@@ -186,9 +202,11 @@ export default function PlacementInterviews() {
             await api.interviews.create({
                 ...sched,
                 interviewName: sched.interviewName.trim(),
+                startsAt: startsAt.toISOString(),
+                endsAt: endsAt.toISOString(),
             });
             setSchedOpen(false);
-            setSched({ interviewName: "", groupId: "", regNos: [], existingRegNos: [], type: "Technical", scheduledAt: "", interviewer: "", jobRole: "", jobDescription: "" });
+            setSched({ interviewName: "", groupId: "", regNos: [], existingRegNos: [], type: "Technical", startsAt: "", endsAt: "", interviewer: "", jobRole: "", jobDescription: "" });
             load();
         } catch (e) {
             alert(e.message);
@@ -341,7 +359,7 @@ export default function PlacementInterviews() {
                                                 <span className="min-w-0">
                                                     <span className="block truncate font-semibold text-slate-900 dark:text-white">{group.name}</span>
                                                     <span className="mt-1 block text-xs text-slate-500 dark:text-zinc-400">
-                                                        {group.type} · {group.members.length} student{group.members.length === 1 ? "" : "s"} · {new Date(group.scheduledAt).toLocaleString()}
+                                                        {group.type} · {group.members.length} student{group.members.length === 1 ? "" : "s"} · {new Date(group.startsAt || group.scheduledAt).toLocaleString()} – {group.endsAt ? new Date(group.endsAt).toLocaleString() : "No end time"}
                                                     </span>
                                                 </span>
                                             </button>
@@ -389,7 +407,8 @@ export default function PlacementInterviews() {
                                                                     <p className="text-xs text-slate-500 dark:text-zinc-500">{iv.regNo}</p>
                                                                 </TableCell>
                                                                 <TableCell className="text-sm text-slate-600 dark:text-zinc-300">
-                                                                    <p>{new Date(iv.scheduledAt).toLocaleString()}</p>
+                                                                    <p>{new Date(iv.startsAt || iv.scheduledAt).toLocaleString()}</p>
+                                                                    {iv.endsAt && <p className="text-xs text-slate-500">Until {new Date(iv.endsAt).toLocaleString()}</p>}
                                                                     <p className="text-xs text-slate-500">{iv.interviewer}</p>
                                                                 </TableCell>
                                                                 <TableCell><StatusBadge value={iv.status} /></TableCell>
@@ -453,7 +472,7 @@ export default function PlacementInterviews() {
                 <DialogContent className="flex max-h-[92vh] w-[calc(100vw-2rem)] max-w-6xl flex-col overflow-hidden">
                     <DialogHeader>
                         <DialogTitle>{sched.groupId ? `Schedule more for ${sched.interviewName}` : "Create Interview"}</DialogTitle>
-                        <DialogDescription>Name this interview round, choose its type and schedule, then select one or more students. Each student gets an individual session and resume-based questions.</DialogDescription>
+                        <DialogDescription>Name this interview round, set its availability window, then select one or more students. Each student gets an individual session and resume-based questions.</DialogDescription>
                     </DialogHeader>
                     <div className="grid min-h-0 flex-1 gap-5 overflow-y-auto pr-1 md:grid-cols-12 md:grid-rows-[auto_minmax(0,1fr)] md:overflow-hidden">
                         <div className="space-y-3 md:col-span-12">
@@ -604,21 +623,26 @@ export default function PlacementInterviews() {
                         <div className="space-y-4 md:col-span-5">
                         <div className="grid gap-3 lg:grid-cols-2">
                             <div className="space-y-1.5">
-                                <Label className="text-xs text-zinc-400">Interviewer</Label>
-                                <Input value={sched.interviewer} onChange={(e) => setSched({ ...sched, interviewer: e.target.value })} placeholder="Panel name" />
+                                <Label className="text-xs text-zinc-400">Interview available from</Label>
+                                <Input type="datetime-local" value={sched.startsAt} onChange={(e) => setSched({ ...sched, startsAt: e.target.value })} />
                             </div>
                             <div className="space-y-1.5">
-                                <Label className="text-xs text-zinc-400">Date & time</Label>
-                                <Input type="datetime-local" value={sched.scheduledAt} onChange={(e) => setSched({ ...sched, scheduledAt: e.target.value })} />
+                                <Label className="text-xs text-zinc-400">Interview available until</Label>
+                                <Input type="datetime-local" min={sched.startsAt || undefined} value={sched.endsAt} onChange={(e) => setSched({ ...sched, endsAt: e.target.value })} />
+                            </div>
+                            <div className="space-y-1.5 lg:col-span-2">
+                                <Label className="text-xs text-zinc-400">Interviewer</Label>
+                                <Input value={sched.interviewer} onChange={(e) => setSched({ ...sched, interviewer: e.target.value })} placeholder="Panel name" />
                             </div>
                         </div>
                         <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600 dark:border-zinc-800 dark:bg-zinc-950/40 dark:text-zinc-400">
                             <p className="font-medium text-slate-800 dark:text-zinc-200">Interview setup</p>
-                            <p className="mt-1">Each selected student receives a separate session, consent flow, resume-matched question plan, proctoring log, and result.</p>
+                            <p className="mt-1">Students can start the interview during this window. Anyone who starts within the window can resume their active session afterward.</p>
+                            <p className="mt-1">Times use your local timezone. Each selected student receives an individual session, consent flow, resume-matched question plan, proctoring log, and result.</p>
                         </div>
                         <div className="flex justify-end gap-2">
                             <Button variant="outline" onClick={() => setSchedOpen(false)}>Cancel</Button>
-                            <Button onClick={schedule} disabled={busy || !sched.interviewName.trim() || !sched.regNos.length || !sched.scheduledAt}>
+                            <Button onClick={schedule} disabled={busy || !sched.interviewName.trim() || !sched.regNos.length || !sched.startsAt || !sched.endsAt}>
                                 {busy ? "Scheduling..." : `Schedule ${sched.regNos.length || ""} ${sched.regNos.length === 1 ? "student" : "students"}`}
                             </Button>
                         </div>

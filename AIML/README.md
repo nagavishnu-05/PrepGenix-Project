@@ -102,6 +102,8 @@ Returns `{"status": "ok", "service": "proctoring-api"}`.
 | `PROCTORING_ALLOWED_ORIGINS` | `https://prep-genix-project.vercel.app,http://localhost:5173,http://127.0.0.1:5173` | Comma-separated browser origins allowed to call the proctoring API |
 | `PHONE_CONFIDENCE` | `0.50` | YOLOv8 confidence threshold |
 | `FACE_CONFIDENCE` | `0.60` | Face detection confidence threshold |
+| `YOLO_FACE_ALLOW_DOWNLOAD` | `false` | Allow downloading missing optional YOLO face-fallback weights at runtime |
+| `INSIGHTFACE_MODEL_ROOT` | `AIML/models/insightface` | InsightFace model/cache root; point to a mounted persistent disk on hosts that support one |
 
 ### Hosted performance defaults
 
@@ -113,6 +115,16 @@ The frontend sends monitor frames every two seconds by default;
 `VITE_FACE_CHECK_INTERVAL_MS` can tune this at build time from 1500 to 5000 ms.
 These settings reduce CPU and network load while retaining temporal confirmation
 for person and device detections.
+
+InsightFace detection and recognition share one prepared ONNX model pack per
+worker, instead of loading duplicate sessions for every interview. The optional
+YOLO face fallback does not attempt to download missing weights at runtime.
+Install the configured weights as part of the deployment or explicitly set
+`YOLO_FACE_ALLOW_DOWNLOAD=true` if runtime downloads are acceptable. The
+primary InsightFace detector remains available without the optional YOLO face
+weights. On Render, mounting a persistent disk and setting
+`INSIGHTFACE_MODEL_ROOT` to its mount path lets the downloaded InsightFace pack
+survive instance restarts and redeploys.
 
 The Docker Compose deployment runs the stateful proctoring API separately on
 port 5050 with one Gunicorn worker and four request threads. Keep it at one

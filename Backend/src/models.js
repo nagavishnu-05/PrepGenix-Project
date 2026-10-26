@@ -184,6 +184,8 @@ const models = {
     mode: "online-proctored | in-person | hybrid",
     interviewer: "string",
     scheduledAt: "Date",
+    startsAt: "Date",
+    endsAt: "Date",
     status: "scheduled | in_progress | completed | cancelled",
     proctoring: {
       enabled: "boolean",

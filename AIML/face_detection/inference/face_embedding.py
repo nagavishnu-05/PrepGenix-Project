@@ -109,7 +109,6 @@ class FaceEmbedding:
                 app, pack = build_insightface_app(["detection", "recognition"])
                 if app is None:
                     raise RuntimeError("no usable InsightFace pack")
-                app.prepare(ctx_id=0, det_size=(640, 640))
                 self._insightface_app = app
                 self._backend = "insightface"
                 logger.info("Face embedding backend: InsightFace ArcFace (%s)", pack)

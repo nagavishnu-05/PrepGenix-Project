@@ -30,7 +30,9 @@ FACE_DETECT_SIZE = int(os.environ.get("FACE_DETECT_SIZE", "320"))
 # comparable LFW accuracy. Local packs under models/insightface/<pack> are used
 # without downloading; anything else falls back to the insightface cache.
 FACE_MODEL_PACK = os.environ.get("FACE_MODEL_PACK", "buffalo_sc").strip().lower()
-INSIGHTFACE_MODEL_ROOT = MODELS_DIR / "insightface"
+INSIGHTFACE_MODEL_ROOT = Path(
+    os.environ.get("INSIGHTFACE_MODEL_ROOT", str(MODELS_DIR / "insightface"))
+)
 
 FACE_DETECTOR_BACKEND = os.environ.get("FACE_DETECTOR_BACKEND", "auto").strip().lower()
 MEDIAPIPE_ENABLED = os.environ.get("MEDIAPIPE_ENABLED", "true").lower() == "true"

@@ -16,9 +16,18 @@ import { PageHeader, EmptyState, LoadingState } from "@/components/portal/primit
 import { StatusBadge } from "@/components/portal/status-badge";
 import { api } from "@/lib/api";
 
-function interviewCanStart(interview) {
+function interviewAvailability(interview, now = Date.now()) {
+    const startsAt = interview.startsAt || interview.scheduledAt;
+    if (startsAt && now < new Date(startsAt).getTime()) return "upcoming";
+    if (interview.endsAt && now >= new Date(interview.endsAt).getTime()) return "ended";
+    return "available";
+}
+
+function interviewCanStart(interview, now = Date.now()) {
+    const resumable = interview.session?.status === "in_progress";
     return ["scheduled", "in_progress"].includes(interview.status) &&
-        interview.session?.status !== "terminated";
+        interview.session?.status !== "terminated" &&
+        (resumable || interviewAvailability(interview, now) === "available");
 }
 
 function deduplicateInterviews(interviews) {
@@ -53,6 +62,7 @@ export default function StudentInterviews() {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState("");
     const [selectedInterview, setSelectedInterview] = useState(null);
+    const [now, setNow] = useState(Date.now());
 
     const loadInterviews = useCallback(async () => {
         setLoading(true);
@@ -70,9 +80,23 @@ export default function StudentInterviews() {
         loadInterviews();
     }, [loadInterviews]);
 
+    useEffect(() => {
+        const timer = window.setInterval(() => setNow(Date.now()), 30_000);
+        return () => window.clearInterval(timer);
+    }, []);
+
     const joinAction = (interview, className = "") => {
-        if (!interviewCanStart(interview)) return null;
+        if (!["scheduled", "in_progress"].includes(interview.status) || interview.session?.status === "terminated") return null;
         const isResuming = interview.session?.status === "in_progress";
+        const availability = interviewAvailability(interview, now);
+        const canStart = interviewCanStart(interview, now);
+        if (!canStart) {
+            return (
+                <Button className={className} variant="outline" disabled>
+                    {availability === "upcoming" ? "Not available yet" : "Interview window ended"}
+                </Button>
+            );
+        }
         return (
             <Button asChild className={className} variant={isResuming ? "default" : "outline"} onClick={(event) => event.stopPropagation()}>
                 <Link to={`/student/interview/${interview.id}`}>
@@ -101,6 +125,7 @@ export default function StudentInterviews() {
                         const ready = Boolean(interview.plan?.questions?.length);
                         const completed = interview.status === "completed";
                         const resumable = interview.session?.status === "in_progress";
+                        const availability = interviewAvailability(interview, now);
                         return (
                             <Card
                                 key={interview.id}
@@ -119,8 +144,22 @@ export default function StudentInterviews() {
                                     <div className="mt-3 space-y-2 text-sm text-slate-500 dark:text-zinc-400">
                                         <p className="flex items-center gap-2">
                                             <CalendarDays className="h-4 w-4 shrink-0" />
-                                            {new Date(interview.scheduledAt).toLocaleString()}
+                                            {new Date(interview.startsAt || interview.scheduledAt).toLocaleString()}
                                         </p>
+                                        {interview.endsAt && (
+                                            <p className="flex items-center gap-2">
+                                                <Clock3 className="h-4 w-4 shrink-0" />
+                                                Available until {new Date(interview.endsAt).toLocaleString()}
+                                            </p>
+                                        )}
+                                        {!resumable && availability === "upcoming" && (
+                                            <p className="text-xs text-violet-600 dark:text-violet-400">
+                                                Available from {new Date(interview.startsAt || interview.scheduledAt).toLocaleString()}
+                                            </p>
+                                        )}
+                                        {!resumable && availability === "ended" && (
+                                            <p className="text-xs text-red-600 dark:text-red-400">The interview availability window has ended.</p>
+                                        )}
                                         {interview.interviewer && (
                                             <p className="flex items-center gap-2">
                                                 <UserRound className="h-4 w-4 shrink-0" />
@@ -187,7 +226,13 @@ export default function StudentInterviews() {
                                 <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-zinc-800 dark:bg-zinc-950/40">
                                     <p className="text-xs text-slate-500 dark:text-zinc-500">Scheduled</p>
                                     <p className="mt-1 text-sm font-medium text-slate-900 dark:text-white">
-                                        {new Date(selectedInterview.scheduledAt).toLocaleString()}
+                                        {new Date(selectedInterview.startsAt || selectedInterview.scheduledAt).toLocaleString()}
+                                    </p>
+                                </div>
+                                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-zinc-800 dark:bg-zinc-950/40">
+                                    <p className="text-xs text-slate-500 dark:text-zinc-500">Available until</p>
+                                    <p className="mt-1 text-sm font-medium text-slate-900 dark:text-white">
+                                        {selectedInterview.endsAt ? new Date(selectedInterview.endsAt).toLocaleString() : "No end time set"}
                                     </p>
                                 </div>
                                 <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-zinc-800 dark:bg-zinc-950/40">

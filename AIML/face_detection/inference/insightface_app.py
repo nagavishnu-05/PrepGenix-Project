@@ -8,10 +8,13 @@ the same compute provider.
 import logging
 import os
 from pathlib import Path
+from threading import Lock
 
-from ..utils.config import FACE_MODEL_PACK, INSIGHTFACE_MODEL_ROOT
+from ..utils.config import FACE_DETECT_SIZE, FACE_MODEL_PACK, INSIGHTFACE_MODEL_ROOT
 
 logger = logging.getLogger(__name__)
+_APPS = {}
+_APPS_LOCK = Lock()
 
 INSIGHTFACE_AVAILABLE = False
 try:
@@ -76,27 +79,35 @@ def session_options():
 
 
 def build_insightface_app(allowed_modules: list, pack: str | None = None):
-    """Build a prepared FaceAnalysis app, or return None if InsightFace is unusable.
+    """Return the process-wide prepared InsightFace app, or None if unusable.
 
+    Detection and recognition use one shared session set so creating a new
+    interview does not reload the same ONNX models and exhaust service memory.
     Returns (app, label) where label names the pack actually loaded.
     """
     if not INSIGHTFACE_AVAILABLE:
         return None, None
 
     name = (pack or FACE_MODEL_PACK or "buffalo_l").strip().lower()
-    root = local_pack_root(name)
-    root_arg = str(root) if root is not None else None
-    try:
-        kwargs = {
-            "providers": onnx_providers(),
-            "allowed_modules": list(allowed_modules),
-            "sess_options": session_options(),
-        }
-        if root_arg:
+    with _APPS_LOCK:
+        if name in _APPS:
+            return _APPS[name]
+
+        root = local_pack_root(name)
+        root_arg = str(root or INSIGHTFACE_MODEL_ROOT)
+        try:
+            kwargs = {
+                "providers": onnx_providers(),
+                "allowed_modules": ["detection", "recognition"],
+                "sess_options": session_options(),
+            }
             kwargs["root"] = root_arg
-        app = FaceAnalysis(name=name, **kwargs)
-        label = f"{name} (local)" if root is not None else name
-        return app, label
-    except Exception as exc:  # noqa: BLE001 - fall through to other backends
-        logger.warning("InsightFace pack '%s' failed to load: %s", name, exc)
-        return None, None
+            app = FaceAnalysis(name=name, **kwargs)
+            det_size = max(64, int(FACE_DETECT_SIZE))
+            app.prepare(ctx_id=0, det_size=(det_size, det_size))
+            label = f"{name} (local)" if root is not None else name
+            _APPS[name] = (app, label)
+            return _APPS[name]
+        except Exception as exc:  # noqa: BLE001 - fall through to other backends
+            logger.warning("InsightFace pack '%s' failed to load: %s", name, exc)
+            return None, None

@@ -78,12 +78,12 @@ class FaceDetector:
                 app, pack = build_insightface_app(["detection"])
                 if app is None:
                     raise RuntimeError("no usable InsightFace pack")
-                det_size = max(64, int(FACE_DETECT_SIZE))
-                app.prepare(ctx_id=0, det_size=(det_size, det_size))
                 self._insightface_app = app
                 self._backend = "insightface"
                 logger.info(
-                    "Face detector backend: InsightFace SCRFD %s (det_size=%d)", pack, det_size
+                    "Face detector backend: InsightFace SCRFD %s (det_size=%d)",
+                    pack,
+                    max(64, int(FACE_DETECT_SIZE)),
                 )
                 return
             except Exception as e:

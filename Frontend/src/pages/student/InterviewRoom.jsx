@@ -52,6 +52,13 @@ const PHONE_CONFIRM_TICKS = 1;            // consecutive monitor ticks a confirm
 const EYES_INVALID_GRACE_TICKS = 2;       // consecutive invalid ticks before "Eyes not visible"
 const MONITOR_STALE_MS = 8000;            // tolerate a delayed hosted response across monitor intervals
 
+function interviewAvailability(interview, now = Date.now()) {
+    const startsAt = interview.startsAt || interview.scheduledAt;
+    if (startsAt && now < new Date(startsAt).getTime()) return "upcoming";
+    if (interview.endsAt && now >= new Date(interview.endsAt).getTime()) return "ended";
+    return "available";
+}
+
 // Centralized monitoring state machine. Drives pause/resume/terminate UI and
 // guards answer submission so a terminated or paused interview cannot advance.
 export const MONITOR_STATE = {
@@ -200,6 +207,8 @@ export default function InterviewRoom() {
     const rafRef = useRef(null);
     const monitorIntervalRef = useRef(null);
     const monitorRunningRef = useRef(false);
+    const monitorFailureCountRef = useRef(0);
+    const monitorRetryAtRef = useRef(0);
     const proctorHealthyRef = useRef(false);
     // Client-side confirmation guards (see constants above).
     const phoneTicksRef = useRef(0);        // consecutive confirmed-phone ticks
@@ -224,6 +233,12 @@ export default function InterviewRoom() {
             } else if (data.status === "completed") {
                 setDone(true);
                 setStep("done");
+            } else if (data.session?.status !== "in_progress" && interviewAvailability(data) !== "available") {
+                const availability = interviewAvailability(data);
+                setError(availability === "upcoming"
+                    ? `This interview is available from ${new Date(data.startsAt || data.scheduledAt).toLocaleString()}.`
+                    : `This interview availability ended at ${new Date(data.endsAt).toLocaleString()}.`);
+                setStep("blocked");
             } else if (!data.consent?.consentedAt) {
                 setStep("consent");
             } else {
@@ -437,6 +452,7 @@ export default function InterviewRoom() {
 
         const monitor = async () => {
             if (monitorRunningRef.current) return;
+            if (Date.now() < monitorRetryAtRef.current) return;
             const video = videoRef.current;
             if (video && stream) {
                 if (video.srcObject !== stream) {
@@ -485,6 +501,8 @@ export default function InterviewRoom() {
                 });
                 if (!response.ok) throw new Error(`Proctoring service returned HTTP ${response.status}`);
                 const result = await response.json();
+                monitorFailureCountRef.current = 0;
+                monitorRetryAtRef.current = 0;
                 const metrics = result.metrics || {};
                 // Phone evidence from YOLO scene detection. The AI service owns
                 // the confirmation decision: `device_state.level` is its
@@ -603,9 +621,12 @@ export default function InterviewRoom() {
                     });
                 }
             } catch (e) {
+                monitorFailureCountRef.current += 1;
+                const retryDelayMs = Math.min(30_000, 5_000 * (2 ** (monitorFailureCountRef.current - 1)));
+                monitorRetryAtRef.current = Date.now() + retryDelayMs;
                 setProctorError(e.name === "AbortError"
-                    ? "The AI camera monitor did not respond within 45 seconds. It will retry automatically."
-                    : `AI camera monitoring error: ${e.message}`);
+                    ? `The AI camera monitor did not respond within 45 seconds. Retrying in ${Math.ceil(retryDelayMs / 1000)} seconds.`
+                    : `AI camera monitoring error: ${e.message}. Retrying in ${Math.ceil(retryDelayMs / 1000)} seconds.`);
             } finally {
                 window.clearTimeout(monitorTimeout);
                 monitorRunningRef.current = false;
@@ -1110,9 +1131,12 @@ export default function InterviewRoom() {
                         <p className="text-sm text-slate-600 dark:text-zinc-400">
                             You can return to your interviews list and try again.
                         </p>
-                        <Button variant="outline" onClick={() => navigate("/student/interviews")}>
-                            <ArrowLeft className="h-4 w-4" /> Back to interviews
-                        </Button>
+                        <div className="flex flex-wrap justify-center gap-2">
+                            <Button variant="outline" onClick={() => navigate("/student/interviews")}>
+                                <ArrowLeft className="h-4 w-4" /> Back to interviews
+                            </Button>
+                            <Button variant="outline" onClick={load}>Check availability again</Button>
+                        </div>
                     </CardContent>
                 </Card>
             </div>

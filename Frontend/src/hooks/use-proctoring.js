@@ -157,6 +157,8 @@ export default function useProctoring({ attemptId, config, previewRef, onAutoSub
     const intervalRef = useRef(null);
     const activeRef = useRef(false);
     const runningRef = useRef(false);
+    const monitorFailureCountRef = useRef(0);
+    const monitorRetryAtRef = useRef(0);
     const autoSubmittedRef = useRef(false);
     // Declared with the other refs so it exists before `tick` reads it. Using a
     // ref declared further down the function body threw a temporal-dead-zone
@@ -294,6 +296,7 @@ export default function useProctoring({ attemptId, config, previewRef, onAutoSub
 
     const tick = useCallback(async () => {
         if (!activeRef.current || runningRef.current || autoSubmittedRef.current) return;
+        if (Date.now() < monitorRetryAtRef.current) return;
         // Skip monitoring during grace period after start or stream reattachment.
         if (Date.now() < graceUntilRef.current) return;
         runningRef.current = true;
@@ -334,6 +337,8 @@ export default function useProctoring({ attemptId, config, previewRef, onAutoSub
 
             if (faceDetectionEnabledRef.current !== detectionEnabledForRequest) return;
 
+            monitorFailureCountRef.current = 0;
+            monitorRetryAtRef.current = 0;
             // `known` distinguishes "the detector ran and saw nothing" from "we have not
             // heard back yet". Without it the badge shows "No face" until the
             // first response arrives, which looks like an accusation.
@@ -372,12 +377,15 @@ export default function useProctoring({ attemptId, config, previewRef, onAutoSub
                 });
             }
         } catch (error) {
+            monitorFailureCountRef.current += 1;
+            const retryDelayMs = Math.min(30_000, 5_000 * (2 ** (monitorFailureCountRef.current - 1)));
+            monitorRetryAtRef.current = Date.now() + retryDelayMs;
             setFaceMonitor((prev) => ({
                 ...prev,
                 known: true,
                 identityBlocked: true,
                 identityStatus: "unavailable",
-                identityBlockReason: error.message || "The proctoring service is unavailable.",
+                identityBlockReason: `${error.message || "The proctoring service is unavailable."} Retrying in ${Math.ceil(retryDelayMs / 1000)} seconds.`,
             }));
         } finally {
             runningRef.current = false;

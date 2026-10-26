@@ -78,13 +78,35 @@ function newTurn(questionId, role, text) {
   return { id: crypto.randomUUID(), questionId, role, text, at: new Date() };
 }
 
+function interviewAvailability(interview, now = new Date()) {
+  const startValue = interview.startsAt || interview.scheduledAt;
+  const start = startValue ? new Date(startValue) : null;
+  const end = interview.endsAt ? new Date(interview.endsAt) : null;
+  if (start && now < start) return "upcoming";
+  if (end && now >= end) return "ended";
+  return "available";
+}
+
+function interviewWindowError(interview, now = new Date()) {
+  const availability = interviewAvailability(interview, now);
+  if (availability === "upcoming") {
+    return `This interview is available from ${new Date(interview.startsAt || interview.scheduledAt).toLocaleString()}`;
+  }
+  if (availability === "ended") {
+    return `This interview availability ended at ${new Date(interview.endsAt).toLocaleString()}`;
+  }
+  return null;
+}
 
 // GET /api/interviews  (placement sees all; students see their own)
 router.get("/", authenticate, async (req, res) => {
   try {
     const filter = req.user.role === "student" ? { regNo: req.user.username } : {};
     const interviews = await col("interviews").find(filter).sort({ scheduledAt: -1 }).toArray();
-    res.json(interviews.map(toId));
+    res.json(interviews.map((interview) => ({
+      ...toId(interview),
+      availabilityStatus: interviewAvailability(interview),
+    })));
   } catch {
     res.status(500).json({ error: "Failed to fetch interviews" });
   }
@@ -193,7 +215,7 @@ router.get("/:id", authenticate, async (req, res) => {
     if (req.user.role === "student" && interview.regNo !== req.user.username) {
       return res.status(403).json({ error: "Access denied" });
     }
-    res.json(toId(interview));
+    res.json({ ...toId(interview), availabilityStatus: interviewAvailability(interview) });
   } catch {
     res.status(500).json({ error: "Failed to fetch interview" });
   }
@@ -210,6 +232,8 @@ router.post("/", authenticate, async (req, res) => {
       groupId: requestedGroupId,
       type,
       scheduledAt,
+      startsAt,
+      endsAt,
       interviewer,
       mode,
       proctoring,
@@ -222,12 +246,16 @@ router.post("/", authenticate, async (req, res) => {
         .map((value) => value.trim())
         .filter(Boolean)
     )];
-    if (!studentRegNos.length || !scheduledAt) {
-      return res.status(400).json({ error: "At least one student and a date/time are required" });
+    const startValue = startsAt || scheduledAt;
+    if (!studentRegNos.length || !startValue || !endsAt) {
+      return res.status(400).json({ error: "At least one student and both interview start and end times are required" });
     }
     if (studentRegNos.length > 200) return res.status(400).json({ error: "An interview group can include at most 200 students at a time" });
-    const parsedSchedule = new Date(scheduledAt);
-    if (Number.isNaN(parsedSchedule.getTime())) return res.status(400).json({ error: "A valid interview date/time is required" });
+    const parsedStart = new Date(startValue);
+    const parsedEnd = new Date(endsAt);
+    if (Number.isNaN(parsedStart.getTime()) || Number.isNaN(parsedEnd.getTime()) || parsedStart >= parsedEnd) {
+      return res.status(400).json({ error: "The interview end time must be later than its start time" });
+    }
 
     let groupId = typeof requestedGroupId === "string" ? requestedGroupId.trim() : "";
     let groupName = typeof interviewName === "string" ? interviewName.trim().slice(0, 120) : "";
@@ -289,6 +317,12 @@ router.post("/", authenticate, async (req, res) => {
     }
 
     const now = new Date();
+    if (requestedGroupId) {
+      await col("interviews").updateMany(
+        { groupId },
+        { $set: { scheduledAt: parsedStart, startsAt: parsedStart, endsAt: parsedEnd, updatedAt: now } }
+      );
+    }
     const documents = studentRegNos.map((studentRegNo) => {
       const student = studentsByRegNo.get(studentRegNo);
       return {
@@ -301,7 +335,9 @@ router.post("/", authenticate, async (req, res) => {
         jobDescription: groupJobDescription || null,
         mode: mode || "online-proctored",
         interviewer: interviewer || req.user.username,
-        scheduledAt: parsedSchedule,
+        scheduledAt: parsedStart,
+        startsAt: parsedStart,
+        endsAt: parsedEnd,
         proctoring: {
           enabled: proctoring?.enabled !== false,
           camera: proctoring?.camera !== false,
@@ -399,6 +435,10 @@ router.post("/:id/consent", authenticate, async (req, res) => {
     const interview = await loadInterview(req.params.id);
     if (!interview) return res.status(404).json({ error: "Interview not found" });
     if (interview.regNo !== req.user.username) return res.status(403).json({ error: "Access denied" });
+    if (interview.session?.status !== "in_progress") {
+      const windowError = interviewWindowError(interview);
+      if (windowError) return res.status(403).json({ error: windowError });
+    }
 
     const { camera, microphone, transcript, recording } = req.body || {};
     const consent = {
@@ -430,6 +470,10 @@ router.post("/:id/reference-face", authenticate, async (req, res) => {
     const interview = await loadInterview(req.params.id);
     if (!interview) return res.status(404).json({ error: "Interview not found" });
     if (interview.regNo !== req.user.username) return res.status(403).json({ error: "Access denied" });
+    if (interview.session?.status !== "in_progress") {
+      const windowError = interviewWindowError(interview);
+      if (windowError) return res.status(403).json({ error: windowError });
+    }
     if (interview.status === "completed" || interview.status === "disqualified") {
       return res.status(400).json({ error: "This interview is no longer available" });
     }
@@ -479,6 +523,10 @@ router.post("/:id/session/start", authenticate, async (req, res) => {
     // AI-service restart would otherwise lock the candidate out mid-interview.
     const faceVerificationRequired = interview.proctoring?.faceVerification !== false;
     const resuming = interview.session?.status === "in_progress";
+    if (!resuming) {
+      const windowError = interviewWindowError(interview);
+      if (windowError) return res.status(403).json({ error: windowError });
+    }
     if (faceVerificationRequired && !resuming && !interview.session?.faceReference?.registered) {
       return res.status(400).json({
         error: "Capture your reference face before starting this proctored interview",
@@ -972,3 +1020,5 @@ router.delete("/groups/:groupId", authenticate, async (req, res) => {
 });
 
 module.exports = router;
+module.exports.interviewAvailability = interviewAvailability;
+module.exports.interviewWindowError = interviewWindowError;

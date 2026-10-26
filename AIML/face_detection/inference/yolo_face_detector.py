@@ -46,7 +46,18 @@ class YOLOFaceDetector:
             if self.weights.exists():
                 self.model = YOLO(str(self.weights))
             else:
-                logger.warning("YOLO face weights not found at %s (will try '%s')", self.weights, YOLO_FACE_MODEL)
+                if os.environ.get("YOLO_FACE_ALLOW_DOWNLOAD", "false").lower() != "true":
+                    logger.info(
+                        "YOLO face fallback disabled; weights are not installed at %s",
+                        self.weights,
+                    )
+                    self.enabled = False
+                    return
+                logger.warning(
+                    "YOLO face weights not found at %s; attempting configured download '%s'",
+                    self.weights,
+                    YOLO_FACE_MODEL,
+                )
                 self.model = YOLO(YOLO_FACE_MODEL)
             self._backend = "yolov8"
             logger.info("Face detector backend (difficult conditions): YOLOv8")
