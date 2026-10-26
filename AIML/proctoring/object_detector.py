@@ -25,12 +25,15 @@ Optional evidence capture writes anonymized-ish crops and scores to
 
 import json
 import os
+import threading
 import time
 from pathlib import Path
 
 import numpy as np
 
 _model = None
+_model_lock = threading.Lock()
+_inference_lock = threading.Lock()
 
 _MODELS_DIR = Path(__file__).resolve().parent.parent / "models"
 _WEIGHTS = _MODELS_DIR / "yolov8n.pt"
@@ -85,18 +88,19 @@ _IOU_MERGE = float(os.environ.get("DEVICE_NMS_IOU", "0.5"))
 def get_model():
     """Return the shared YOLO model, or False if Ultralytics is unavailable."""
     global _model
-    if _model is not None:
-        return _model
-    try:
-        from ultralytics import YOLO
+    with _model_lock:
+        if _model is not None:
+            return _model
+        try:
+            from ultralytics import YOLO
 
-        override = os.environ.get("PROCTORING_DEVICE_MODEL_PATH")
-        weights = override or (str(_WEIGHTS) if _WEIGHTS.exists() else "yolov8n.pt")
-        _model = YOLO(weights)
-        print(f"[object_detector] YOLOv8 COCO loaded from {weights}")
-    except Exception as exc:  # noqa: BLE001 - optional dependency
-        print(f"[object_detector] YOLOv8 not available: {exc}")
-        _model = False
+            override = os.environ.get("PROCTORING_DEVICE_MODEL_PATH")
+            weights = override or (str(_WEIGHTS) if _WEIGHTS.exists() else "yolov8n.pt")
+            _model = YOLO(weights)
+            print(f"[object_detector] YOLOv8 COCO loaded from {weights}")
+        except Exception as exc:  # noqa: BLE001 - optional dependency
+            print(f"[object_detector] YOLOv8 not available: {exc}")
+            _model = False
     return _model
 
 
@@ -156,20 +160,18 @@ class SceneObjectDetector:
 
         floor = min([self.confidence_threshold, *_CLASS_CONFIDENCE.values()])
         try:
-            persons, devices = self._detect_region(model, frame, floor)
+            with _inference_lock:
+                persons, devices = self._detect_region(model, frame, floor)
+
+                # Crop inference finds partial phones missed by the full frame.
+                # Serialize it with the shared model's other inference calls.
+                already_has_phone = any(
+                    (d.get("label") or "").lower() == "cell phone" for d in devices
+                )
+                if _CROP_INFERENCE and _CROP_TILES > 1 and not already_has_phone:
+                    devices.extend(self._detect_devices_in_crops(model, frame, floor))
         except Exception as exc:  # noqa: BLE001
             return {**unavailable, "error": str(exc)}
-
-        # Crop inference: hunt for partial phones in overlapping tiles. Persons
-        # come only from the full frame to avoid double-counting. Crops are the
-        # expensive part (one extra YOLO pass per tile), so they only run when the
-        # full-frame pass did not already surface a phone; a clearly-visible phone
-        # is therefore caught in a single fast forward pass.
-        already_has_phone = any(
-            (d.get("label") or "").lower() == "cell phone" for d in devices
-        )
-        if _CROP_INFERENCE and _CROP_TILES > 1 and not already_has_phone:
-            devices.extend(self._detect_devices_in_crops(model, frame, floor))
 
         devices = _merge_detections(devices)
         for det in devices:

@@ -17,12 +17,18 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Expose port
-EXPOSE 5000
+EXPOSE 5000 5050
 
 # Set environment variables
 ENV FLASK_APP=server.py
 ENV FLASK_ENV=production
 ENV PYTHONUNBUFFERED=1
+ENV OMP_NUM_THREADS=1 \
+    OPENBLAS_NUM_THREADS=1 \
+    MKL_NUM_THREADS=1 \
+    DEVICE_DETECTION_IMGSZ=416 \
+    ACTIVE_SCENE_EVERY_N_CYCLES=2 \
+    STATIC_SCENE_EVERY_N_CYCLES=3
 
 # Run the application
 CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "4", "server:app"]

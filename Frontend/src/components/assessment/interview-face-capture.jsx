@@ -3,11 +3,11 @@ import { AlertTriangle, Camera, CheckCircle2, Loader2, RefreshCw, ScanFace, Shie
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { api } from "@/lib/api";
+import { getProctoringApiBase } from "@/lib/proctoring-config";
 import { cn } from "@/lib/utils";
 
 const REQUIRED_FRAMES = 5;
 const CAPTURE_INTERVAL_MS = 900;
-const PROCTORING_BASE = import.meta.env.VITE_PROCTORING_API || "http://localhost:5050";
 const IDENTITY_BACKENDS = new Set(["insightface", "onnx_arcface"]);
 
 const PHASE = {
@@ -97,7 +97,7 @@ export function InterviewFaceCapture({
                 canvas.getContext("2d").drawImage(video, 0, 0, canvas.width, canvas.height);
                 const image = canvas.toDataURL("image/jpeg", 0.7).split(",")[1];
 
-                const response = await fetch(`${PROCTORING_BASE}/enroll-frame`, {
+                const response = await fetch(`${getProctoringApiBase()}/enroll-frame`, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ image, attemptId, requireIdentity: true }),
@@ -164,7 +164,7 @@ export function InterviewFaceCapture({
                 setError("");
                 setAttestation(null);
                 setMessage("Preparing the camera for identity verification…");
-                const response = await fetch(`${PROCTORING_BASE}/enroll-reset`, {
+                const response = await fetch(`${getProctoringApiBase()}/enroll-reset`, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ attemptId }),

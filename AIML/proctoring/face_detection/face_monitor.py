@@ -61,6 +61,7 @@ MAX_FACES_FOR_IDENTITY = int(os.environ.get("MAX_FACES_FOR_IDENTITY", "4"))
 # the scene has not changed (no face, identical cached detections) only adds
 # latency. This is the slower cadence used when the scene looks unchanged.
 STATIC_SCENE_EVERY_N_CYCLES = max(1, int(os.environ.get("STATIC_SCENE_EVERY_N_CYCLES", "3")))
+ACTIVE_SCENE_EVERY_N_CYCLES = max(1, int(os.environ.get("ACTIVE_SCENE_EVERY_N_CYCLES", "2")))
 
 # Coarse ordering so the enrollment gate can reject anything below a threshold.
 _QUALITY_RANK = {"unusable": 0, "poor": 1, "acceptable": 2, "good": 3}
@@ -372,21 +373,19 @@ class FaceMonitor:
         face_count = det["face_count"]
         face_present = det["face_present"]
 
-        # One YOLO pass yields both extra persons and prohibited electronics. It
-        # is the most expensive signal in the cycle, but a phone must be caught
-        # quickly, so while a face is present it runs every cycle. On a *quiet*
-        # frame (no face and no cached devices/persons) it falls back to a slower
-        # cadence so an empty scene does not burn CPU at full rate.
+        # One YOLO pass yields both extra persons and prohibited electronics.
+        # Sampling it every other active frame reduces CPU load while keeping
+        # face and identity checks at the full monitoring cadence.
         self._scene_cycle += 1
         quiet_scene = (
             not face_present
             and not self._last_scene.get("devices")
             and not self._last_scene.get("personCount")
         )
-        cadence = STATIC_SCENE_EVERY_N_CYCLES if quiet_scene else 1
+        cadence = STATIC_SCENE_EVERY_N_CYCLES if quiet_scene else ACTIVE_SCENE_EVERY_N_CYCLES
         run_scene = (
             self.scene_detector is not None
-            and (self._scene_cycle % max(1, cadence) == 1)
+            and (self._scene_cycle % cadence == 1 % cadence)
         )
         if run_scene:
             self._last_scene = self.scene_detector.detect(frame) or {}
@@ -466,6 +465,7 @@ class FaceMonitor:
             "person_count": person_count,
             "devices": devices,
             "device_detected": device_detected,
+            "scene_detection_fresh": run_scene,
             "unmatched_faces": (match_result or {}).get("unmatched_faces", 0),
             "enrolled": self.is_enrolled,
             "spoof_suspected": bool(liveness_state and liveness_state.get("spoof_suspected")),

@@ -277,7 +277,9 @@ class ViolationManager:
         # a second person is turned away or partially out of frame.
         person_count = int(detection_result.get("person_count", 0) or 0)
         multiple_persons = person_count > 1
-        self._multiple_person_frames.append(multiple_persons)
+        scene_detection_fresh = detection_result.get("scene_detection_fresh", True)
+        if scene_detection_fresh:
+            self._multiple_person_frames.append(multiple_persons)
         if len(self._multiple_person_frames) >= MULTIPLE_PERSON_CONFIRM and all(self._multiple_person_frames):
             v = self._confirm_violation("MULTIPLE_PERSONS", {
                 "description": f"Multiple people detected in the camera frame ({person_count}).",
@@ -291,7 +293,10 @@ class ViolationManager:
         # A weak, partial detection only ever raises a review signal; a violation
         # needs consistent location across the rolling window *and* a strong hit.
         devices = detection_result.get("devices") or []
-        device_state = self._device_tracker.update(devices)
+        if scene_detection_fresh:
+            device_state = self._device_tracker.update(devices)
+        else:
+            device_state = self._device_tracker.snapshot()
         if device_state["level"] == "confirmed":
             labels = ", ".join(device_state.get("labels") or []) or "electronic device"
             evidence = device_state.get("devices") or devices

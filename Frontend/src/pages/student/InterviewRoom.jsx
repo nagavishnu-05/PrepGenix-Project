@@ -33,6 +33,11 @@ import FaceAttentionOverlay from "@/components/assessment/face-attention-overlay
 import { InterviewFaceCapture } from "@/components/assessment/interview-face-capture";
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
+import {
+    getProctoringApiBase,
+    getProctoringMonitorIntervalMs,
+    resetProctoringMonitor,
+} from "@/lib/proctoring-config";
 
 const SpeechRecognition =
     typeof window !== "undefined" ? window.SpeechRecognition || window.webkitSpeechRecognition : null;
@@ -42,10 +47,10 @@ const SpeechRecognition =
 // violations temporally. These constants only add a light client-side guard so
 // a single transient detection never locks the UI, and so eye-visibility status
 // has a short grace period before it flips to an amber warning.
-const MONITOR_INTERVAL_MS = 1200;         // how often a frame is sent to the AI service
+const MONITOR_INTERVAL_MS = getProctoringMonitorIntervalMs();
 const PHONE_CONFIRM_TICKS = 1;            // consecutive monitor ticks a confirmed phone must persist
 const EYES_INVALID_GRACE_TICKS = 2;       // consecutive invalid ticks before "Eyes not visible"
-const MONITOR_STALE_MS = 6000;            // a monitor signal older than this is treated as unavailable
+const MONITOR_STALE_MS = 8000;            // tolerate a delayed hosted response across monitor intervals
 
 // Centralized monitoring state machine. Drives pause/resume/terminate UI and
 // guards answer submission so a terminated or paused interview cannot advance.
@@ -350,7 +355,10 @@ export default function InterviewRoom() {
             try { recorderRef.current.stop(); } catch { /* ignore */ }
         }
         stream?.getTracks?.().forEach((track) => track.stop());
-    }, [stream]);
+        void resetProctoringMonitor(`interview_${id}`).catch((error) => {
+            console.error("Could not clear interview proctoring state:", error.message);
+        });
+    }, [id, stream]);
 
     useEffect(() => {
         if (step !== "interview") return undefined;
@@ -396,7 +404,7 @@ export default function InterviewRoom() {
                 canvas.height = Math.max(1, Math.round((video.videoHeight / video.videoWidth) * canvas.width));
                 canvas.getContext("2d").drawImage(video, 0, 0, canvas.width, canvas.height);
                 const image = canvas.toDataURL("image/jpeg", 0.65).split(",")[1];
-                const base = import.meta.env.VITE_PROCTORING_API || "http://localhost:5050";
+                const base = getProctoringApiBase();
                 const response = await fetch(`${base}/monitor`, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
@@ -631,7 +639,7 @@ export default function InterviewRoom() {
 
             let face = "skipped";
             let monitor = "skipped";
-            const base = import.meta.env.VITE_PROCTORING_API || "http://localhost:5050";
+            const base = getProctoringApiBase();
             try {
                 const canvas = document.createElement("canvas");
                 canvas.width = 320;
@@ -641,7 +649,7 @@ export default function InterviewRoom() {
                 const response = await fetch(`${base}/monitor`, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ image, attemptId: `interview_${id}_readiness`, cameraActive: true }),
+                    body: JSON.stringify({ image, attemptId: `interview_${id}`, cameraActive: true }),
                 });
                 if (!response.ok) throw new Error(`HTTP ${response.status}`);
                 const result = await response.json();
@@ -688,8 +696,8 @@ export default function InterviewRoom() {
         try {
             const data = await blobToBase64(blob);
             await api.interviews.uploadRecording(id, { data, contentType: "video/webm", ext: "webm" });
-        } catch {
-            // Recording is best-effort; the transcript is the source of truth.
+        } catch (error) {
+            console.error("Best-effort interview recording upload failed:", error.message);
         }
     };
 
@@ -923,7 +931,9 @@ export default function InterviewRoom() {
         setBusy(true);
         setMonitorState(MONITOR_STATE.COMPLETED);
         try {
-            await stopRecordingAndUpload();
+            void stopRecordingAndUpload().catch((error) => {
+                console.error("Best-effort interview recording upload failed:", error.message);
+            });
             const res = await api.interviews.complete(id);
             if (res) setInterview(res);
             stopAllMedia();
@@ -1037,7 +1047,9 @@ export default function InterviewRoom() {
                         <CheckCircle2 className="mx-auto h-12 w-12 text-emerald-500" />
                         <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Interview submitted</h2>
                         <p className="text-sm text-slate-600 dark:text-zinc-400">
-                            Your responses were saved. The coordinator can review the interview and its report.
+                            Your responses were saved. {interview?.reportStatus === "generating"
+                                ? "The interview report is being generated and will be available to the coordinator shortly."
+                                : "The coordinator can review the interview and its report."}
                         </p>
                         {interview?.report?.candidateSummary && (
                             <p className="rounded-lg border border-violet-200 bg-violet-50/60 p-3 text-sm text-violet-900 dark:border-violet-500/30 dark:bg-violet-500/10 dark:text-violet-200">

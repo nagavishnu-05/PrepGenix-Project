@@ -102,6 +102,31 @@ Returns `{"status": "ok", "service": "proctoring-api"}`.
 | `PHONE_CONFIDENCE` | `0.50` | YOLOv8 confidence threshold |
 | `FACE_CONFIDENCE` | `0.60` | Face detection confidence threshold |
 
+### Hosted performance defaults
+
+The Docker image limits numerical-library threads and uses a smaller YOLO scene
+input (`DEVICE_DETECTION_IMGSZ=416`). The service samples scene/object detection
+every two active monitor cycles (`ACTIVE_SCENE_EVERY_N_CYCLES=2`) and every
+three cycles in a quiet scene. Face and identity checks still run on each frame.
+The frontend sends monitor frames every two seconds by default;
+`VITE_FACE_CHECK_INTERVAL_MS` can tune this at build time from 1500 to 5000 ms.
+These settings reduce CPU and network load while retaining temporal confirmation
+for person and device detections.
+
+The Docker Compose deployment runs the stateful proctoring API separately on
+port 5050 with one Gunicorn worker and four request threads. Keep it at one
+process per instance; the current enrollment and temporal-monitor state is
+process-local. For a hosted frontend, set `VITE_PROCTORING_API` to the public
+URL of this service and rebuild the frontend. If scaling to multiple instances,
+add shared session state or session-affine routing first.
+
+For a standalone hosted proctoring service, use this start command (replace
+`$PORT` with the port variable required by the hosting provider):
+
+```sh
+gunicorn --bind 0.0.0.0:$PORT --workers 1 --worker-class gthread --threads 4 api.proctoring_api:app
+```
+
 ## Integration with Backend
 
 The Express backend (`Backend/src/routes/proctoring.js`) calls the CLI script:
@@ -111,7 +136,9 @@ The Express backend (`Backend/src/routes/proctoring.js`) calls the CLI script:
 execFile(PYTHON, [ANALYZE_SCRIPT, "--image", tmpFile], ...)
 ```
 
-The Flask API is an optional alternative for richer object detection (phone, etc.).
+The Flask `/monitor` API is the live face, identity, attention, and object
+monitor used by the frontend. The backend's `/api/proctoring/analyze` route is
+a separate one-shot CLI analysis path.
 
 ## Prohibited Objects (YOLOv8)
 

@@ -12,6 +12,7 @@ import { PageHeader, EmptyState, LoadingState } from "@/components/portal/primit
 import { StatusBadge } from "@/components/portal/status-badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { api } from "@/lib/api";
+import { getProctoringApiBase } from "@/lib/proctoring-config";
 import { getStudentSection } from "@/lib/student-section";
 
 function ReportBody({ report }) {
@@ -286,7 +287,7 @@ export default function PlacementInterviews() {
         try {
             await api.interviews.reset(iv.id);
             try {
-                const proctoringApi = import.meta.env.VITE_PROCTORING_API || "http://localhost:5050";
+                const proctoringApi = getProctoringApiBase();
                 const response = await fetch(`${proctoringApi}/reset`, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },

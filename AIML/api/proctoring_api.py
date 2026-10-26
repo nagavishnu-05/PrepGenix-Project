@@ -19,6 +19,7 @@ Endpoints:
 import base64
 import os
 import sys
+from threading import Lock
 from pathlib import Path
 
 # Running this file directly (`python api/proctoring_api.py`) puts `AIML/api` on
@@ -36,25 +37,28 @@ app = Flask(__name__)
 CORS(app)
 
 _engines = {}
+_engines_lock = Lock()
 
 
 def _get_engine(attempt_id: str):
-    if attempt_id not in _engines:
-        from proctoring import ProctoringEngine
-        _engines[attempt_id] = ProctoringEngine()
-    return _engines[attempt_id]
+    with _engines_lock:
+        if attempt_id not in _engines:
+            from proctoring import ProctoringEngine
+            _engines[attempt_id] = ProctoringEngine()
+        return _engines[attempt_id]
 
 
 def _get_face_monitor(attempt_id: str):
     from proctoring.face_detection import FaceMonitor
     key = f"fm_{attempt_id}"
-    if key not in _engines:
-        test_config = _get_test_config(attempt_id)
-        _engines[key] = FaceMonitor(
-            max_violations=test_config.get("maxViolations", 5),
-            auto_submit=test_config.get("autoSubmit", True),
-        )
-    return _engines[key]
+    with _engines_lock:
+        if key not in _engines:
+            test_config = _get_test_config(attempt_id)
+            _engines[key] = FaceMonitor(
+                max_violations=test_config.get("maxViolations", 5),
+                auto_submit=test_config.get("autoSubmit", True),
+            )
+        return _engines[key]
 
 
 def _get_test_config(attempt_id: str) -> dict:
@@ -429,13 +433,11 @@ def monitor():
 def reset():
     data = request.get_json(force=True)
     attempt_id = data.get("attemptId", "default")
-    if attempt_id in _engines:
-        _engines[attempt_id].reset()
-        del _engines[attempt_id]
-    fm_key = f"fm_{attempt_id}"
-    if fm_key in _engines:
-        _engines[fm_key].reset()
-        del _engines[fm_key]
+    with _engines_lock:
+        for key in (attempt_id, f"fm_{attempt_id}"):
+            engine = _engines.pop(key, None)
+            if engine is not None:
+                engine.reset()
     return jsonify({"status": "reset", "attemptId": attempt_id})
 
 

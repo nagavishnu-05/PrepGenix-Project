@@ -669,28 +669,53 @@ router.post("/:id/complete", authenticate, async (req, res) => {
       return res.status(409).json({ error: "Interview session is not active" });
     }
 
-    const session = { ...(interview.session || {}), status: "completed", endedAt: new Date() };
+    const completedAt = new Date();
+    const session = { ...(interview.session || {}), status: "completed", endedAt: completedAt };
+    const shouldGenerateReport = Boolean(interview.plan?.questions?.length);
     const completed = await col("interviews").updateOne(
       { _id: interview._id, "session.status": "in_progress", status: { $ne: "disqualified" } },
-      { $set: { session, status: "completed", completedAt: new Date(), updatedAt: new Date() } }
+      {
+        $set: {
+          session,
+          status: "completed",
+          ...(shouldGenerateReport ? { reportStatus: "generating" } : {}),
+          completedAt,
+          updatedAt: completedAt,
+        },
+      }
     );
     if (!completed.matchedCount) return res.status(409).json({ error: "Interview was stopped before completion" });
 
-    // Generate the report opportunistically; a coordinator can regenerate it later.
-    let report = null;
-    if (interview.plan?.questions?.length) {
-      try {
-        report = await generateReport(interview, interview.plan);
-        await col("interviews").updateOne(
-          { _id: interview._id },
-          { $set: { report, reportGeneratedAt: new Date(), updatedAt: new Date() } }
-        );
-      } catch (error) {
-        console.error("Auto report generation failed:", error.message);
-      }
+    res.json(toId({
+      ...interview,
+      session,
+      status: "completed",
+      ...(shouldGenerateReport ? { reportStatus: "generating" } : {}),
+      completedAt,
+      updatedAt: completedAt,
+    }));
+    if (shouldGenerateReport) {
+      setImmediate(() => {
+        generateReport(interview, interview.plan)
+          .then(async (report) => {
+            await col("interviews").updateOne(
+              { _id: interview._id, reportStatus: "generating" },
+              { $set: { report, reportStatus: "ready", reportGeneratedAt: new Date(), updatedAt: new Date() } }
+            );
+          })
+          .catch(async (error) => {
+            console.error("Auto report generation failed:", error.message);
+            try {
+              await col("interviews").updateOne(
+                { _id: interview._id, reportStatus: "generating" },
+                { $set: { reportStatus: "failed", updatedAt: new Date() } }
+              );
+            } catch (updateError) {
+              console.error("Failed to update interview report status:", updateError.message);
+            }
+          });
+      });
     }
-    const updated = await loadInterview(req.params.id);
-    res.json(toId(updated));
   } catch {
     res.status(500).json({ error: "Failed to complete interview" });
   }
@@ -707,7 +732,7 @@ router.post("/:id/report", authenticate, async (req, res) => {
     const report = await generateReport(interview, interview.plan);
     await col("interviews").updateOne(
       { _id: interview._id },
-      { $set: { report, reportGeneratedAt: new Date(), updatedAt: new Date() } }
+      { $set: { report, reportStatus: "ready", reportGeneratedAt: new Date(), updatedAt: new Date() } }
     );
     res.json({ report, llm: llm.info() });
   } catch (error) {
@@ -745,6 +770,7 @@ router.post("/:id/reset", authenticate, async (req, res) => {
           consent: null,
           analysis: { face: null, speech: null, background: null },
           report: null,
+          reportStatus: null,
           session: { status: "not_started", startedAt: null, endedAt: null, answeredCount: 0 },
           status: "scheduled",
           proctoringViolationCount: 0,

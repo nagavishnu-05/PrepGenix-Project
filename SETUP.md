@@ -95,5 +95,12 @@ If the repository is connected to automatic deployments, pushing may trigger
 the deployment. Confirm the hosted build succeeds and check that deployment
 environment variables use hosted values, not `localhost` or a local `.venv`.
 
+The hosted frontend build must define `VITE_API_URL` and `VITE_PROCTORING_API`
+with the public URLs of the Express API and Python proctoring API. Vite embeds
+these values at build time, so changing them requires a frontend rebuild and
+redeploy. Production builds do not fall back to `localhost` for proctoring.
+`VITE_FACE_CHECK_INTERVAL_MS` is optional; monitoring defaults to 2000 ms and
+accepts a configured interval from 1500 to 5000 ms.
+
 For AIML-specific commands and endpoints, see
 [AIML/GETTING_STARTED.md](./AIML/GETTING_STARTED.md).

@@ -50,8 +50,9 @@ services:
     ports:
       - "5173:5173"
     environment:
-      VITE_API_BASE_URL: http://localhost:3000
+      VITE_API_URL: http://localhost:3000
       VITE_AIML_API_URL: http://localhost:5000
+      VITE_PROCTORING_API: http://localhost:5050
     volumes:
       - ./Frontend:/app
       - /app/node_modules
@@ -80,6 +81,27 @@ services:
       - /app/__pycache__
     networks:
       - interview-network
+    command: ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "4", "server:app"]
+
+  # Stateful Python proctoring API. Keep it in one process so enrollment and
+  # temporal violation state remain consistent between monitor requests.
+  proctoring:
+    build:
+      context: ./AIML
+      dockerfile: Dockerfile
+    container_name: interview-proctoring
+    restart: always
+    ports:
+      - "5050:5050"
+    environment:
+      FLASK_ENV: production
+      PROCTORING_PORT: 5050
+    volumes:
+      - ./AIML:/app
+      - /app/__pycache__
+    networks:
+      - interview-network
+    command: ["gunicorn", "--bind", "0.0.0.0:5050", "--workers", "1", "--worker-class", "gthread", "--threads", "4", "api.proctoring_api:app"]
 
 volumes:
   mongodb_data:

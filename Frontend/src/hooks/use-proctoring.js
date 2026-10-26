@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "@/lib/api";
+import {
+    getProctoringApiBase,
+    getProctoringMonitorIntervalMs,
+    resetProctoringMonitor,
+} from "@/lib/proctoring-config";
 
 function requestFullscreen() {
     const el = document.documentElement;
@@ -116,14 +121,17 @@ export default function useProctoring({ attemptId, config, previewRef, onAutoSub
     const faceDetectionEnabledRef = useRef(faceDetectionEnabled);
     faceDetectionEnabledRef.current = faceDetectionEnabled;
 
-    const monitoringIntervalMs = parseInt(import.meta.env.VITE_FACE_CHECK_INTERVAL_MS || "1000", 10);
-    const intervalMs = Number.isFinite(monitoringIntervalMs) && monitoringIntervalMs > 0
-        ? Math.max(750, monitoringIntervalMs)
-        : 1000;
+    const intervalMs = getProctoringMonitorIntervalMs();
 
     const stop = useCallback(() => {
+        const wasActive = activeRef.current;
         activeRef.current = false;
         setStatus("idle");
+        if (wasActive && attemptId) {
+            void resetProctoringMonitor(attemptId).catch((error) => {
+                console.error("Could not clear proctoring session state:", error.message);
+            });
+        }
         if (intervalRef.current) clearInterval(intervalRef.current);
         intervalRef.current = null;
         const stream = streamRef.current;
@@ -133,7 +141,7 @@ export default function useProctoring({ attemptId, config, previewRef, onAutoSub
         setCameraActive(false);
         setMicActive(false);
         exitFullscreen();
-    }, [previewRef]);
+    }, [attemptId, previewRef]);
 
     // Fullscreen is a hard requirement, but browsers only grant it from a user
     // gesture. If the request was refused we must not wait for a
@@ -149,7 +157,7 @@ export default function useProctoring({ attemptId, config, previewRef, onAutoSub
         const video = previewRef?.current;
         if (!video || !video.videoWidth) return undefined;
         const canvas = canvasRef.current || (canvasRef.current = document.createElement("canvas"));
-        const w = 480;
+        const w = 320;
         const h = video.videoHeight && video.videoWidth ? Math.round((video.videoHeight / video.videoWidth) * w) : 240;
         canvas.width = w;
         canvas.height = h;
@@ -251,9 +259,9 @@ export default function useProctoring({ attemptId, config, previewRef, onAutoSub
                 return;
             }
 
-            const proctoringApiBase = import.meta.env.VITE_PROCTORING_API || "http://localhost:5050";
+            const proctoringApiBase = getProctoringApiBase();
             const detectionEnabledForRequest = faceDetectionEnabledRef.current;
-            const r = await fetch(`${proctoringApiBase}/monitor`, {
+            const response = await fetch(`${proctoringApiBase}/monitor`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
@@ -262,7 +270,9 @@ export default function useProctoring({ attemptId, config, previewRef, onAutoSub
                     cameraActive,
                     faceDetectionEnabled: detectionEnabledForRequest,
                 }),
-            }).then((res) => res.json());
+            });
+            if (!response.ok) throw new Error(`Proctoring service returned HTTP ${response.status}`);
+            const r = await response.json();
 
             if (faceDetectionEnabledRef.current !== detectionEnabledForRequest) return;
 
@@ -303,8 +313,14 @@ export default function useProctoring({ attemptId, config, previewRef, onAutoSub
                     snapshot: image,
                 });
             }
-        } catch {
-            // transient network errors ignored
+        } catch (error) {
+            setFaceMonitor((prev) => ({
+                ...prev,
+                known: true,
+                identityBlocked: true,
+                identityStatus: "unavailable",
+                identityBlockReason: error.message || "The proctoring service is unavailable.",
+            }));
         } finally {
             runningRef.current = false;
         }
@@ -526,7 +542,7 @@ export default function useProctoring({ attemptId, config, previewRef, onAutoSub
     }, [previewRef]);
 
     const enrollFrame = useCallback(async (imageBase64) => {
-        const proctoringApiBase = import.meta.env.VITE_PROCTORING_API || "http://localhost:5050";
+        const proctoringApiBase = getProctoringApiBase();
         const res = await fetch(`${proctoringApiBase}/enroll-frame`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -536,7 +552,7 @@ export default function useProctoring({ attemptId, config, previewRef, onAutoSub
     }, [attemptId]);
 
     const enrollStatus = useCallback(async () => {
-        const proctoringApiBase = import.meta.env.VITE_PROCTORING_API || "http://localhost:5050";
+        const proctoringApiBase = getProctoringApiBase();
         const res = await fetch(`${proctoringApiBase}/enroll-status`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },

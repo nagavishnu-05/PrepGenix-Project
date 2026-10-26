@@ -3,6 +3,7 @@ import { Camera, ScanFace, AlertTriangle, CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
+import { getProctoringApiBase } from "@/lib/proctoring-config";
 
 const ENROLLMENT_STATES = {
     NOT_STARTED: "NOT_STARTED",
@@ -42,13 +43,15 @@ export function FaceEnrollment({ proctoring, attemptId, previewRef, onComplete, 
             canvas.getContext("2d").drawImage(video, 0, 0, 320, h);
             const imageBase64 = canvas.toDataURL("image/jpeg", 0.7).split(",")[1];
 
-            const proctoringApiBase = import.meta.env.VITE_PROCTORING_API || "http://localhost:5050";
+            const proctoringApiBase = getProctoringApiBase();
 
-            const result = await fetch(`${proctoringApiBase}/enroll-frame`, {
+            const response = await fetch(`${proctoringApiBase}/enroll-frame`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ image: imageBase64, attemptId }),
-            }).then((r) => r.json());
+            });
+            if (!response.ok) throw new Error(`Proctoring service returned HTTP ${response.status}`);
+            const result = await response.json();
 
             const newCaptured = result.captured || 0;
             setCaptured(newCaptured);
