@@ -430,6 +430,8 @@ export default function InterviewRoom() {
             }
 
             monitorRunningRef.current = true;
+            const controller = new AbortController();
+            const monitorTimeout = window.setTimeout(() => controller.abort(), 45000);
             try {
                 const canvas = document.createElement("canvas");
                 canvas.width = 320;
@@ -441,6 +443,7 @@ export default function InterviewRoom() {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ image, attemptId: `interview_${id}`, cameraActive: true }),
+                    signal: controller.signal,
                 });
                 if (!response.ok) throw new Error(`Proctoring service returned HTTP ${response.status}`);
                 const result = await response.json();
@@ -563,8 +566,11 @@ export default function InterviewRoom() {
                 proctorHealthyRef.current = false;
                 setProctorSignal((prev) => ({ ...prev, connected: false }));
                 setPausedReason((current) => current || "AI camera monitoring is unavailable.");
-                setProctorError(`AI camera monitoring is unavailable: ${e.message}`);
+                setProctorError(e.name === "AbortError"
+                    ? "The AI camera monitor did not respond within 45 seconds. It will retry automatically."
+                    : `AI camera monitoring is unavailable: ${e.message}`);
             } finally {
+                window.clearTimeout(monitorTimeout);
                 monitorRunningRef.current = false;
             }
         };
@@ -643,9 +649,8 @@ export default function InterviewRoom() {
         await enableDevices(true, deviceId);
     };
 
-    // One-shot readiness probe: brightness from the preview plus, best-effort, a
-    // single face check from the proctoring service so the candidate knows their
-    // face is visible before they start. Never blocks starting on monitor failure.
+    // Keep the readiness check local and lightweight. Face enrollment and live
+    // proctoring perform server-side inference after the candidate starts.
     const runReadinessChecks = async () => {
         setCheckingReadiness(true);
         setReadinessError("");
@@ -654,13 +659,10 @@ export default function InterviewRoom() {
 
             let lighting = "unknown";
             const video = videoRef.current;
-            let monitorError = "";
-            let frameReady = false;
             try {
                 await waitForVideoFrame(video);
-                frameReady = true;
             } catch (error) {
-                monitorError = error.message;
+                setReadinessError(error.message);
             }
             if (video?.videoWidth) {
                 const canvas = document.createElement("canvas");
@@ -677,48 +679,9 @@ export default function InterviewRoom() {
                 lighting = brightness < 45 ? "too_dark" : brightness > 220 ? "too_bright" : "good";
             }
 
-            let face = "skipped";
-            let monitor = "skipped";
-            if (frameReady) {
-                try {
-                    const canvas = document.createElement("canvas");
-                    canvas.width = 320;
-                    canvas.height = Math.max(1, Math.round((video.videoHeight / video.videoWidth) * canvas.width));
-                    canvas.getContext("2d").drawImage(video, 0, 0, canvas.width, canvas.height);
-                    const image = canvas.toDataURL("image/jpeg", 0.65).split(",")[1];
-                    if (!image) throw new Error("Camera preview did not produce an image.");
-                    const base = getProctoringApiBase();
-                    const response = await fetch(`${base}/monitor`, {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ image, attemptId: `interview_${id}`, cameraActive: true }),
-                    });
-                    if (!response.ok) {
-                        const body = await response.json().catch(() => ({}));
-                        throw new Error(body.error || `HTTP ${response.status}`);
-                    }
-                    const result = await response.json();
-                    monitor = "ok";
-                    face = result.face_present && Number(result.face_count || 0) === 1 ? "good"
-                        : result.face_present ? "multiple" : "not_found";
-                } catch (error) {
-                    monitor = "unavailable";
-                    face = "unknown";
-                    monitorError = error.message || "The proctoring service could not be reached.";
-                }
-            }
-
-            setReadiness({ lighting, face, monitor, checkedAt: Date.now() });
+            setReadiness({ lighting, face: "skipped", monitor: "not_run", checkedAt: Date.now() });
             if (lighting === "too_dark") setReadinessError("It looks dark. Add light facing you so your face is clearly visible.");
             else if (lighting === "too_bright") setReadinessError("It looks too bright. Reduce backlight or move away from a bright window.");
-            else if (face === "not_found") setReadinessError("No face was detected. Face the camera directly and try again.");
-            else if (face === "multiple") setReadinessError("More than one face was detected. Only you should be in view.");
-            else if (monitorError) {
-                const corsHint = monitorError.toLowerCase().includes("fetch")
-                    ? " Check that the proctoring service allows this Vercel origin in PROCTORING_ALLOWED_ORIGINS."
-                    : "";
-                setReadinessError(`AI camera check unavailable: ${monitorError}.${corsHint}`);
-            }
         } finally {
             setCheckingReadiness(false);
         }
@@ -1024,9 +987,17 @@ export default function InterviewRoom() {
     const canContinue = canResume && fullscreenActive && online && !pausedReason && !terminatingRef.current
         && identityStatus !== "mismatch"
         && monitorState !== MONITOR_STATE.TERMINATED && monitorState !== MONITOR_STATE.TERMINATING;
-    const identityBlocked = step === "interview" && (
-        proctorSignal.identityBlocked || identityStatus === "mismatch" || proctorSignal.faceCount > 1
+    const identityBlocked = step === "interview" && faceVerificationRequired && (
+        proctorSignal.identityBlocked
+        || identityStatus !== "verified"
+        || proctorSignal.faceCount > 1
     );
+    const showPauseDialog = step === "interview"
+        && (pausedReason || !canContinue)
+        && !identityBlocked
+        && !phoneConfirmed
+        && monitorState !== MONITOR_STATE.TERMINATED
+        && monitorState !== MONITOR_STATE.TERMINATING;
 
     // Derive the centralized monitoring state whenever its inputs change. The
     // face-away states only pause once the AIML gate confirms them (after its
@@ -1309,20 +1280,19 @@ export default function InterviewRoom() {
                                             offIcon={Sun}
                                             onIcon={CheckCircle2}
                                         />
-                                        <StatusPill
-                                            ok={readiness.face === "good" || readiness.face === "skipped"}
-                                            onLabel={readiness.face === "good" ? "Face visible" : readiness.face === "multiple" ? "Multiple faces" : readiness.face === "not_found" ? "No face found" : readiness.face === "unavailable" ? "Face check off" : "Face ?"}
-                                            offIcon={AlertTriangle}
-                                            onIcon={ScanFace}
-                                        />
+                                        {readiness.face === "good" ? (
+                                            <StatusPill ok onLabel="Face visible" onIcon={ScanFace} offIcon={AlertTriangle} />
+                                        ) : (
+                                            <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-600 dark:border-zinc-700 dark:bg-zinc-800/60 dark:text-zinc-400">
+                                                <ScanFace className="h-3.5 w-3.5" /> Face check at start
+                                            </span>
+                                        )}
                                     </div>
                                     <div className="flex flex-wrap items-center gap-2">
                                         <Button variant="outline" size="sm" onClick={runReadinessChecks} disabled={checkingReadiness} type="button">
                                             {checkingReadiness ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />} Run checks again
                                         </Button>
-                                        {readiness.monitor === "unavailable" && (
-                                            <span className="text-xs text-amber-600 dark:text-amber-400">AI monitor offline — checks are limited to your camera preview.</span>
-                                        )}
+                                        <span className="text-xs text-slate-500 dark:text-zinc-500">Face verification starts when you begin the interview.</span>
                                     </div>
                                     {readinessError && <p className="text-xs text-amber-700 dark:text-amber-300">{readinessError}</p>}
                                 </div>
@@ -1430,7 +1400,7 @@ export default function InterviewRoom() {
 
                 {/* Question + answer (left/center) */}
                 <div className="flex min-h-0 flex-1 flex-col gap-3 lg:max-w-none">
-                    {(pausedReason || !canContinue) && monitorState !== MONITOR_STATE.TERMINATED && (
+                    {showPauseDialog && (
                         <AssessmentPausedOverlay
                             title={`Interview paused · ${violationCount}/3 confirmed violations`}
                             message={
@@ -1441,7 +1411,7 @@ export default function InterviewRoom() {
                                         ? "Waiting for the AI camera monitor. Answers remain locked until monitoring is available."
                                         : "Waiting for a clear camera, face, and device check.")
                             }
-                            proctorError={proctorError && !pausedReason ? proctorError : undefined}
+                            proctorError={proctorError || undefined}
                             mediaError={mediaError}
                             error={error}
                             showReenableCamera={!liveCamera || !liveMicrophone}
@@ -1450,6 +1420,7 @@ export default function InterviewRoom() {
                             onResume={resumeAfterProctoring}
                             resumeLabel="Resume interview"
                             disabled={busy}
+                            modal
                         />
                     )}
 
@@ -1590,17 +1561,31 @@ export default function InterviewRoom() {
                             <div className="flex h-16 w-16 items-center justify-center rounded-full bg-amber-500/15 text-amber-500">
                                 <ScanFace className="h-8 w-8" />
                             </div>
-                            <h2 className="text-xl font-bold text-slate-900 dark:text-white">Candidate verification required</h2>
+                            <h2 className="text-xl font-bold text-slate-900 dark:text-white">
+                                {!proctorSignal.connected
+                                    ? "Camera monitoring required"
+                                    : "Candidate verification required"}
+                            </h2>
                             <p className="text-sm text-slate-600 dark:text-zinc-300">
                                 {proctorSignal.faceCount > 1
                                     ? "More than one person is visible. Only the registered candidate may continue."
-                                    : "The registered candidate could not be verified. Please return to the camera."}
+                                    : identityStatus === "mismatch"
+                                        ? "The face on camera does not match the registered candidate. The registered candidate must return to the camera."
+                                        : identityStatus === "unverified"
+                                            ? "The camera sees a face but cannot verify it clearly. Improve the lighting and keep your face centered in view."
+                                            : !proctorSignal.connected
+                                                ? "The live AI monitor has not returned a camera check yet. Keep the camera on while it reconnects."
+                                                : "Waiting for the live camera check to verify the registered candidate."}
                             </p>
                             <div className="flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
                                 <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
                                 Answers are locked and the timer is paused until verification succeeds.
                             </div>
-                            <p className="text-xs text-slate-400 dark:text-zinc-500">This screen will close automatically when the registered candidate is verified.</p>
+                            <p className="text-xs text-slate-400 dark:text-zinc-500">
+                                {proctorSignal.connected
+                                    ? "Answers stay locked until the camera confirms the registered candidate."
+                                    : "This screen will close automatically when the monitor responds and identity is verified."}
+                            </p>
                         </CardContent>
                     </Card>
                 </div>
