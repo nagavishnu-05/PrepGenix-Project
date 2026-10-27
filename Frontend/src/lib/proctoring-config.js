@@ -4,13 +4,22 @@ const MAX_MONITOR_INTERVAL_MS = 5000;
 
 export function getProctoringApiBase() {
     const configuredBase = import.meta.env.VITE_PROCTORING_API?.trim();
-    if (configuredBase) return configuredBase.replace(/\/+$/, "");
+    if (configuredBase) {
+        const base = configuredBase.replace(/\/+$/, "");
+        // In production (HTTPS), prefer HTTPS to avoid mixed content
+        if (typeof window !== "undefined" && window.location.protocol === "https:" && base.startsWith("http://") && !base.includes("localhost") && !base.includes("127.0.0.1")) {
+            // Try to upgrade to https if possible
+            console.warn("VITE_PROCTORING_API uses http on an HTTPS page; attempting to use as-is but this will be blocked by browsers. Consider using https.");
+        }
+        return base;
+    }
     if (import.meta.env.PROD) {
-        // Fallback to common relative patterns or same origin proxy if configured
-        // Avoid throwing hard in production to prevent breaking camera monitoring
-        console.error("VITE_PROCTORING_API is not set in production build. Falling back to same-origin /proctoring or localhost:5050 may not work.");
-        // Try to use a reasonable fallback
-        return (typeof window !== "undefined" && window.location?.origin ? `${window.location.origin.replace(/\/$/, "")}:5050` : "http://localhost:5050");
+        console.error("VITE_PROCTORING_API is not set in production build. The proctoring API (port 5050) must be deployed separately and configured via VITE_PROCTORING_API.");
+        // Try same-origin as a last resort - unlikely to work if deployed separately
+        if (typeof window !== "undefined" && window.location?.origin) {
+            return window.location.origin;
+        }
+        throw new Error("VITE_PROCTORING_API must point to the hosted proctoring service.");
     }
     return "http://localhost:5050";
 }

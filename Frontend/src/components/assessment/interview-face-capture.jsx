@@ -103,6 +103,10 @@ export function InterviewFaceCapture({
                 } catch (err) {
                     throw new Error(err?.message || "Proctoring service URL is not configured.");
                 }
+                // Check for mixed content
+                if (typeof window !== "undefined" && window.location.protocol === "https:" && proctorBase.startsWith("http://") && !proctorBase.includes("localhost")) {
+                    throw new Error("Mixed content blocked: the proctoring service must use HTTPS in production.");
+                }
                 const response = await fetch(`${proctorBase}/enroll-frame`, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },

@@ -326,6 +326,9 @@ export default function useProctoring({ attemptId, config, previewRef, onAutoSub
             } catch (err) {
                 throw err;
             }
+            if (typeof window !== "undefined" && window.location.protocol === "https:" && proctoringApiBase.startsWith("http://") && !proctoringApiBase.includes("localhost")) {
+                throw new Error("Mixed content blocked: the proctoring service must use HTTPS in production.");
+            }
             const detectionEnabledForRequest = faceDetectionEnabledRef.current;
             const response = await fetch(`${proctoringApiBase}/monitor`, {
                 method: "POST",

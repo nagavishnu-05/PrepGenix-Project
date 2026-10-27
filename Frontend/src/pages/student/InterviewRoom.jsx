@@ -499,6 +499,9 @@ export default function InterviewRoom() {
                 } catch (err) {
                     throw err;
                 }
+                if (typeof window !== "undefined" && window.location.protocol === "https:" && base.startsWith("http://") && !base.includes("localhost")) {
+                    throw new Error("Mixed content blocked: the proctoring service must use HTTPS in production.");
+                }
                 const response = await fetch(`${base}/monitor`, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
