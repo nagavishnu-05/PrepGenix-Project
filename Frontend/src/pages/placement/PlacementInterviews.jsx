@@ -530,7 +530,7 @@ export default function PlacementInterviews() {
                                 AI generates personalized questions from each selected student's resume and the role when the candidate starts. No manual question preparation is needed.
                             </p>
                         </div>
-                        <div className="space-y-3 md:col-span-7">
+                        <div className="min-w-0 space-y-3 md:col-span-7">
                             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                             <div className="space-y-1.5">
                                 <Label className="text-xs font-medium text-slate-600 dark:text-zinc-300">Batch</Label>
@@ -563,10 +563,10 @@ export default function PlacementInterviews() {
                                 </Select>
                             </div>
                             </div>
-                            <div className="space-y-1.5">
+                            <div className="min-w-0 space-y-1.5">
                             <Label className="text-xs font-medium text-slate-600 dark:text-zinc-300">Search students</Label>
                             <Input
-                                className="bg-white dark:bg-zinc-900"
+                                className="min-w-0 bg-white dark:bg-zinc-900"
                                 value={studentFilters.search}
                                 onChange={(event) => setStudentFilters((current) => ({ ...current, search: event.target.value }))}
                                 placeholder="Search by name or registration number"
@@ -575,14 +575,20 @@ export default function PlacementInterviews() {
                             <div className="space-y-1.5 md:flex md:min-h-0 md:flex-1 md:flex-col">
                             <div className="flex items-center justify-between">
                                 <div>
-                                    <Label className="text-xs font-medium text-slate-700 dark:text-zinc-300">Students</Label>
-                                    <p className="mt-1 text-xs text-zinc-500">{sched.regNos.length} selected · {availableScheduleStudents.length} available · up to 200 per schedule</p>
+                                    <div className="flex items-center gap-2">
+                                        <Label className="text-xs font-medium text-slate-700 dark:text-zinc-300">Add students</Label>
+                                        <span className="rounded-full bg-violet-100 px-2 py-0.5 text-[11px] font-semibold text-violet-700 dark:bg-violet-500/15 dark:text-violet-300">
+                                            {sched.regNos.length} selected
+                                        </span>
+                                    </div>
+                                    <p className="mt-1 text-xs text-slate-500 dark:text-zinc-400">{availableScheduleStudents.length} available · up to 200 per schedule</p>
                                 </div>
                                 {availableScheduleStudents.length > 0 && (
                                     <Button
                                         type="button"
-                                        variant="ghost"
+                                        variant="outline"
                                         size="sm"
+                                        className="border-violet-200 text-violet-700 hover:bg-violet-50 hover:text-violet-800 dark:border-violet-500/30 dark:text-violet-300 dark:hover:bg-violet-500/10"
                                         onClick={() => {
                                             const visible = availableScheduleStudents.map((student) => student.regNo);
                                             const allVisibleSelected = visible.every((regNo) => sched.regNos.includes(regNo));
@@ -598,12 +604,20 @@ export default function PlacementInterviews() {
                                     </Button>
                                 )}
                             </div>
-                            <div className="max-h-56 space-y-1 overflow-y-auto rounded-xl border border-slate-200 bg-white p-2 dark:border-zinc-800 dark:bg-zinc-900/50">
+                            <div className="max-h-64 space-y-1.5 overflow-y-auto rounded-xl border border-slate-200 bg-white p-2 dark:border-zinc-800 dark:bg-zinc-900/50">
                                 {availableScheduleStudents.map((student) => {
                                     const section = getStudentSection(student.regNo);
                                     const details = [student.department, student.batch, section && `Section ${section}`].filter(Boolean).join(" · ");
+                                    const isSelected = sched.regNos.includes(student.regNo);
                                     return (
-                                        <label key={student.regNo} className="flex cursor-pointer items-center gap-3 rounded-md p-2 hover:bg-slate-50 dark:hover:bg-zinc-800/60">
+                                        <label
+                                            key={student.regNo}
+                                            className={`flex cursor-pointer items-center gap-3 rounded-lg border p-3 transition-colors ${
+                                                isSelected
+                                                    ? "border-violet-200 bg-violet-50/70 dark:border-violet-500/30 dark:bg-violet-500/10"
+                                                    : "border-transparent hover:border-slate-200 hover:bg-slate-50 dark:hover:border-zinc-700 dark:hover:bg-zinc-800/60"
+                                            }`}
+                                        >
                                             <Checkbox
                                                 checked={sched.regNos.includes(student.regNo)}
                                                 onCheckedChange={(checked) => toggleScheduledStudent(student.regNo, checked === true)}
@@ -625,9 +639,9 @@ export default function PlacementInterviews() {
                             </div>
                             </div>
                         </div>
-                        <div className="space-y-4 rounded-xl border border-slate-200 bg-slate-50/70 p-4 dark:border-zinc-800 dark:bg-zinc-950/30 md:col-span-5">
+                        <div className="min-w-0 space-y-4 rounded-xl border border-slate-200 bg-slate-50/70 p-4 dark:border-zinc-800 dark:bg-zinc-950/30 md:col-span-5">
                         <div className="space-y-3">
-                            <h3 className="text-sm font-semibold text-slate-800 dark:text-zinc-200">Availability & interviewer</h3>
+                            <h3 className="text-sm font-semibold text-slate-800 dark:text-zinc-200">Availability</h3>
                             <div className="space-y-1.5">
                                 <Label className="text-xs font-medium text-slate-600 dark:text-zinc-300">Interview available from</Label>
                                 <Input className="min-w-0 bg-white dark:bg-zinc-900" type="datetime-local" value={sched.startsAt} onChange={(e) => setSched({ ...sched, startsAt: e.target.value })} />
@@ -635,10 +649,6 @@ export default function PlacementInterviews() {
                             <div className="space-y-1.5">
                                 <Label className="text-xs font-medium text-slate-600 dark:text-zinc-300">Interview available until</Label>
                                 <Input className="min-w-0 bg-white dark:bg-zinc-900" type="datetime-local" min={sched.startsAt || undefined} value={sched.endsAt} onChange={(e) => setSched({ ...sched, endsAt: e.target.value })} />
-                            </div>
-                            <div className="space-y-1.5">
-                                <Label className="text-xs font-medium text-slate-600 dark:text-zinc-300">Interviewer <span className="font-normal text-slate-500 dark:text-zinc-400">(optional)</span></Label>
-                                <Input className="bg-white dark:bg-zinc-900" value={sched.interviewer} onChange={(e) => setSched({ ...sched, interviewer: e.target.value })} placeholder="Panel name" />
                             </div>
                         </div>
                         <div className="flex justify-end gap-2">
