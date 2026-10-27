@@ -81,7 +81,7 @@ services:
       - /app/__pycache__
     networks:
       - interview-network
-    command: ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "4", "server:app"]
+    command: ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "1", "--worker-class", "gthread", "--threads", "4", "server:app"]
 
   # Stateful Python proctoring API. Keep it in one process so enrollment and
   # temporal violation state remain consistent between monitor requests.

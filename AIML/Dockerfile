@@ -31,4 +31,4 @@ ENV OMP_NUM_THREADS=1 \
     STATIC_SCENE_EVERY_N_CYCLES=3
 
 # Run the application
-CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "4", "server:app"]
+CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "1", "--worker-class", "gthread", "--threads", "4", "server:app"]

@@ -18,14 +18,31 @@ const resume = {
   ].join("\n"),
 };
 
-test("technical plans select topic questions from resume skills", async () => {
+test("technical plans use the fixed 20-question mix and resume-matched topics", async () => {
   const plan = await generateQuestionPlan({ type: "Technical" }, resume);
-  assert.equal(plan.source, "topic-bank");
+  assert.equal(plan.source, "structured-technical");
+  assert.equal(plan.questions.length, 20);
+  assert.match(plan.questions[0].text, /introduce yourself/i);
+  assert.match(plan.questions[1].text, /PrepGenix coding assessment platform/);
   assert.ok(plan.topics.includes("React"));
   assert.ok(plan.topics.includes("Node.js"));
-  assert.ok(plan.questions.some((question) => question.text.includes("Your resume lists React.")));
-  assert.equal(plan.questions.at(-1).focus, "closing");
-  assert.ok(plan.questions.length <= 10);
+  assert.deepEqual(plan.coverage, {
+    resume: 6,
+    logic: 1,
+    "core-concept": 5,
+    "technical-scenario": 5,
+    "stress-management": 3,
+  });
+});
+
+test("technical plans still contain 20 questions when the resume has few project details", async () => {
+  const plan = await generateQuestionPlan(
+    { type: "Technical" },
+    { text: "Summary\nStudent developer" }
+  );
+  assert.equal(plan.questions.length, 20);
+  assert.equal(plan.coverage.resume, 6);
+  assert.equal(plan.questions[0].focus, "resume");
 });
 
 test("HR plans ask HR logistics questions without technical topic questions", async () => {
@@ -36,30 +53,17 @@ test("HR plans ask HR logistics questions without technical topic questions", as
   assert.ok(plan.questions.every((question) => question.focus !== "technical"));
 });
 
-test("configured AI generates likely questions for a technical role from resume facts", async () => {
+test("technical plan keeps its required question mix when AI is configured", async () => {
   const previousAvailable = llm.available;
   const previousChatJson = llm.chatJson;
   llm.available = () => true;
-  llm.chatJson = async (messages) => {
-    const prompt = messages.find((message) => message.role === "user")?.content || "";
-    assert.match(prompt, /"interviewType": "Technical"/);
-    assert.match(prompt, /"jobRole": "Frontend Developer"/);
-    return {
-      summary: "Resume-grounded interview",
-      questions: [
-        { text: "How did you use React in your assessment platform project?", focus: "project" },
-        { text: "How did you structure the Node.js and Express APIs?", focus: "technical" },
-        { text: "What trade-offs did you consider when selecting MongoDB?", focus: "technical" },
-        { text: "Which part of the platform would you improve next?", focus: "closing" },
-      ],
-    };
-  };
+  llm.chatJson = async () => { throw new Error("Technical plans should use the fixed question structure."); };
 
   try {
     const plan = await generateQuestionPlan({ type: "Technical", jobRole: "Frontend Developer" }, resume);
-    assert.equal(plan.source, "llm");
-    assert.equal(plan.questions.length, 4);
-    assert.match(plan.questions[0].text, /React/);
+    assert.equal(plan.source, "structured-technical");
+    assert.equal(plan.questions.length, 20);
+    assert.match(plan.questions[0].text, /introduce yourself/i);
   } finally {
     llm.available = previousAvailable;
     llm.chatJson = previousChatJson;
