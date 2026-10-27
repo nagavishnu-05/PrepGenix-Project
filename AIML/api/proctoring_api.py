@@ -43,13 +43,17 @@ _allowed_origins = [
     for origin in os.environ.get("PROCTORING_ALLOWED_ORIGINS", _default_allowed_origins).split(",")
     if origin.strip()
 ]
-CORS(
-    app,
-    resources={r"/*": {"origins": _allowed_origins}},
-    allow_headers=["Content-Type"],
-    methods=["GET", "POST", "OPTIONS"],
-    max_age=600,
-)
+# Allow all origins in development/staging if not explicitly restricted
+if os.environ.get("PROCTORING_CORS_ALLOW_ALL", "false").lower() == "true":
+    CORS(app, resources={r"/*": {"origins": "*"}}, allow_headers=["Content-Type"], methods=["GET", "POST", "OPTIONS"], max_age=600)
+else:
+    CORS(
+        app,
+        resources={r"/*": {"origins": _allowed_origins}},
+        allow_headers=["Content-Type"],
+        methods=["GET", "POST", "OPTIONS"],
+        max_age=600,
+    )
 
 _engines = {}
 _engines_lock = Lock()

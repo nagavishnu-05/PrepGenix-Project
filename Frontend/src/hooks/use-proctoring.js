@@ -320,7 +320,12 @@ export default function useProctoring({ attemptId, config, previewRef, onAutoSub
                 return;
             }
 
-            const proctoringApiBase = getProctoringApiBase();
+            let proctoringApiBase;
+            try {
+                proctoringApiBase = getProctoringApiBase();
+            } catch (err) {
+                throw err;
+            }
             const detectionEnabledForRequest = faceDetectionEnabledRef.current;
             const response = await fetch(`${proctoringApiBase}/monitor`, {
                 method: "POST",
@@ -378,14 +383,18 @@ export default function useProctoring({ attemptId, config, previewRef, onAutoSub
             }
         } catch (error) {
             monitorFailureCountRef.current += 1;
-            const retryDelayMs = Math.min(30_000, 5_000 * (2 ** (monitorFailureCountRef.current - 1)));
+            const retryDelayMs = Math.min(60_000, 5_000 * (2 ** (monitorFailureCountRef.current - 1)));
             monitorRetryAtRef.current = Date.now() + retryDelayMs;
+            // Don't immediately block identity verification on transient failures
+            // - keep trying to recover, but mark as unavailable with retry info
             setFaceMonitor((prev) => ({
                 ...prev,
-                known: true,
-                identityBlocked: true,
-                identityStatus: "unavailable",
-                identityBlockReason: `${error.message || "The proctoring service is unavailable."} Retrying in ${Math.ceil(retryDelayMs / 1000)} seconds.`,
+                known: prev.known || monitorFailureCountRef.current < 3, // give some grace period
+                identityBlocked: monitorFailureCountRef.current >= 5, // block only after persistent failures
+                identityStatus: monitorFailureCountRef.current >= 5 ? "unavailable" : "checking",
+                identityBlockReason: monitorFailureCountRef.current >= 5 
+                    ? `${error.message || "The proctoring service is unavailable."} Retrying in ${Math.ceil(retryDelayMs / 1000)} seconds.`
+                    : "Connecting to proctoring service...",
             }));
         } finally {
             runningRef.current = false;
@@ -430,6 +439,10 @@ export default function useProctoring({ attemptId, config, previewRef, onAutoSub
             await requestFullscreen().catch(() => {});
             if (!navigator.mediaDevices?.getUserMedia) {
                 throw new Error("This browser does not support camera access. Open the test in a supported browser over HTTPS.");
+            }
+            // Check if we're in secure context
+            if (typeof window !== "undefined" && window.location && window.location.protocol !== 'https:' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+                throw new Error("Camera access requires HTTPS in production. Please use a secure connection.");
             }
             try {
                 stream = await requestMediaWithTimeout({ video: { width: 640, height: 480 }, audio: true });

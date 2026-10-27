@@ -97,7 +97,13 @@ export function InterviewFaceCapture({
                 canvas.getContext("2d").drawImage(video, 0, 0, canvas.width, canvas.height);
                 const image = canvas.toDataURL("image/jpeg", 0.7).split(",")[1];
 
-                const response = await fetch(`${getProctoringApiBase()}/enroll-frame`, {
+                let proctorBase;
+                try {
+                    proctorBase = getProctoringApiBase();
+                } catch (err) {
+                    throw new Error(err?.message || "Proctoring service URL is not configured.");
+                }
+                const response = await fetch(`${proctorBase}/enroll-frame`, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ image, attemptId, requireIdentity: true }),
@@ -164,7 +170,13 @@ export function InterviewFaceCapture({
                 setError("");
                 setAttestation(null);
                 setMessage("Preparing the camera for identity verification…");
-                const response = await fetch(`${getProctoringApiBase()}/enroll-reset`, {
+                let proctorBaseReset;
+                try {
+                    proctorBaseReset = getProctoringApiBase();
+                } catch (err) {
+                    throw new Error(err?.message || "Proctoring service URL is not configured.");
+                }
+                const response = await fetch(`${proctorBaseReset}/enroll-reset`, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ attemptId }),

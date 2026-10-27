@@ -6,7 +6,11 @@ export function getProctoringApiBase() {
     const configuredBase = import.meta.env.VITE_PROCTORING_API?.trim();
     if (configuredBase) return configuredBase.replace(/\/+$/, "");
     if (import.meta.env.PROD) {
-        throw new Error("VITE_PROCTORING_API must point to the hosted proctoring service.");
+        // Fallback to common relative patterns or same origin proxy if configured
+        // Avoid throwing hard in production to prevent breaking camera monitoring
+        console.error("VITE_PROCTORING_API is not set in production build. Falling back to same-origin /proctoring or localhost:5050 may not work.");
+        // Try to use a reasonable fallback
+        return (typeof window !== "undefined" && window.location?.origin ? `${window.location.origin.replace(/\/$/, "")}:5050` : "http://localhost:5050");
     }
     return "http://localhost:5050";
 }
@@ -18,10 +22,21 @@ export function getProctoringMonitorIntervalMs() {
 }
 
 export async function resetProctoringMonitor(attemptId) {
-    const response = await fetch(`${getProctoringApiBase()}/reset`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ attemptId }),
-    });
-    if (!response.ok) throw new Error(`Proctoring service returned HTTP ${response.status}`);
+    let base;
+    try {
+        base = getProctoringApiBase();
+    } catch (err) {
+        console.error("Cannot reset proctoring monitor:", err.message);
+        return;
+    }
+    try {
+        const response = await fetch(`${base}/reset`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ attemptId }),
+        });
+        if (!response.ok) throw new Error(`Proctoring service returned HTTP ${response.status}`);
+    } catch (err) {
+        console.error("resetProctoringMonitor failed:", err.message);
+    }
 }

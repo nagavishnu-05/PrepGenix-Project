@@ -493,7 +493,12 @@ export default function InterviewRoom() {
                 canvas.height = Math.max(1, Math.round((video.videoHeight / video.videoWidth) * canvas.width));
                 canvas.getContext("2d").drawImage(video, 0, 0, canvas.width, canvas.height);
                 const image = canvas.toDataURL("image/jpeg", 0.65).split(",")[1];
-                const base = getProctoringApiBase();
+                let base;
+                try {
+                    base = getProctoringApiBase();
+                } catch (err) {
+                    throw err;
+                }
                 const response = await fetch(`${base}/monitor`, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
@@ -627,7 +632,7 @@ export default function InterviewRoom() {
                 monitorRetryAtRef.current = Date.now() + retryDelayMs;
                 setProctorError(e.name === "AbortError"
                     ? `The AI camera monitor did not respond within 45 seconds. Retrying in ${Math.ceil(retryDelayMs / 1000)} seconds.`
-                    : `AI camera monitoring error: ${e.message}. Retrying in ${Math.ceil(retryDelayMs / 1000)} seconds.`);
+                    : `AI camera monitoring error: ${e.message}. Retrying in ${Math.ceil(retryDelayMs / 1000)} seconds. Check that VITE_PROCTORING_API is configured for the hosted proctoring service.`);
             } finally {
                 window.clearTimeout(monitorTimeout);
                 monitorRunningRef.current = false;
