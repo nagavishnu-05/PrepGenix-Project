@@ -474,7 +474,7 @@ export default function PlacementInterviews() {
                         <DialogTitle>{sched.groupId ? `Schedule more for ${sched.interviewName}` : "Create Interview"}</DialogTitle>
                         <DialogDescription>Name this interview round, set its availability window, then select one or more students. Each student gets an individual session and resume-based questions.</DialogDescription>
                     </DialogHeader>
-                    <div className="grid min-h-0 flex-1 gap-5 overflow-y-auto pr-1 md:grid-cols-12 md:grid-rows-[auto_minmax(0,1fr)] md:overflow-hidden">
+                    <div className="grid min-h-0 flex-1 gap-5 overflow-y-auto pr-1 md:grid-cols-12">
                         <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50/70 p-4 dark:border-zinc-800 dark:bg-zinc-950/30 md:col-span-12">
                             <h3 className="text-sm font-semibold text-slate-800 dark:text-zinc-200">Interview details</h3>
                             <div className="grid gap-3 sm:grid-cols-2">
@@ -530,7 +530,7 @@ export default function PlacementInterviews() {
                                 AI generates personalized questions from each selected student's resume and the role when the candidate starts. No manual question preparation is needed.
                             </p>
                         </div>
-                        <div className="space-y-3 md:col-span-7 md:flex md:min-h-0 md:flex-col">
+                        <div className="space-y-3 md:col-span-7">
                             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                             <div className="space-y-1.5">
                                 <Label className="text-xs font-medium text-slate-600 dark:text-zinc-300">Batch</Label>
@@ -598,7 +598,7 @@ export default function PlacementInterviews() {
                                     </Button>
                                 )}
                             </div>
-                            <div className="max-h-56 space-y-1 overflow-y-auto rounded-xl border border-slate-200 bg-white p-2 dark:border-zinc-800 dark:bg-zinc-900/50 md:max-h-none md:min-h-0 md:flex-1">
+                            <div className="max-h-56 space-y-1 overflow-y-auto rounded-xl border border-slate-200 bg-white p-2 dark:border-zinc-800 dark:bg-zinc-900/50">
                                 {availableScheduleStudents.map((student) => {
                                     const section = getStudentSection(student.regNo);
                                     const details = [student.department, student.batch, section && `Section ${section}`].filter(Boolean).join(" · ");
@@ -640,11 +640,6 @@ export default function PlacementInterviews() {
                                 <Label className="text-xs font-medium text-slate-600 dark:text-zinc-300">Interviewer <span className="font-normal text-slate-500 dark:text-zinc-400">(optional)</span></Label>
                                 <Input className="bg-white dark:bg-zinc-900" value={sched.interviewer} onChange={(e) => setSched({ ...sched, interviewer: e.target.value })} placeholder="Panel name" />
                             </div>
-                        </div>
-                        <div className="rounded-lg border border-slate-200 bg-white p-3 text-sm leading-relaxed text-slate-600 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-400">
-                            <p className="font-medium text-slate-800 dark:text-zinc-200">Interview setup</p>
-                            <p className="mt-1">Students can start the interview during this window. Anyone who starts within the window can resume their active session afterward.</p>
-                            <p className="mt-1">Times use your local timezone. Each selected student receives an individual session, consent flow, resume-matched question plan, proctoring log, and result.</p>
                         </div>
                         <div className="flex justify-end gap-2">
                             <Button variant="outline" onClick={() => setSchedOpen(false)}>Cancel</Button>
