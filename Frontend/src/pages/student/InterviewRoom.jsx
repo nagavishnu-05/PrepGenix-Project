@@ -166,6 +166,7 @@ export default function InterviewRoom() {
     const [answer, setAnswer] = useState("");
     const [busy, setBusy] = useState(false);
     const [listening, setListening] = useState(false);
+    const [speechError, setSpeechError] = useState("");
     const [done, setDone] = useState(false);
     const [proctorSignal, setProctorSignal] = useState({
         connected: false,
@@ -956,6 +957,7 @@ export default function InterviewRoom() {
             setListening(false);
             return;
         }
+        setSpeechError("");
         const recognition = new SpeechRecognition();
         recognition.continuous = true;
         recognition.interimResults = true;
@@ -979,11 +981,19 @@ export default function InterviewRoom() {
         };
         recognition.onerror = (event) => {
             setListening(false);
-            setError(`Speech recognition failed: ${event.error || "unknown error"}`);
+            const reason = event.error === "network"
+                ? "Voice transcription could not reach your browser's speech service."
+                : `Voice transcription failed${event.error ? ` (${event.error})` : ""}.`;
+            setSpeechError(`${reason} Type your answer below or try voice input again.`);
         };
         recognitionRef.current = recognition;
-        recognition.start();
-        setListening(true);
+        try {
+            recognition.start();
+            setListening(true);
+        } catch (startError) {
+            recognitionRef.current = null;
+            setSpeechError(`Could not start voice transcription: ${startError.message}. Type your answer below.`);
+        }
     };
 
     const submitAnswer = async () => {
@@ -1518,15 +1528,16 @@ export default function InterviewRoom() {
 
                             <div className="flex min-h-0 flex-1 flex-col gap-2">
                                 <Textarea
-                                    className="min-h-0 flex-1 resize-none read-only:cursor-default"
+                                    className="min-h-0 flex-1 resize-none"
                                     value={answer}
-                                    readOnly
-                                    placeholder="Your spoken answer will appear here."
+                                    onChange={(event) => setAnswer(event.target.value)}
+                                    placeholder="Type your answer, or use Speak answer."
                                     disabled={busy || done || !canContinue}
                                 />
                                 <p className="text-xs text-slate-500 dark:text-zinc-500">
-                                    Speak your answer using the microphone. The transcript cannot be edited.
+                                    Type your answer or use voice input. Answers are saved when you submit.
                                 </p>
+                                {speechError && <p role="status" className="text-sm text-amber-700 dark:text-amber-300">{speechError}</p>}
                                 {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
                                 <div className="flex flex-wrap items-center justify-between gap-2">
                                     <div className="flex gap-2">

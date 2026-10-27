@@ -93,6 +93,11 @@ Send base64-encoded image and/or audio for proctoring analysis.
 #### `GET /health`
 
 Returns `{"status": "ok", "service": "proctoring-api"}`.
+This is a lightweight process liveness check; it deliberately does not load AI
+models or run inference. A Render health-check timeout means the service did
+not return a response within the configured health-check deadline. It does not,
+by itself, distinguish an instance cold start from CPU/memory pressure or an
+unresponsive worker.
 
 ### Environment Variables
 

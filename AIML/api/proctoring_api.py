@@ -102,25 +102,19 @@ def _decode_image(b64: str):
 
 @app.route("/health", methods=["GET"])
 def health():
-    from face_detection.utils.config import (
-        BLINK_ENABLED,
-        FACE_DETECTION_ENABLED,
-        FACE_RECOGNITION_ENABLED,
-        GAZE_ENABLED,
-        HEAD_POSE_ENABLED,
-        LANDMARK_DETECTOR_ENABLED,
-        MEDIAPIPE_ENABLED,
-    )
+    def enabled(name: str) -> bool:
+        return os.environ.get(name, "true").lower() == "true"
+
     return jsonify({
         "status": "ok",
         "service": "proctoring-api",
         "engines": len(_engines),
-        "face_detection_enabled": FACE_DETECTION_ENABLED,
-        "face_recognition_enabled": FACE_RECOGNITION_ENABLED,
-        "landmarks_enabled": LANDMARK_DETECTOR_ENABLED and MEDIAPIPE_ENABLED,
-        "head_pose_enabled": HEAD_POSE_ENABLED,
-        "gaze_enabled": GAZE_ENABLED,
-        "blink_enabled": BLINK_ENABLED,
+        "face_detection_enabled": enabled("FACE_DETECTION_ENABLED"),
+        "face_recognition_enabled": enabled("FACE_RECOGNITION_ENABLED"),
+        "landmarks_enabled": enabled("LANDMARK_DETECTOR_ENABLED") and enabled("MEDIAPIPE_ENABLED"),
+        "head_pose_enabled": enabled("HEAD_POSE_ENABLED"),
+        "gaze_enabled": enabled("GAZE_ENABLED"),
+        "blink_enabled": enabled("BLINK_ENABLED"),
     })
 
 
