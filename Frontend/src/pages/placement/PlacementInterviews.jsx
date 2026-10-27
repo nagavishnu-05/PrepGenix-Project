@@ -475,11 +475,13 @@ export default function PlacementInterviews() {
                         <DialogDescription>Name this interview round, set its availability window, then select one or more students. Each student gets an individual session and resume-based questions.</DialogDescription>
                     </DialogHeader>
                     <div className="grid min-h-0 flex-1 gap-5 overflow-y-auto pr-1 md:grid-cols-12 md:grid-rows-[auto_minmax(0,1fr)] md:overflow-hidden">
-                        <div className="space-y-3 md:col-span-12">
+                        <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50/70 p-4 dark:border-zinc-800 dark:bg-zinc-950/30 md:col-span-12">
+                            <h3 className="text-sm font-semibold text-slate-800 dark:text-zinc-200">Interview details</h3>
                             <div className="grid gap-3 sm:grid-cols-2">
                             <div className="space-y-1.5">
-                                <Label className="text-xs text-zinc-400">Interview name</Label>
+                                <Label className="text-xs font-medium text-slate-600 dark:text-zinc-300">Interview name</Label>
                                 <Input
+                                    className="bg-white dark:bg-zinc-900"
                                     value={sched.interviewName}
                                     onChange={(event) => setSched((current) => ({ ...current, interviewName: event.target.value }))}
                                     placeholder="e.g. Full Stack Developer — Technical Round 1"
@@ -488,9 +490,9 @@ export default function PlacementInterviews() {
                                 />
                             </div>
                             <div className="space-y-1.5">
-                                <Label className="text-xs text-zinc-400">Interview type</Label>
+                                <Label className="text-xs font-medium text-slate-600 dark:text-zinc-300">Interview type</Label>
                                 <Select value={sched.type} onValueChange={(value) => setSched((current) => ({ ...current, type: value }))} disabled={Boolean(sched.groupId)}>
-                                    <SelectTrigger><SelectValue /></SelectTrigger>
+                                    <SelectTrigger className="bg-white dark:bg-zinc-900"><SelectValue /></SelectTrigger>
                                     <SelectContent>
                                         <SelectItem value="General">General</SelectItem>
                                         <SelectItem value="Technical">Technical</SelectItem>
@@ -503,8 +505,9 @@ export default function PlacementInterviews() {
                             </div>
                             <div className="grid gap-3 sm:grid-cols-2">
                             <div className="space-y-1.5">
-                                <Label className="text-xs text-zinc-400">Target job role <span className="text-zinc-500">(optional)</span></Label>
+                                <Label className="text-xs font-medium text-slate-600 dark:text-zinc-300">Target job role <span className="font-normal text-slate-500 dark:text-zinc-400">(optional)</span></Label>
                                 <Input
+                                    className="bg-white dark:bg-zinc-900"
                                     value={sched.jobRole}
                                     onChange={(event) => setSched((current) => ({ ...current, jobRole: event.target.value }))}
                                     placeholder="e.g. Frontend Developer"
@@ -512,9 +515,10 @@ export default function PlacementInterviews() {
                                 />
                             </div>
                             <div className="space-y-1.5">
-                                <Label className="text-xs text-zinc-400">Job description / skills <span className="text-zinc-500">(optional)</span></Label>
+                                <Label className="text-xs font-medium text-slate-600 dark:text-zinc-300">Job description / skills <span className="font-normal text-slate-500 dark:text-zinc-400">(optional)</span></Label>
                                 <Textarea
                                     rows={2}
+                                    className="bg-white dark:bg-zinc-900"
                                     value={sched.jobDescription}
                                     onChange={(event) => setSched((current) => ({ ...current, jobDescription: event.target.value }))}
                                     placeholder="Paste key requirements so questions can be matched to the role."
@@ -522,16 +526,16 @@ export default function PlacementInterviews() {
                                 />
                             </div>
                             </div>
-                            <p className="rounded-lg bg-violet-50 px-3 py-2 text-xs text-violet-700 dark:bg-violet-500/10 dark:text-violet-300">
+                            <p className="rounded-lg border border-violet-100 bg-violet-50 px-3 py-2 text-xs leading-relaxed text-violet-800 dark:border-violet-500/20 dark:bg-violet-500/10 dark:text-violet-300">
                                 AI generates personalized questions from each selected student's resume and the role when the candidate starts. No manual question preparation is needed.
                             </p>
                         </div>
                         <div className="space-y-3 md:col-span-7 md:flex md:min-h-0 md:flex-col">
                             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                             <div className="space-y-1.5">
-                                <Label className="text-xs text-zinc-400">Batch</Label>
+                                <Label className="text-xs font-medium text-slate-600 dark:text-zinc-300">Batch</Label>
                                 <Select value={studentFilters.batch} onValueChange={(value) => setStudentFilters((current) => ({ ...current, batch: value, section: "all" }))}>
-                                    <SelectTrigger><SelectValue /></SelectTrigger>
+                                    <SelectTrigger className="bg-white dark:bg-zinc-900"><SelectValue /></SelectTrigger>
                                     <SelectContent>
                                         <SelectItem value="all">All batches</SelectItem>
                                         {batches.map((batch) => <SelectItem key={batch} value={batch}>{batch}</SelectItem>)}
@@ -539,9 +543,9 @@ export default function PlacementInterviews() {
                                 </Select>
                             </div>
                             <div className="space-y-1.5">
-                                <Label className="text-xs text-zinc-400">Section</Label>
+                                <Label className="text-xs font-medium text-slate-600 dark:text-zinc-300">Section</Label>
                                 <Select value={studentFilters.section} onValueChange={(value) => setStudentFilters((current) => ({ ...current, section: value }))}>
-                                    <SelectTrigger><SelectValue /></SelectTrigger>
+                                    <SelectTrigger className="bg-white dark:bg-zinc-900"><SelectValue /></SelectTrigger>
                                     <SelectContent>
                                         <SelectItem value="all">All sections</SelectItem>
                                         {availableSections.map((section) => <SelectItem key={section} value={section}>Section {section}</SelectItem>)}
@@ -549,9 +553,9 @@ export default function PlacementInterviews() {
                                 </Select>
                             </div>
                             <div className="space-y-1.5">
-                                <Label className="text-xs text-zinc-400">Department</Label>
+                                <Label className="text-xs font-medium text-slate-600 dark:text-zinc-300">Department</Label>
                                 <Select value={studentFilters.department} onValueChange={(value) => setStudentFilters((current) => ({ ...current, department: value }))}>
-                                    <SelectTrigger><SelectValue /></SelectTrigger>
+                                    <SelectTrigger className="bg-white dark:bg-zinc-900"><SelectValue /></SelectTrigger>
                                     <SelectContent>
                                         <SelectItem value="all">All departments</SelectItem>
                                         {departments.map((department) => <SelectItem key={department} value={department}>{department}</SelectItem>)}
@@ -560,8 +564,9 @@ export default function PlacementInterviews() {
                             </div>
                             </div>
                             <div className="space-y-1.5">
-                            <Label className="text-xs text-zinc-400">Search students</Label>
+                            <Label className="text-xs font-medium text-slate-600 dark:text-zinc-300">Search students</Label>
                             <Input
+                                className="bg-white dark:bg-zinc-900"
                                 value={studentFilters.search}
                                 onChange={(event) => setStudentFilters((current) => ({ ...current, search: event.target.value }))}
                                 placeholder="Search by name or registration number"
@@ -570,7 +575,7 @@ export default function PlacementInterviews() {
                             <div className="space-y-1.5 md:flex md:min-h-0 md:flex-1 md:flex-col">
                             <div className="flex items-center justify-between">
                                 <div>
-                                    <Label className="text-xs text-zinc-400">Students</Label>
+                                    <Label className="text-xs font-medium text-slate-700 dark:text-zinc-300">Students</Label>
                                     <p className="mt-1 text-xs text-zinc-500">{sched.regNos.length} selected · {availableScheduleStudents.length} available · up to 200 per schedule</p>
                                 </div>
                                 {availableScheduleStudents.length > 0 && (
@@ -593,7 +598,7 @@ export default function PlacementInterviews() {
                                     </Button>
                                 )}
                             </div>
-                            <div className="max-h-56 space-y-1 overflow-y-auto rounded-lg border border-slate-200 p-2 dark:border-zinc-800 md:max-h-none md:min-h-0 md:flex-1">
+                            <div className="max-h-56 space-y-1 overflow-y-auto rounded-xl border border-slate-200 bg-white p-2 dark:border-zinc-800 dark:bg-zinc-900/50 md:max-h-none md:min-h-0 md:flex-1">
                                 {availableScheduleStudents.map((student) => {
                                     const section = getStudentSection(student.regNo);
                                     const details = [student.department, student.batch, section && `Section ${section}`].filter(Boolean).join(" · ");
@@ -620,22 +625,23 @@ export default function PlacementInterviews() {
                             </div>
                             </div>
                         </div>
-                        <div className="space-y-4 md:col-span-5">
-                        <div className="grid gap-3 lg:grid-cols-2">
+                        <div className="space-y-4 rounded-xl border border-slate-200 bg-slate-50/70 p-4 dark:border-zinc-800 dark:bg-zinc-950/30 md:col-span-5">
+                        <div className="space-y-3">
+                            <h3 className="text-sm font-semibold text-slate-800 dark:text-zinc-200">Availability & interviewer</h3>
                             <div className="space-y-1.5">
-                                <Label className="text-xs text-zinc-400">Interview available from</Label>
-                                <Input type="datetime-local" value={sched.startsAt} onChange={(e) => setSched({ ...sched, startsAt: e.target.value })} />
+                                <Label className="text-xs font-medium text-slate-600 dark:text-zinc-300">Interview available from</Label>
+                                <Input className="min-w-0 bg-white dark:bg-zinc-900" type="datetime-local" value={sched.startsAt} onChange={(e) => setSched({ ...sched, startsAt: e.target.value })} />
                             </div>
                             <div className="space-y-1.5">
-                                <Label className="text-xs text-zinc-400">Interview available until</Label>
-                                <Input type="datetime-local" min={sched.startsAt || undefined} value={sched.endsAt} onChange={(e) => setSched({ ...sched, endsAt: e.target.value })} />
+                                <Label className="text-xs font-medium text-slate-600 dark:text-zinc-300">Interview available until</Label>
+                                <Input className="min-w-0 bg-white dark:bg-zinc-900" type="datetime-local" min={sched.startsAt || undefined} value={sched.endsAt} onChange={(e) => setSched({ ...sched, endsAt: e.target.value })} />
                             </div>
-                            <div className="space-y-1.5 lg:col-span-2">
-                                <Label className="text-xs text-zinc-400">Interviewer</Label>
-                                <Input value={sched.interviewer} onChange={(e) => setSched({ ...sched, interviewer: e.target.value })} placeholder="Panel name" />
+                            <div className="space-y-1.5">
+                                <Label className="text-xs font-medium text-slate-600 dark:text-zinc-300">Interviewer <span className="font-normal text-slate-500 dark:text-zinc-400">(optional)</span></Label>
+                                <Input className="bg-white dark:bg-zinc-900" value={sched.interviewer} onChange={(e) => setSched({ ...sched, interviewer: e.target.value })} placeholder="Panel name" />
                             </div>
                         </div>
-                        <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600 dark:border-zinc-800 dark:bg-zinc-950/40 dark:text-zinc-400">
+                        <div className="rounded-lg border border-slate-200 bg-white p-3 text-sm leading-relaxed text-slate-600 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-400">
                             <p className="font-medium text-slate-800 dark:text-zinc-200">Interview setup</p>
                             <p className="mt-1">Students can start the interview during this window. Anyone who starts within the window can resume their active session afterward.</p>
                             <p className="mt-1">Times use your local timezone. Each selected student receives an individual session, consent flow, resume-matched question plan, proctoring log, and result.</p>
