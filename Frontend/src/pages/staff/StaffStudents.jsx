@@ -22,7 +22,7 @@ export default function StaffStudents() {
     const [importOpen, setImportOpen] = useState(false);
     const [file, setFile] = useState(null);
     const [busy, setBusy] = useState(false);
-    const [newStudent, setNewStudent] = useState({ regNo: "", rollNo: "", name: "", email: "", mobile: "", cgpa: "", department: "", batch: "" });
+    const [newStudent, setNewStudent] = useState({ regNo: "", rollNo: "", name: "", email: "", mobile: "", cgpa: "", batch: "" });
 
     // Grouping & individual detail popup state
     const [expandedBatches, setExpandedBatches] = useState({});
@@ -78,7 +78,7 @@ export default function StaffStudents() {
         try {
             await api.students.create(newStudent);
             setAddOpen(false);
-            setNewStudent({ regNo: "", rollNo: "", name: "", email: "", mobile: "", cgpa: "", department: "", batch: "" });
+            setNewStudent({ regNo: "", rollNo: "", name: "", email: "", mobile: "", cgpa: "", batch: "" });
             load();
         } catch (e) {
             alert(e.message);
@@ -261,10 +261,6 @@ export default function StaffStudents() {
                             <Input value={newStudent.cgpa} onChange={(e) => setNewStudent({ ...newStudent, cgpa: e.target.value })} placeholder="8.5" />
                         </div>
                         <div className="space-y-1.5">
-                            <Label className="text-xs text-zinc-400">Department</Label>
-                            <Input value={newStudent.department} onChange={(e) => setNewStudent({ ...newStudent, department: e.target.value })} placeholder="CSE" />
-                        </div>
-                        <div className="space-y-1.5">
                             <Label className="text-xs text-zinc-400">Batch</Label>
                             <Input value={newStudent.batch} onChange={(e) => setNewStudent({ ...newStudent, batch: e.target.value })} placeholder="2027" />
                         </div>
@@ -280,7 +276,7 @@ export default function StaffStudents() {
                 <DialogContent>
                     <DialogHeader>
                         <DialogTitle>Import Students</DialogTitle>
-                        <DialogDescription>Upload an .xlsx or .csv file with columns: regNo, name, email, batch, department, cgpa...</DialogDescription>
+                        <DialogDescription>Upload an .xlsx or .csv file with columns: RegNo, RollNo, Name, Email, Mobile, Tenth, Twelfth, CGPA, Batch.</DialogDescription>
                     </DialogHeader>
                     <div className="space-y-4">
                         <FileInput accept=".xlsx,.xls,.csv" placeholder="Select Excel or CSV file" onChange={(e) => setFile(e.target.files?.[0] || null)} />
@@ -315,7 +311,7 @@ export default function StaffStudents() {
                                 <div className="space-y-1">
                                     <p className="text-xs font-semibold text-slate-400 dark:text-zinc-500 uppercase">Academics</p>
                                     <p className="text-sm font-bold text-slate-800 dark:text-zinc-300">CGPA: {selectedStudentReport.cgpa || "—"}</p>
-                                    <p className="text-xs text-slate-500 font-semibold">Batch: {selectedStudentReport.batch || "—"} • Dept: {selectedStudentReport.department || "—"}</p>
+                                    <p className="text-xs text-slate-500 font-semibold">Batch: {selectedStudentReport.batch || "—"}</p>
                                 </div>
                             </div>
 

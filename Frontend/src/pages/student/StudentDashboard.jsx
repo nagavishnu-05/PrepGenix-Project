@@ -76,10 +76,9 @@ export default function StudentDashboard() {
                     <CardHeader>
                         <CardTitle className="text-sm font-medium text-slate-500 dark:text-zinc-400">Academic Snapshot</CardTitle>
                     </CardHeader>
-                    <CardContent className="grid grid-cols-2 gap-6 sm:grid-cols-4">
+                    <CardContent className="grid grid-cols-2 gap-6 sm:grid-cols-3">
                         <div><p className="text-xs text-slate-500 dark:text-zinc-500">10th</p><p className="text-lg font-semibold text-slate-900 dark:text-white">{profile.tenth || "—"}%</p></div>
                         <div><p className="text-xs text-slate-500 dark:text-zinc-500">12th</p><p className="text-lg font-semibold text-slate-900 dark:text-white">{profile.twelfth || "—"}%</p></div>
-                        <div><p className="text-xs text-slate-500 dark:text-zinc-500">Department</p><p className="text-lg font-semibold text-slate-900 dark:text-white">{profile.department || "—"}</p></div>
                         <div><p className="text-xs text-slate-500 dark:text-zinc-500">Batch</p><p className="text-lg font-semibold text-slate-900 dark:text-white">{profile.batch || "—"}</p></div>
                     </CardContent>
                 </Card>

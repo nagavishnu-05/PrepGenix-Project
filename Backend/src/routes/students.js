@@ -36,11 +36,12 @@ async function upsertStudent(student) {
     tenth: student.tenth || "",
     twelfth: student.twelfth || "",
     cgpa: student.cgpa || "",
-    department: student.department || "",
     batch: student.batch || "",
     updatedAt: new Date(),
   };
-  await upsertDoc(col("students"), { regNo: student.regNo }, doc, null, { createdAt: new Date() });
+  const students = col("students");
+  await upsertDoc(students, { regNo: student.regNo }, doc, null, { createdAt: new Date() });
+  await students.updateOne({ regNo: student.regNo }, { $unset: { department: "" } });
   await upsertStudentLogin(student);
   return { ...doc, regNo: student.regNo };
 }
@@ -97,9 +98,9 @@ router.get("/:regNo", authenticate, async (req, res) => {
 router.post("/", authenticate, async (req, res) => {
   try {
     if (!STAFF.includes(req.user.role)) return res.status(403).json({ error: "Insufficient permissions" });
-    const { regNo, rollNo, name, email, mobile, tenth, twelfth, cgpa, department, batch } = req.body;
+    const { regNo, rollNo, name, email, mobile, tenth, twelfth, cgpa, batch } = req.body;
     if (!regNo || !name) return res.status(400).json({ error: "regNo and name are required" });
-    const student = await upsertStudent({ regNo, rollNo, name, email, mobile, tenth, twelfth, cgpa, department, batch });
+    const student = await upsertStudent({ regNo, rollNo, name, email, mobile, tenth, twelfth, cgpa, batch });
     res.status(201).json(student);
   } catch {
     res.status(500).json({ error: "Failed to create student" });
@@ -133,7 +134,7 @@ router.put("/:regNo", authenticate, async (req, res) => {
   try {
     if (!STAFF.includes(req.user.role)) return res.status(403).json({ error: "Insufficient permissions" });
     const regNo = req.params.regNo;
-    const { name, email, mobile, tenth, twelfth, cgpa, department, batch } = req.body;
+    const { name, email, mobile, tenth, twelfth, cgpa, batch } = req.body;
     const set = { updatedAt: new Date() };
     if (name !== undefined) set.name = name;
     if (email !== undefined) set.email = email;
@@ -141,9 +142,12 @@ router.put("/:regNo", authenticate, async (req, res) => {
     if (tenth !== undefined) set.tenth = tenth;
     if (twelfth !== undefined) set.twelfth = twelfth;
     if (cgpa !== undefined) set.cgpa = cgpa;
-    if (department !== undefined) set.department = department;
     if (batch !== undefined) set.batch = batch;
-    const student = await col("students").findOneAndUpdate({ regNo }, { $set: set }, { returnDocument: "after" });
+    const student = await col("students").findOneAndUpdate(
+      { regNo },
+      { $set: set, $unset: { department: "" } },
+      { returnDocument: "after" }
+    );
     if (!student) return res.status(404).json({ error: "Student not found" });
     res.json(toId(student));
   } catch {

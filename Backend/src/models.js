@@ -23,7 +23,6 @@ const models = {
     email: "string",
     mobile: "string",
     batch: "string",
-    department: "string",
     cgpa: "number | string",
     tenth: "string",
     twelfth: "string",

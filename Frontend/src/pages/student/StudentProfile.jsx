@@ -61,7 +61,6 @@ export default function StudentProfile() {
                             <p className="text-sm text-zinc-500">{p.regNo}{p.rollNo ? ` • ${p.rollNo}` : ""}</p>
                         </div>
                         <div className="flex flex-wrap justify-center gap-2 text-xs text-zinc-400">
-                            <span className="rounded-md bg-zinc-800 px-2 py-1">{p.department || "—"}</span>
                             <span className="rounded-md bg-zinc-800 px-2 py-1">{p.batch || "—"}</span>
                             <span className="rounded-md bg-zinc-800 px-2 py-1">CGPA {p.cgpa || "—"}</span>
                         </div>

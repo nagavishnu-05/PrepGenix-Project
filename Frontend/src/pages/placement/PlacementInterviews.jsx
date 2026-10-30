@@ -109,7 +109,7 @@ export default function PlacementInterviews() {
     const [deletingInterviewId, setDeletingInterviewId] = useState(null);
     const [busy, setBusy] = useState(false);
     const [sched, setSched] = useState({ interviewName: "", groupId: "", regNos: [], existingRegNos: [], type: "Technical", startsAt: "", endsAt: "", interviewer: "", jobRole: "", jobDescription: "" });
-    const [studentFilters, setStudentFilters] = useState({ batch: "all", section: "all", department: "all", search: "" });
+    const [studentFilters, setStudentFilters] = useState({ batch: "all", section: "all", search: "" });
     const [result, setResult] = useState({ rating: 3, notes: "", strengths: "", weaknesses: "", status: "completed" });
 
     const load = () => {
@@ -123,7 +123,6 @@ export default function PlacementInterviews() {
     useEffect(() => { load(); }, []);
 
     const batches = [...new Set(students.map((student) => student.batch).filter(Boolean))].sort();
-    const departments = [...new Set(students.map((student) => student.department).filter(Boolean))].sort();
     const availableSections = [...new Set(students
         .filter((student) => studentFilters.batch === "all" || student.batch === studentFilters.batch)
         .map((student) => getStudentSection(student.regNo))
@@ -131,7 +130,6 @@ export default function PlacementInterviews() {
     const filteredStudents = students.filter((student) => {
         if (studentFilters.batch !== "all" && student.batch !== studentFilters.batch) return false;
         if (studentFilters.section !== "all" && getStudentSection(student.regNo) !== studentFilters.section) return false;
-        if (studentFilters.department !== "all" && student.department !== studentFilters.department) return false;
         const query = studentFilters.search.trim().toLowerCase();
         return !query || `${student.name} ${student.regNo}`.toLowerCase().includes(query);
     });
@@ -156,7 +154,7 @@ export default function PlacementInterviews() {
     }, new Map()).values()].sort((a, b) => new Date(b.scheduledAt) - new Date(a.scheduledAt));
 
     const openSchedule = (group = null) => {
-        setStudentFilters({ batch: "all", section: "all", department: "all", search: "" });
+        setStudentFilters({ batch: "all", section: "all", search: "" });
         setSched({
             interviewName: group?.name || "",
             groupId: group ? (group.id.startsWith("legacy:") ? group.members[0]?.id : group.id) : "",
@@ -531,7 +529,7 @@ export default function PlacementInterviews() {
                             </p>
                         </div>
                         <div className="min-w-0 space-y-3 md:col-span-7">
-                            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                            <div className="grid gap-3 sm:grid-cols-2">
                             <div className="space-y-1.5">
                                 <Label className="text-xs font-medium text-slate-600 dark:text-zinc-300">Batch</Label>
                                 <Select value={studentFilters.batch} onValueChange={(value) => setStudentFilters((current) => ({ ...current, batch: value, section: "all" }))}>
@@ -549,16 +547,6 @@ export default function PlacementInterviews() {
                                     <SelectContent>
                                         <SelectItem value="all">All sections</SelectItem>
                                         {availableSections.map((section) => <SelectItem key={section} value={section}>Section {section}</SelectItem>)}
-                                    </SelectContent>
-                                </Select>
-                            </div>
-                            <div className="space-y-1.5">
-                                <Label className="text-xs font-medium text-slate-600 dark:text-zinc-300">Department</Label>
-                                <Select value={studentFilters.department} onValueChange={(value) => setStudentFilters((current) => ({ ...current, department: value }))}>
-                                    <SelectTrigger className="bg-white dark:bg-zinc-900"><SelectValue /></SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="all">All departments</SelectItem>
-                                        {departments.map((department) => <SelectItem key={department} value={department}>{department}</SelectItem>)}
                                     </SelectContent>
                                 </Select>
                             </div>
@@ -607,7 +595,7 @@ export default function PlacementInterviews() {
                             <div className="max-h-64 space-y-1.5 overflow-y-auto rounded-xl border border-slate-200 bg-white p-2 dark:border-zinc-800 dark:bg-zinc-900/50">
                                 {availableScheduleStudents.map((student) => {
                                     const section = getStudentSection(student.regNo);
-                                    const details = [student.department, student.batch, section && `Section ${section}`].filter(Boolean).join(" · ");
+                                    const details = [student.batch, section && `Section ${section}`].filter(Boolean).join(" · ");
                                     const isSelected = sched.regNos.includes(student.regNo);
                                     return (
                                         <label

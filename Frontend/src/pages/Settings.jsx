@@ -175,7 +175,6 @@ export default function SettingsPage() {
                             {isStudent && (
                                 <>
                                     <div className="flex flex-wrap justify-center gap-2 text-xs text-slate-600 dark:text-zinc-400">
-                                        <span className="rounded-md bg-slate-100 dark:bg-zinc-800 px-2.5 py-1">{p.department || "CSE"}</span>
                                         <span className="rounded-md bg-slate-100 dark:bg-zinc-800 px-2.5 py-1">{p.batch || "2023-2027"}</span>
                                         <span className="rounded-md bg-slate-100 dark:bg-zinc-800 px-2.5 py-1">CGPA {p.cgpa || "—"}</span>
                                     </div>

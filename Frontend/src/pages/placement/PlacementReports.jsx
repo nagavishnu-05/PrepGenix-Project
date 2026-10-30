@@ -152,7 +152,6 @@ export default function PlacementReports() {
                     Name: student.name || "",
                     "Registration Number": student.regNo || "",
                     Batch: student.batch || "",
-                    Department: student.department || "",
                     CGPA: student.cgpa ?? "",
                     "Aptitude Tests": student.aptitudeCount ?? 0,
                     "Aptitude Average (%)": student.aptitudeAverage ?? "",

@@ -174,7 +174,6 @@ router.get("/students", authenticate, async (req, res) => {
         regNo: s.regNo,
         name: s.name,
         batch: s.batch,
-        department: s.department,
         cgpa: s.cgpa,
         tenth: s.tenth,
         twelfth: s.twelfth,

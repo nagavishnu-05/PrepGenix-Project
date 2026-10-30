@@ -243,7 +243,7 @@ export default function Home() {
                                         <div className="mb-5">
                                             <h3 className="text-lg font-bold text-slate-900 dark:text-white">Placement Access</h3>
                                             <p className="mt-1 text-xs text-slate-500 dark:text-zinc-400">
-                                                Select your department role and continue with your credentials.
+                                                Select your role and continue with your credentials.
                                             </p>
                                         </div>
 

@@ -55,7 +55,6 @@ function parseStudents(rows) {
       tenth: r.tenth || r.tenthpercentage || r.sslc || r.sslcpercentage || "",
       twelfth: r.twelfth || r.twelfthpercentage || r.hsc || r.hscpercentage || r.plustwo || "",
       cgpa: r.cgpa || r.gpa || "",
-      department: r.department || r.branch || r.dept || "",
       batch: r.batch || r.yearsofstudy || r.year || "",
     });
   }

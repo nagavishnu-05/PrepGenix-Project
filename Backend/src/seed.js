@@ -14,7 +14,9 @@ async function upsertCoordinator(username, password, name, role) {
 }
 
 async function upsertStudentStudent(student) {
-  await upsertDoc(col("students"), { regNo: student.regNo }, student);
+  const students = col("students");
+  await upsertDoc(students, { regNo: student.regNo }, student);
+  await students.updateOne({ regNo: student.regNo }, { $unset: { department: "" } });
   const passwordHash = await bcrypt.hash(student.rollNo, 10);
   await upsertDoc(
     col("users"),
@@ -35,11 +37,11 @@ async function main() {
 
   console.log("\n[Demonstration students]  (login: regNo / rollNo)");
   const demoStudents = [
-    { regNo: "2023001", rollNo: "23CS001", name: "Arun Kumar", mobile: "9876543210", tenth: "92", twelfth: "90", cgpa: "8.6", department: "CSE", batch: "2023-2027", email: "arun@gmail.com" },
-    { regNo: "2023002", rollNo: "23CS002", name: "Bhavana Sri", mobile: "9876543211", tenth: "88", twelfth: "85", cgpa: "8.1", department: "CSE", batch: "2023-2027", email: "bhavana@gmail.com" },
-    { regNo: "2023003", rollNo: "23CS003", name: "Charan Teja", mobile: "9876543212", tenth: "90", twelfth: "88", cgpa: "7.9", department: "IT", batch: "2023-2027", email: "charan@gmail.com" },
-    { regNo: "2024001", rollNo: "24CS001", name: "Divya Lakshmi", mobile: "9876543213", tenth: "95", twelfth: "93", cgpa: "9.0", department: "CSE", batch: "2024-2028", email: "divya@gmail.com" },
-    { regNo: "2024002", rollNo: "24CS002", name: "Eswar Reddy", mobile: "9876543214", tenth: "86", twelfth: "82", cgpa: "7.4", department: "ECE", batch: "2024-2028", email: "eswar@gmail.com" },
+    { regNo: "2023001", rollNo: "23CS001", name: "Arun Kumar", mobile: "9876543210", tenth: "92", twelfth: "90", cgpa: "8.6", batch: "2023-2027", email: "arun@gmail.com" },
+    { regNo: "2023002", rollNo: "23CS002", name: "Bhavana Sri", mobile: "9876543211", tenth: "88", twelfth: "85", cgpa: "8.1", batch: "2023-2027", email: "bhavana@gmail.com" },
+    { regNo: "2023003", rollNo: "23CS003", name: "Charan Teja", mobile: "9876543212", tenth: "90", twelfth: "88", cgpa: "7.9", batch: "2023-2027", email: "charan@gmail.com" },
+    { regNo: "2024001", rollNo: "24CS001", name: "Divya Lakshmi", mobile: "9876543213", tenth: "95", twelfth: "93", cgpa: "9.0", batch: "2024-2028", email: "divya@gmail.com" },
+    { regNo: "2024002", rollNo: "24CS002", name: "Eswar Reddy", mobile: "9876543214", tenth: "86", twelfth: "82", cgpa: "7.4", batch: "2024-2028", email: "eswar@gmail.com" },
   ];
   for (const s of demoStudents) {
     await upsertStudentStudent(s);
