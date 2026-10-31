@@ -266,7 +266,7 @@ export function Header({ breadcrumbs = [] }) {
             initial={false}
             className="sticky top-4 z-50 mx-auto w-[92%] rounded-2xl border border-slate-200/60 bg-white/30 shadow-lg backdrop-blur-xl transition-colors duration-300 dark:border-zinc-800/30 dark:bg-zinc-950/30 sm:w-[95%] sm:max-w-screen-2xl"
         >
-            <div className="pointer-events-none relative grid h-20 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 px-3 sm:gap-4 sm:px-6">
+            <div className="pointer-events-none relative grid min-h-20 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 px-3 sm:gap-4 sm:px-6">
                 <Link to={useAuthStore.getState().homeFor(user?.role) || "/"} className="pointer-events-auto flex shrink-0 items-center gap-2.5 rounded-xl px-1 py-1">
                     <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-violet-600 to-indigo-600 shadow-md">
                         <Shield className="h-5 w-5 text-white" />
@@ -276,6 +276,59 @@ export function Header({ breadcrumbs = [] }) {
                         <span className="block text-[10px] capitalize text-slate-500 dark:text-zinc-400">{user?.role || "Portal"}</span>
                     </span>
                 </Link>
+
+                <nav
+                    aria-label="Main navigation"
+                    onClickCapture={(event) => {
+                        if (suppressNavClick.current) {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            suppressNavClick.current = false;
+                        }
+                    }}
+                    onPointerLeave={() => {
+                        if (!longPressActive.current) window.clearTimeout(longPressTimer.current);
+                    }}
+                    className="pointer-events-auto flex min-w-0 items-center justify-self-center gap-0.5 overflow-x-auto whitespace-nowrap [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:gap-1"
+                >
+                    {navItems.map((item) => {
+                        const active = item.end ? location.pathname === item.href : location.pathname.startsWith(item.href);
+                        const Icon = item.icon;
+                        return (
+                            <Link
+                                key={item.href}
+                                to={item.href}
+                                data-nav-href={item.href}
+                                onPointerDown={() => startNavPress(item.href)}
+                                aria-label={item.label}
+                                aria-current={active ? "page" : undefined}
+                                title={item.label}
+                                className="flex shrink-0 touch-manipulation 2xl:touch-none"
+                            >
+                                <motion.span
+                                    layout
+                                    transition={{ type: "spring", stiffness: 420, damping: 25, mass: 0.6 }}
+                                    className={cn(
+                                        "group relative flex items-center justify-center gap-2 rounded-full p-2.5 text-sm font-medium leading-none transition-colors duration-200 2xl:px-3",
+                                        active ? "text-violet-800 dark:text-violet-100" : "text-slate-600 hover:text-slate-950 dark:text-zinc-400 dark:hover:text-zinc-100",
+                                        draggingHref === item.href && "z-20 scale-110 -translate-y-1 cursor-grabbing",
+                                        draggingHref && draggingHref !== item.href && "cursor-grab"
+                                    )}
+                                >
+                                    {active && (
+                                        <motion.span
+                                            layoutId="portal-active-tab"
+                                            transition={{ type: "spring", stiffness: 420, damping: 23, mass: 0.5 }}
+                                            className="absolute inset-0 rounded-full bg-violet-100/75 shadow-[0_2px_8px_-4px_rgba(109,40,217,0.28),inset_0_1px_0_rgba(255,255,255,0.7)] ring-1 ring-violet-200/70 dark:bg-white/15 dark:shadow-[0_3px_12px_-5px_rgba(139,92,246,0.4),inset_0_1px_1px_rgba(255,255,255,0.2)] dark:ring-white/10"
+                                        />
+                                    )}
+                                    <Icon className="relative z-10 h-[18px] w-[18px] shrink-0 transition-transform duration-300 group-hover:-translate-y-0.5" />
+                                    <span className="relative z-10 hidden whitespace-nowrap 2xl:inline">{item.label}</span>
+                                </motion.span>
+                            </Link>
+                        );
+                    })}
+                </nav>
 
                 <div className="pointer-events-auto flex shrink-0 items-center gap-1 justify-self-end sm:gap-2">
                 {/* Theme Switch Toggle Button */}
@@ -383,59 +436,6 @@ export function Header({ breadcrumbs = [] }) {
                 </DropdownMenu>
             </div>
             </div>
-
-            <nav
-                aria-label="Main navigation"
-                onClickCapture={(event) => {
-                    if (suppressNavClick.current) {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        suppressNavClick.current = false;
-                    }
-                }}
-                onPointerLeave={() => {
-                    if (!longPressActive.current) window.clearTimeout(longPressTimer.current);
-                }}
-                className="pointer-events-auto grid w-full grid-cols-2 gap-1 border-t border-slate-200/70 p-2 dark:border-zinc-800/60 sm:flex sm:flex-wrap sm:justify-center 2xl:flex-nowrap"
-            >
-                {navItems.map((item) => {
-                    const active = item.end ? location.pathname === item.href : location.pathname.startsWith(item.href);
-                    const Icon = item.icon;
-                    return (
-                        <Link
-                            key={item.href}
-                            to={item.href}
-                            data-nav-href={item.href}
-                            onPointerDown={() => startNavPress(item.href)}
-                            aria-label={item.label}
-                            aria-current={active ? "page" : undefined}
-                            title={`Hold and drag to rearrange ${item.label}`}
-                            className="flex min-w-0 touch-manipulation sm:flex-none 2xl:touch-none"
-                        >
-                            <motion.span
-                                layout
-                                transition={{ type: "spring", stiffness: 420, damping: 25, mass: 0.6 }}
-                                className={cn(
-                                    "group relative flex w-full items-center justify-center gap-2 rounded-full px-2.5 py-2.5 text-sm font-medium leading-none transition-colors duration-200",
-                                    active ? "text-violet-800 dark:text-violet-100" : "text-slate-600 hover:text-slate-950 dark:text-zinc-400 dark:hover:text-zinc-100",
-                                    draggingHref === item.href && "z-20 scale-110 -translate-y-1 cursor-grabbing",
-                                    draggingHref && draggingHref !== item.href && "cursor-grab"
-                                )}
-                            >
-                                {active && (
-                                    <motion.span
-                                        layoutId="portal-active-tab"
-                                        transition={{ type: "spring", stiffness: 420, damping: 23, mass: 0.5 }}
-                                        className="absolute inset-0 rounded-full bg-violet-100/75 shadow-[0_2px_8px_-4px_rgba(109,40,217,0.28),inset_0_1px_0_rgba(255,255,255,0.7)] ring-1 ring-violet-200/70 dark:bg-white/15 dark:shadow-[0_3px_12px_-5px_rgba(139,92,246,0.4),inset_0_1px_1px_rgba(255,255,255,0.2)] dark:ring-white/10"
-                                    />
-                                )}
-                                <Icon className="relative z-10 h-[18px] w-[18px] shrink-0 transition-transform duration-300 group-hover:-translate-y-0.5" />
-                                <span className="relative z-10 whitespace-nowrap">{item.label}</span>
-                            </motion.span>
-                        </Link>
-                    );
-                })}
-            </nav>
 
             {breadcrumbs.length > 0 && (
                 <div className="flex items-center gap-1 border-t border-slate-200/70 px-5 py-2 text-xs text-slate-500 dark:border-zinc-800/60 dark:text-zinc-400">
