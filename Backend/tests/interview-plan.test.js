@@ -24,6 +24,10 @@ test("technical plans use the fixed 20-question mix and resume-matched topics", 
   assert.equal(plan.questions.length, 20);
   assert.match(plan.questions[0].text, /introduce yourself/i);
   assert.match(plan.questions[1].text, /PrepGenix coding assessment platform/);
+  for (const skill of resume.skills) {
+    assert.ok(plan.questions.some((question) => question.basedOn === `Resume skill: ${skill}`));
+  }
+  assert.ok(plan.questions.some((question) => question.focus === "technical-scenario" && question.text.includes("React")));
   assert.ok(plan.topics.includes("React"));
   assert.ok(plan.topics.includes("Node.js"));
   assert.deepEqual(plan.coverage, {

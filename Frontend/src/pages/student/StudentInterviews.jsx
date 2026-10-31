@@ -89,13 +89,14 @@ export default function StudentInterviews() {
         const isResuming = interview.session?.status === "in_progress";
         const availability = interviewAvailability(interview, now);
         const canStart = interviewCanStart(interview, now);
-        if (!canStart) {
+        if (!canStart && availability !== "ended") {
             return (
                 <Button className={className} variant="outline" disabled>
-                    {availability === "upcoming" ? "Not available yet" : "Interview window ended"}
+                    Not available yet
                 </Button>
             );
         }
+        if (!canStart) return null;
         return (
             <Button asChild className={className} variant={isResuming ? "default" : "outline"} onClick={(event) => event.stopPropagation()}>
                 <Link to={`/student/interview/${interview.id}`}>
@@ -137,15 +138,22 @@ export default function StudentInterviews() {
                                         </div>
                                         <StatusBadge value={interview.status} />
                                     </div>
-                                    <h2 className="text-base font-semibold text-slate-900 dark:text-white">
-                                        {interview.interviewName || `${interview.type} interview`}
-                                    </h2>
+                                    <div className="flex flex-wrap items-center gap-2">
+                                        <h2 className="text-base font-semibold text-slate-900 dark:text-white">
+                                            {interview.interviewName || `${interview.type} interview`}
+                                        </h2>
+                                        {availability === "ended" && (
+                                            <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-700 dark:text-amber-300">
+                                                Time ended
+                                            </span>
+                                        )}
+                                    </div>
                                     <div className="mt-3 space-y-2 text-sm text-slate-500 dark:text-zinc-400">
                                         <p className="flex items-center gap-2">
                                             <CalendarDays className="h-4 w-4 shrink-0" />
                                             {new Date(interview.startsAt || interview.scheduledAt).toLocaleString()}
                                         </p>
-                                        {interview.endsAt && (
+                                        {interview.endsAt && availability !== "ended" && (
                                             <p className="flex items-center gap-2">
                                                 <Clock3 className="h-4 w-4 shrink-0" />
                                                 Available until {new Date(interview.endsAt).toLocaleString()}
@@ -154,13 +162,6 @@ export default function StudentInterviews() {
                                         {!resumable && availability === "upcoming" && (
                                             <p className="text-xs text-violet-600 dark:text-violet-400">
                                                 Available from {new Date(interview.startsAt || interview.scheduledAt).toLocaleString()}
-                                            </p>
-                                        )}
-                                        {!resumable && availability === "ended" && (
-                                            <p className="text-xs text-slate-600 dark:text-zinc-400">
-                                                {completed
-                                                    ? "The interview window ended. You can view your saved feedback, but cannot restart this interview."
-                                                    : "The interview window ended without a submitted response, so there is no result to view."}
                                             </p>
                                         )}
                                         {interview.interviewer && (
@@ -195,15 +196,17 @@ export default function StudentInterviews() {
                                                 <><ListChecks className="h-4 w-4" /> {ready ? "Ready when you are" : "Questions generated at start"}</>
                                             )}
                                         </span>
-                                        <Button variant="ghost" size="sm" onClick={() => setSelectedInterview(interview)}>
-                                            Details
-                                        </Button>
+                                        {availability !== "ended" && (
+                                            <Button variant="ghost" size="sm" onClick={() => setSelectedInterview(interview)}>
+                                                Details
+                                            </Button>
+                                        )}
                                     </div>
-                                    {joinAction(interview, "mt-3 w-full")}
-                                    {completed && (
-                                        <Button asChild className="mt-3 w-full" variant="outline">
+                                    {availability !== "ended" && joinAction(interview, "mt-3 w-full")}
+                                    {availability === "ended" && completed && (
+                                        <Button asChild className="mt-5 w-full" variant="outline">
                                             <Link to={`/student/interview/${interview.id}`}>
-                                                View interview result
+                                                View Result
                                                 <ArrowRight className="h-4 w-4" />
                                             </Link>
                                         </Button>

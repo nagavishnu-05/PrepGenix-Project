@@ -83,20 +83,25 @@ export default function StudentTests() {
                                     </div>
                                     {t.attempt && <StatusBadge value={t.attempt.status} />}
                                 </div>
-                                <h3 className="text-base font-semibold text-slate-900 dark:text-white">{t.title}</h3>
+                                <div className="flex flex-wrap items-center gap-2">
+                                    <h3 className="text-base font-semibold text-slate-900 dark:text-white">{t.title}</h3>
+                                    {availability === "ended" && (
+                                        <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-700 dark:text-amber-300">
+                                            Time ended
+                                        </span>
+                                    )}
+                                </div>
                                 <p className="mt-1 line-clamp-2 text-sm text-slate-500 dark:text-zinc-400">{t.description}</p>
                                 {(t.topics || []).length > 0 && (
                                     <div className="mt-2 flex flex-wrap gap-1">
                                         {t.topics.map((topic) => <span key={topic} className="rounded bg-violet-500/10 px-2 py-0.5 text-[11px] text-violet-700 dark:text-violet-300">{topic}</span>)}
                                     </div>
                                 )}
-                                {t.startsAt && t.endsAt && (
+                                {t.startsAt && t.endsAt && availability !== "ended" && (
                                     <p className="mt-2 text-xs text-slate-500 dark:text-zinc-500">
                                         {availability === "upcoming"
                                             ? `Available from ${new Date(t.startsAt).toLocaleString()}`
-                                            : availability === "ended"
-                                                ? `Availability ended ${new Date(t.endsAt).toLocaleString()}`
-                                                : `Available until ${new Date(t.endsAt).toLocaleString()}`}
+                                            : `Available until ${new Date(t.endsAt).toLocaleString()}`}
                                     </p>
                                 )}
                                 <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-zinc-400">
@@ -105,10 +110,10 @@ export default function StudentTests() {
                                     <span className="rounded-md bg-slate-100 dark:bg-zinc-800/70 px-2 py-1">{t._count?.questions ?? 0} questions</span>
                                     <span className="flex items-center gap-1 rounded-md bg-slate-100 dark:bg-zinc-800/70 px-2 py-1"><Clock className="h-3 w-3" />{t.durationMin} min</span>
                                 </div>
-                                <div className="mt-5">
+                                {(availability !== "ended" || t.attempt) && <div className="mt-5">
                                     <Button
                                         className="w-full"
-                                    variant={(t.attempt?.status === "in_progress" && availability !== "ended") || !t.attempt ? "default" : "outline"}
+                                        variant={(t.attempt?.status === "in_progress" && availability !== "ended") || !t.attempt ? "default" : "outline"}
                                         disabled={attemptLoading || (!t.attempt && availability !== "available")}
                                         onClick={() => act(t, availability)}
                                     >
@@ -116,7 +121,7 @@ export default function StudentTests() {
                                             ? availability === "upcoming"
                                                 ? "Not available yet"
                                                 : availability === "ended"
-                                                    ? "Window ended — no result"
+                                                    ? "View Result"
                                                     : "Start Test"
                                             : t.attempt.status === "in_progress"
                                                 ? availability === "ended" ? "View Result" : "Resume Test"
@@ -126,7 +131,7 @@ export default function StudentTests() {
                                                         ? "Terminated — View Details"
                                                         : "View Result"}
                                     </Button>
-                                </div>
+                                </div>}
                             </CardContent>
                         </Card>
                         );
