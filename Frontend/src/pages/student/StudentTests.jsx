@@ -28,9 +28,19 @@ export default function StudentTests() {
         return () => window.clearInterval(timer);
     }, []);
 
-    const act = async (t) => {
+    const act = async (t, availability) => {
         const status = t.attempt?.status;
-        if (status === "in_progress" || status === "flagged" || status === "disqualified") {
+        if (t.attempt && availability === "ended" && status !== "flagged") {
+            setAttemptLoading(true);
+            try {
+                const res = await api.tests.result(t.attempt.id);
+                setSelectedAttempt(res);
+            } catch (e) {
+                alert("Failed to load attempt result: " + e.message);
+            } finally {
+                setAttemptLoading(false);
+            }
+        } else if (status === "in_progress" || status === "flagged" || status === "disqualified") {
             // In-progress resumes; flagged/disqualified open the locked /
             // terminated screen, which explains that staff must reset it.
             navigate(`/student/take/${t.attempt.id}`);
@@ -100,19 +110,19 @@ export default function StudentTests() {
                                         className="w-full"
                                     variant={(t.attempt?.status === "in_progress" && availability !== "ended") || !t.attempt ? "default" : "outline"}
                                         disabled={attemptLoading || (!t.attempt && availability !== "available")}
-                                        onClick={() => act(t)}
+                                        onClick={() => act(t, availability)}
                                     >
                                         {!t.attempt
                                             ? availability === "upcoming"
                                                 ? "Not available yet"
                                                 : availability === "ended"
-                                                    ? "Test window ended"
+                                                    ? "Window ended — no result"
                                                     : "Start Test"
                                             : t.attempt.status === "in_progress"
                                                 ? availability === "ended" ? "View Result" : "Resume Test"
                                                 : t.attempt.status === "flagged"
                                                     ? "Locked — Awaiting Staff Reset"
-                                                    : t.attempt.status === "disqualified"
+                                                    : t.attempt.status === "disqualified" && availability !== "ended"
                                                         ? "Terminated — View Details"
                                                         : "View Result"}
                                     </Button>

@@ -1,11 +1,10 @@
 import { useState, useEffect, useCallback } from "react";
-import { Plus, Search, Upload, Trash2, FileText, Users, ChevronDown, ChevronRight, AlertTriangle, GraduationCap, Mail, Phone, Download, Pencil } from "lucide-react";
+import { Plus, Search, Upload, Trash2, FileText, Users, AlertTriangle, GraduationCap, Mail, Phone, Download, Pencil, Layers3 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { FileInput } from "@/components/ui/file-input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { PageHeader, EmptyState, LoadingState } from "@/components/portal/primitives";
@@ -19,7 +18,6 @@ export default function StaffStudents() {
     const [rows, setRows] = useState([]);
     const [batches, setBatches] = useState([]);
     const [loading, setLoading] = useState(true);
-    const [batch, setBatch] = useState("");
     const [search, setSearch] = useState("");
     const [addOpen, setAddOpen] = useState(false);
     const [importOpen, setImportOpen] = useState(false);
@@ -31,18 +29,18 @@ export default function StaffStudents() {
     const [newStudent, setNewStudent] = useState({ regNo: "", rollNo: "", name: "", email: "", mobile: "", cgpa: "", batch: "" });
 
     // Grouping & individual detail popup state
-    const [expandedBatches, setExpandedBatches] = useState({});
+    const [selectedBatch, setSelectedBatch] = useState(null);
     const [selectedStudentReport, setSelectedStudentReport] = useState(null);
     const [reportLoading, setReportLoading] = useState(false);
     const [studentToEdit, setStudentToEdit] = useState(null);
 
     const load = useCallback(() => {
         setLoading(true);
-        api.reports.students({ batch: batch || undefined, search: search || undefined })
+        api.reports.students({ search: search || undefined })
             .then(setRows)
             .catch(() => {})
             .finally(() => setLoading(false));
-    }, [batch, search]);
+    }, [search]);
 
     useEffect(() => {
         const t = setTimeout(load, search ? 400 : 0);
@@ -54,10 +52,6 @@ export default function StaffStudents() {
             setBatches(bList);
         }).catch(() => {});
     }, []);
-
-    useEffect(() => {
-        if (batch) setExpandedBatches({ [batch]: true });
-    }, [batch]);
 
     const openStudentReport = async (s) => {
         setReportLoading(true);
@@ -71,14 +65,9 @@ export default function StaffStudents() {
         }
     };
 
-    const toggleBatch = (b) => {
-        setExpandedBatches(x => ({ ...x, [b]: !x[b] }));
-    };
-
     const exportStudents = async () => {
         try {
-            const exportBatch = batch ? `-${batch.replace(/[^a-z0-9-]+/gi, "-")}` : "";
-            await downloadExcel(`Student-Records${exportBatch}`, rows.map((student) => ({
+            await downloadExcel("Student-Records", rows.map((student) => ({
                 Name: student.name || "",
                 "Registration Number": student.regNo || "",
                 "Roll Number": student.rollNo || "",
@@ -147,8 +136,8 @@ export default function StaffStudents() {
             setBatchDeleteConfirmation("");
             const remainingBatches = await api.students.batches();
             setBatches(remainingBatches);
-            if (batch === batchToDelete) setBatch("");
-            else load();
+            if (selectedBatch === batchToDelete) setSelectedBatch(null);
+            load();
         } catch (e) {
             alert(e.message);
         } finally {
@@ -196,126 +185,89 @@ export default function StaffStudents() {
                             <Download className="h-4 w-4" /> Export Excel
                         </Button>
                     </div>
-                    <div className="flex flex-wrap items-center gap-2" aria-label="Filter students by batch">
-                        <Button type="button" size="sm" variant={batch === "" ? "default" : "outline"} aria-pressed={batch === ""} onClick={() => setBatch("")}>
-                            All batches
-                        </Button>
-                        {batches.map((item) => (
-                            <Button
-                                key={item}
-                                type="button"
-                                size="sm"
-                                variant={batch === item ? "default" : "outline"}
-                                aria-pressed={batch === item}
-                                onClick={() => setBatch(item)}
-                            >
-                                {item}
-                            </Button>
-                        ))}
-                        {Object.keys(grouped).length > 1 && (
-                            <Button
-                                type="button"
-                                size="sm"
-                                variant="ghost"
-                                className="ml-auto"
-                                onClick={() => {
-                                    const expandAll = !Object.keys(grouped).every((key) => expandedBatches[key]);
-                                    setExpandedBatches(Object.fromEntries(Object.keys(grouped).map((key) => [key, expandAll])));
-                                }}
-                            >
-                                {Object.keys(grouped).every((key) => expandedBatches[key]) ? "Collapse all" : "Expand all"}
-                            </Button>
-                        )}
-                    </div>
                 </CardHeader>
-                <CardContent className="space-y-6">
+                <CardContent>
                     {loading ? (
                         <LoadingState label="Loading students" className="py-10" />
                     ) : rows.length === 0 ? (
                         <EmptyState icon={Users} title="No students found" description="Add students manually or import them from an Excel file." />
                     ) : (
-                        Object.keys(grouped).map((batchKey) => {
-                            const isExpanded = !!expandedBatches[batchKey];
-                            const studentList = grouped[batchKey];
-
-                            return (
-                                <div key={batchKey} className="rounded-xl border border-slate-200 dark:border-zinc-800/60 bg-white/50 dark:bg-zinc-900/10 overflow-hidden shadow-sm">
-                                    {/* Collapsible header section */}
-                                    <button
-                                        type="button"
-                                        aria-expanded={isExpanded}
-                                        onClick={() => toggleBatch(batchKey)}
-                                        className="flex w-full items-center justify-between px-4 py-3 bg-slate-50 text-left transition-colors hover:bg-slate-100 dark:bg-zinc-950/60 dark:hover:bg-zinc-800/50 border-b border-slate-200 dark:border-zinc-800"
-                                    >
-                                        <div className="flex items-center gap-2">
-                                            {isExpanded ? <ChevronDown className="h-4 w-4 text-slate-500" /> : <ChevronRight className="h-4 w-4 text-slate-500" />}
-                                            <span className="font-bold text-sm text-slate-800 dark:text-zinc-200">
-                                                {batchKey === "No Batch" ? "Unassigned Batch" : `Batch ${batchKey}`}
+                        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                            {Object.entries(grouped).map(([batchKey, studentList]) => (
+                                <button
+                                    key={batchKey}
+                                    type="button"
+                                    onClick={() => setSelectedBatch(batchKey)}
+                                    className="group flex min-h-24 items-center justify-between gap-4 rounded-xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-violet-300 hover:bg-violet-50/50 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 dark:border-zinc-800 dark:bg-zinc-900/60 dark:hover:border-violet-800 dark:hover:bg-violet-950/20"
+                                >
+                                    <span className="flex min-w-0 items-center gap-3">
+                                        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-violet-100 text-violet-700 dark:bg-violet-500/15 dark:text-violet-300">
+                                            <Layers3 className="h-5 w-5" />
+                                        </span>
+                                        <span className="min-w-0">
+                                            <span className="block truncate font-semibold text-slate-900 dark:text-zinc-100">
+                                                {batchKey === "No Batch" ? "Unassigned Batch" : batchKey}
                                             </span>
-                                            <span className="rounded-full bg-slate-200/60 dark:bg-zinc-800 px-2.5 py-0.5 text-xs text-slate-650 dark:text-zinc-400 font-semibold">
-                                                {studentList.length} student{studentList.length !== 1 ? 's' : ''}
+                                            <span className="mt-1 block text-sm text-slate-500 dark:text-zinc-400">
+                                                {studentList.length} student{studentList.length !== 1 ? "s" : ""}
                                             </span>
-                                        </div>
-                                    </button>
-
-                                    {/* Expanded table */}
-                                    {isExpanded && (
-                                        <div className="overflow-x-auto">
-                                        <Table>
-                                            <TableHeader>
-                                                <TableRow>
-                                                    <TableHead>Student</TableHead>
-                                                    <TableHead>CGPA</TableHead>
-                                                    <TableHead>Resume</TableHead>
-                                                    <TableHead>Aptitude</TableHead>
-                                                    <TableHead>Coding</TableHead>
-                                                    <TableHead>Interviews</TableHead>
-                                                    <TableHead className="text-right">Actions</TableHead>
-                                                </TableRow>
-                                            </TableHeader>
-                                            <TableBody>
-                                                {studentList.map((s) => (
-                                                    <TableRow key={s.regNo} className="hover:bg-slate-50/40 dark:hover:bg-zinc-800/10 transition-colors">
-                                                        <TableCell>
-                                                            <p onClick={() => openStudentReport(s)} className="font-semibold text-slate-800 dark:text-zinc-150 cursor-pointer hover:text-violet-650 dark:hover:text-violet-400 hover:underline">
-                                                                {s.name}
-                                                            </p>
-                                                            <p className="text-xs text-slate-500">{s.regNo}{s.rollNo ? ` · Roll ${s.rollNo}` : ""}</p>
-                                                        </TableCell>
-                                                        <TableCell className="text-sm text-slate-700 dark:text-zinc-300 font-medium">{s.cgpa ?? "—"}</TableCell>
-                                                        <TableCell>
-                                                            {s.hasResume ? (
-                                                                <span className="flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400 font-semibold"><FileText className="h-3.5 w-3.5" /> {s.topCategory || "Parsed"}</span>
-                                                            ) : (
-                                                                <span className="text-xs text-slate-500 dark:text-zinc-550">None</span>
-                                                            )}
-                                                        </TableCell>
-                                                        <TableCell className="text-sm text-slate-700 dark:text-zinc-300">
-                                                            {s.aptitudeCount ? `${s.lastAptitude?.percentage ?? s.aptitudeAverage}% (${s.aptitudeCount})` : "—"}
-                                                        </TableCell>
-                                                        <TableCell className="text-sm text-slate-700 dark:text-zinc-300">
-                                                            {s.codingCount ? `${s.lastCoding?.percentage ?? s.codingAverage}% (${s.codingCount})` : "—"}
-                                                        </TableCell>
-                                                        <TableCell className="text-sm text-slate-700 dark:text-zinc-300">{s.interviewCount || "—"}</TableCell>
-                                                        <TableCell className="text-right">
-                                                            <div className="flex items-center justify-end gap-1">
-                                                                <Button variant="ghost" size="sm" onClick={() => setStudentToEdit(s)}><Pencil className="h-4 w-4" /> Edit</Button>
-                                                                <Button variant="ghost" size="sm" onClick={() => openStudentReport(s)}><Users className="h-4 w-4" /> Monitor</Button>
-                                                                <Button variant="ghost" size="icon" className="h-8 w-8 text-red-650 hover:text-red-500 dark:text-red-400 dark:hover:text-red-300" onClick={() => remove(s.regNo)}><Trash2 className="h-4 w-4" /></Button>
-                                                            </div>
-                                                        </TableCell>
-                                                    </TableRow>
-                                                ))}
-                                            </TableBody>
-                                        </Table>
-                                        </div>
-                                    )}
-                                </div>
-                            );
-                        })
+                                        </span>
+                                    </span>
+                                    <span className="shrink-0 text-sm font-medium text-violet-700 group-hover:underline dark:text-violet-300">View students</span>
+                                </button>
+                            ))}
+                        </div>
                     )}
                 </CardContent>
             </Card>
+
+            <Dialog open={selectedBatch !== null} onOpenChange={(open) => { if (!open) setSelectedBatch(null); }}>
+                <DialogContent className="max-h-[90vh] max-w-6xl overflow-y-auto">
+                    <DialogHeader>
+                        <DialogTitle>{selectedBatch === "No Batch" ? "Unassigned Batch" : `Batch ${selectedBatch}`}</DialogTitle>
+                        <DialogDescription>
+                            {selectedBatch ? `${grouped[selectedBatch]?.length || 0} student${grouped[selectedBatch]?.length === 1 ? "" : "s"} in this batch` : "Students in this batch"}
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="overflow-x-auto">
+                        <Table>
+                            <TableHeader>
+                                <TableRow>
+                                    <TableHead>Student</TableHead>
+                                    <TableHead>CGPA</TableHead>
+                                    <TableHead>Resume</TableHead>
+                                    <TableHead>Aptitude</TableHead>
+                                    <TableHead>Coding</TableHead>
+                                    <TableHead>Interviews</TableHead>
+                                    <TableHead className="text-right">Actions</TableHead>
+                                </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                                {(grouped[selectedBatch] || []).map((s) => (
+                                    <TableRow key={s.regNo}>
+                                        <TableCell>
+                                            <p className="font-semibold text-slate-800 dark:text-zinc-100">{s.name}</p>
+                                            <p className="text-xs text-slate-500">{s.regNo}{s.rollNo ? ` · Roll ${s.rollNo}` : ""}</p>
+                                        </TableCell>
+                                        <TableCell>{s.cgpa ?? "—"}</TableCell>
+                                        <TableCell>{s.hasResume ? s.topCategory || "Parsed" : "None"}</TableCell>
+                                        <TableCell>{s.aptitudeCount ? `${s.lastAptitude?.percentage ?? s.aptitudeAverage}% (${s.aptitudeCount})` : "—"}</TableCell>
+                                        <TableCell>{s.codingCount ? `${s.lastCoding?.percentage ?? s.codingAverage}% (${s.codingCount})` : "—"}</TableCell>
+                                        <TableCell>{s.interviewCount || "—"}</TableCell>
+                                        <TableCell className="text-right">
+                                            <div className="flex justify-end gap-1">
+                                                <Button variant="ghost" size="sm" onClick={() => setStudentToEdit(s)}><Pencil className="h-4 w-4" /> Edit</Button>
+                                                <Button variant="ghost" size="sm" onClick={() => openStudentReport(s)}><Users className="h-4 w-4" /> Monitor</Button>
+                                                <Button variant="ghost" size="icon" className="h-8 w-8 text-red-600 hover:text-red-500 dark:text-red-400" onClick={() => remove(s.regNo)} aria-label={`Delete ${s.name}`}><Trash2 className="h-4 w-4" /></Button>
+                                            </div>
+                                        </TableCell>
+                                    </TableRow>
+                                ))}
+                            </TableBody>
+                        </Table>
+                    </div>
+                </DialogContent>
+            </Dialog>
 
             <StudentEditDialog
                 student={studentToEdit}
@@ -394,14 +346,22 @@ export default function StaffStudents() {
                         </DialogDescription>
                     </DialogHeader>
                     <div className="space-y-3">
-                        <div className="space-y-1.5">
-                            <Label htmlFor="delete-student-batch">Batch to delete</Label>
-                            <Select value={batchToDelete} onValueChange={(value) => { setBatchToDelete(value); setBatchDeleteConfirmation(""); }}>
-                                <SelectTrigger id="delete-student-batch"><SelectValue placeholder="Select a batch" /></SelectTrigger>
-                                <SelectContent>
-                                    {batches.map((b) => <SelectItem key={b} value={b}>{b}</SelectItem>)}
-                                </SelectContent>
-                            </Select>
+                        <div className="space-y-2">
+                            <Label>Batch to delete</Label>
+                            <div className="grid max-h-48 gap-2 overflow-y-auto sm:grid-cols-2">
+                                {batches.map((item) => (
+                                    <Button
+                                        key={item}
+                                        type="button"
+                                        variant={batchToDelete === item ? "default" : "outline"}
+                                        aria-pressed={batchToDelete === item}
+                                        onClick={() => { setBatchToDelete(item); setBatchDeleteConfirmation(""); }}
+                                        className="justify-start"
+                                    >
+                                        {item}
+                                    </Button>
+                                ))}
+                            </div>
                         </div>
                         {batchToDelete && (
                             <div className="space-y-1.5">

@@ -273,7 +273,6 @@ export function Header({ breadcrumbs = [] }) {
                     </span>
                     <span className="hidden sm:block">
                         <span className="block text-sm font-bold leading-tight text-slate-900 dark:text-white">PrepGenix</span>
-                        <span className="block text-[10px] capitalize text-slate-500 dark:text-zinc-400">{user?.role || "Portal"}</span>
                     </span>
                 </Link>
 
@@ -309,7 +308,7 @@ export function Header({ breadcrumbs = [] }) {
                                     layout
                                     transition={{ type: "spring", stiffness: 420, damping: 25, mass: 0.6 }}
                                     className={cn(
-                                        "group relative flex items-center justify-center gap-2 rounded-full p-2.5 text-sm font-medium leading-none transition-colors duration-200 2xl:px-3",
+                                        "group relative flex items-center justify-center gap-2 rounded-full px-2 py-2.5 text-xs font-medium leading-none transition-colors duration-200 sm:px-2.5 sm:text-sm 2xl:px-3",
                                         active ? "text-violet-800 dark:text-violet-100" : "text-slate-600 hover:text-slate-950 dark:text-zinc-400 dark:hover:text-zinc-100",
                                         draggingHref === item.href && "z-20 scale-110 -translate-y-1 cursor-grabbing",
                                         draggingHref && draggingHref !== item.href && "cursor-grab"
@@ -323,7 +322,7 @@ export function Header({ breadcrumbs = [] }) {
                                         />
                                     )}
                                     <Icon className="relative z-10 h-[18px] w-[18px] shrink-0 transition-transform duration-300 group-hover:-translate-y-0.5" />
-                                    <span className="relative z-10 hidden whitespace-nowrap 2xl:inline">{item.label}</span>
+                                    <span className="relative z-10 whitespace-nowrap">{item.label}</span>
                                 </motion.span>
                             </Link>
                         );

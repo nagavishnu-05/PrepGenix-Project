@@ -157,7 +157,11 @@ export default function StudentInterviews() {
                                             </p>
                                         )}
                                         {!resumable && availability === "ended" && (
-                                            <p className="text-xs text-red-600 dark:text-red-400">The interview availability window has ended.</p>
+                                            <p className="text-xs text-slate-600 dark:text-zinc-400">
+                                                {completed
+                                                    ? "The interview window ended. You can view your saved feedback, but cannot restart this interview."
+                                                    : "The interview window ended without a submitted response, so there is no result to view."}
+                                            </p>
                                         )}
                                         {interview.interviewer && (
                                             <p className="flex items-center gap-2">
@@ -199,7 +203,7 @@ export default function StudentInterviews() {
                                     {completed && (
                                         <Button asChild className="mt-3 w-full" variant="outline">
                                             <Link to={`/student/interview/${interview.id}`}>
-                                                View interview feedback
+                                                View interview result
                                                 <ArrowRight className="h-4 w-4" />
                                             </Link>
                                         </Button>
