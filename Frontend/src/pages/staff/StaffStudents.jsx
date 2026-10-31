@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { Plus, Search, Upload, Trash2, FileText, Users, ChevronDown, ChevronRight, AlertTriangle, GraduationCap, Mail, Phone, Download } from "lucide-react";
+import { Plus, Search, Upload, Trash2, FileText, Users, ChevronDown, ChevronRight, AlertTriangle, GraduationCap, Mail, Phone, Download, Pencil } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -13,6 +13,7 @@ import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { downloadExcel } from "@/lib/excel-export";
 import { getStudentSection } from "@/lib/student-section";
+import { StudentEditDialog } from "@/components/portal/StudentEditDialog";
 
 export default function StaffStudents() {
     const [rows, setRows] = useState([]);
@@ -33,6 +34,7 @@ export default function StaffStudents() {
     const [expandedBatches, setExpandedBatches] = useState({});
     const [selectedStudentReport, setSelectedStudentReport] = useState(null);
     const [reportLoading, setReportLoading] = useState(false);
+    const [studentToEdit, setStudentToEdit] = useState(null);
 
     const load = useCallback(() => {
         setLoading(true);
@@ -297,6 +299,7 @@ export default function StaffStudents() {
                                                         <TableCell className="text-sm text-slate-700 dark:text-zinc-300">{s.interviewCount || "—"}</TableCell>
                                                         <TableCell className="text-right">
                                                             <div className="flex items-center justify-end gap-1">
+                                                                <Button variant="ghost" size="sm" onClick={() => setStudentToEdit(s)}><Pencil className="h-4 w-4" /> Edit</Button>
                                                                 <Button variant="ghost" size="sm" onClick={() => openStudentReport(s)}><Users className="h-4 w-4" /> Monitor</Button>
                                                                 <Button variant="ghost" size="icon" className="h-8 w-8 text-red-650 hover:text-red-500 dark:text-red-400 dark:hover:text-red-300" onClick={() => remove(s.regNo)}><Trash2 className="h-4 w-4" /></Button>
                                                             </div>
@@ -313,6 +316,14 @@ export default function StaffStudents() {
                     )}
                 </CardContent>
             </Card>
+
+            <StudentEditDialog
+                student={studentToEdit}
+                onClose={() => setStudentToEdit(null)}
+                onSaved={(updatedStudent) => {
+                    setRows((current) => current.map((row) => row.regNo === updatedStudent.regNo ? { ...row, ...updatedStudent } : row));
+                }}
+            />
 
             <Dialog open={addOpen} onOpenChange={setAddOpen}>
                 <DialogContent>

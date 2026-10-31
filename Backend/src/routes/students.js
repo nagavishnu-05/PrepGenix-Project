@@ -135,15 +135,15 @@ router.put("/:regNo", authenticate, async (req, res) => {
   try {
     if (!STAFF.includes(req.user.role)) return res.status(403).json({ error: "Insufficient permissions" });
     const regNo = req.params.regNo;
-    const { name, email, mobile, tenth, twelfth, cgpa, batch } = req.body;
+    const { name, email, mobile, rollNo, tenth, twelfth, cgpa } = req.body;
     const set = { updatedAt: new Date() };
     if (name !== undefined) set.name = name;
     if (email !== undefined) set.email = email;
     if (mobile !== undefined) set.mobile = mobile;
+    if (rollNo !== undefined) set.rollNo = rollNo;
     if (tenth !== undefined) set.tenth = tenth;
     if (twelfth !== undefined) set.twelfth = twelfth;
     if (cgpa !== undefined) set.cgpa = cgpa;
-    if (batch !== undefined) set.batch = batch;
     const student = await col("students").findOneAndUpdate(
       { regNo },
       { $set: set, $unset: { department: "" } },

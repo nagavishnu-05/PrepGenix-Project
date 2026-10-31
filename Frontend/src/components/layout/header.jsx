@@ -1,4 +1,4 @@
-import { AnimatePresence, motion } from "framer-motion";
+import { motion } from "framer-motion";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import {
@@ -13,7 +13,6 @@ import {
     GraduationCap,
     LayoutDashboard,
     LogOut,
-    Menu,
     Moon,
     RadioTower,
     Settings,
@@ -22,7 +21,6 @@ import {
     Trophy,
     Users,
     Video,
-    X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/store/auth-store";
@@ -72,7 +70,6 @@ export function Header({ breadcrumbs = [] }) {
     const location = useLocation();
     const { user, logout } = useAuthStore();
     const { theme, toggleTheme } = useUIStore();
-    const [mobileNavOpen, setMobileNavOpen] = useState(false);
     const [navOrder, setNavOrder] = useState([]);
     const [draggingHref, setDraggingHref] = useState(null);
     const longPressTimer = useRef(null);
@@ -207,10 +204,6 @@ export function Header({ breadcrumbs = [] }) {
         }
     }, [user?.role]);
 
-    useEffect(() => {
-        setMobileNavOpen(false);
-    }, [location.pathname]);
-
     useEffect(() => () => window.clearTimeout(longPressTimer.current), []);
 
     const startNavPress = (href) => {
@@ -284,76 +277,7 @@ export function Header({ breadcrumbs = [] }) {
                     </span>
                 </Link>
 
-                <nav
-                    aria-label="Main navigation"
-                    onClickCapture={(event) => {
-                        if (suppressNavClick.current) {
-                            event.preventDefault();
-                            event.stopPropagation();
-                            suppressNavClick.current = false;
-                        }
-                    }}
-                    onPointerLeave={() => {
-                        if (!longPressActive.current) window.clearTimeout(longPressTimer.current);
-                    }}
-                    className="pointer-events-auto hidden min-w-0 items-center justify-center gap-1 justify-self-center 2xl:flex"
-                >
-                    {navItems.map((item) => {
-                        const active = item.end ? location.pathname === item.href : location.pathname.startsWith(item.href);
-                        const Icon = item.icon;
-                        return (
-                            <Link
-                                key={item.href}
-                                to={item.href}
-                                data-nav-href={item.href}
-                                onPointerDown={() => startNavPress(item.href)}
-                                aria-label={item.label}
-                                aria-current={active ? "page" : undefined}
-                                title={`Hold and drag to rearrange ${item.label}`}
-                                className="flex shrink-0 touch-none"
-                            >
-                                <motion.span
-                                    layout
-                                    transition={{ type: "spring", stiffness: 420, damping: 25, mass: 0.6 }}
-                                    className={cn(
-                                        "group relative flex items-center justify-center gap-2 rounded-full px-2.5 py-2.5 text-sm font-medium leading-none transition-colors duration-200",
-                                        active ? "text-violet-800 dark:text-violet-100" : "text-slate-600 hover:text-slate-950 dark:text-zinc-400 dark:hover:text-zinc-100",
-                                        draggingHref === item.href && "z-20 scale-110 -translate-y-1 cursor-grabbing",
-                                        draggingHref && draggingHref !== item.href && "cursor-grab"
-                                    )}
-                                >
-                                    {active && (
-                                        <motion.span
-                                            layoutId="portal-active-tab"
-                                            transition={{ type: "spring", stiffness: 420, damping: 23, mass: 0.5 }}
-                                            className="absolute inset-0 rounded-full bg-violet-100/75 shadow-[0_2px_8px_-4px_rgba(109,40,217,0.28),inset_0_1px_0_rgba(255,255,255,0.7)] ring-1 ring-violet-200/70 dark:bg-white/15 dark:shadow-[0_3px_12px_-5px_rgba(139,92,246,0.4),inset_0_1px_1px_rgba(255,255,255,0.2)] dark:ring-white/10"
-                                        />
-                                    )}
-                                    <Icon className="relative z-10 h-[18px] w-[18px] shrink-0 transition-transform duration-300 group-hover:-translate-y-0.5" />
-                                    <span className="relative z-10 whitespace-nowrap">{item.label}</span>
-                                </motion.span>
-                            </Link>
-                        );
-                    })}
-                </nav>
-
                 <div className="pointer-events-auto flex shrink-0 items-center gap-1 justify-self-end sm:gap-2">
-                <button
-                    type="button"
-                    aria-label={mobileNavOpen ? "Close navigation menu" : "Open navigation menu"}
-                    aria-expanded={mobileNavOpen}
-                    onClick={() => setMobileNavOpen((open) => !open)}
-                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-slate-600 transition-colors hover:bg-white/60 dark:text-zinc-300 dark:hover:bg-white/10 2xl:hidden"
-                >
-                    <motion.span
-                        key={mobileNavOpen ? "close" : "menu"}
-                        initial={{ opacity: 0, rotate: -45, scale: 0.8 }}
-                        animate={{ opacity: 1, rotate: 0, scale: 1 }}
-                        transition={{ type: "spring", stiffness: 500, damping: 28 }}
-                    >
-                        {mobileNavOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
-                    </motion.span>
-                </button>
                 {/* Theme Switch Toggle Button */}
                 <button
                     type="button"
@@ -424,17 +348,18 @@ export function Header({ breadcrumbs = [] }) {
                 {/* User Menu Dropdown */}
                 <DropdownMenu>
                     <DropdownMenuTrigger asChild>
-                        <button className="flex items-center gap-2.5 rounded-xl py-1.5 pl-1.5 pr-3 transition-colors hover:bg-slate-100 dark:hover:bg-zinc-800/60">
-                            <Avatar className="h-8 w-8">
+                        <button
+                            type="button"
+                            aria-label="Open profile menu"
+                            title="Profile"
+                            className="flex h-10 w-10 items-center justify-center rounded-full transition-colors hover:bg-slate-100 dark:hover:bg-zinc-800/60"
+                        >
+                            <Avatar className="h-9 w-9">
                                 {getAvatarImage(user?.avatar) && <AvatarImage src={getAvatarImage(user?.avatar)} alt="" />}
                                 <AvatarFallback className={cn("bg-gradient-to-br text-[10px] font-bold text-white", ROLE_COLORS[user?.role || "admin"])}>
                                     {userInitials}
                                 </AvatarFallback>
                             </Avatar>
-                            <div className="hidden text-left md:block">
-                                <p className="text-sm font-medium text-slate-800 dark:text-zinc-200">{user?.name || "Guest"}</p>
-                                <p className="text-[11px] capitalize text-slate-500 dark:text-zinc-500">{user?.role || ""}</p>
-                            </div>
                         </button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end" className="w-56">
@@ -459,39 +384,58 @@ export function Header({ breadcrumbs = [] }) {
             </div>
             </div>
 
-            <AnimatePresence initial={false}>
-                {mobileNavOpen && (
-                    <motion.nav
-                        aria-label="Mobile navigation"
-                        initial={{ opacity: 0, height: 0 }}
-                        animate={{ opacity: 1, height: "auto" }}
-                        exit={{ opacity: 0, height: 0 }}
-                        transition={{ type: "spring", stiffness: 360, damping: 32 }}
-                        className="pointer-events-auto relative grid w-full grid-cols-2 gap-1 border-t border-slate-200/70 bg-white/50 p-3 dark:border-zinc-800/60 dark:bg-zinc-950/50 2xl:hidden"
-                    >
-                        {navItems.map((item) => {
-                            const active = item.end ? location.pathname === item.href : location.pathname.startsWith(item.href);
-                            const Icon = item.icon;
-                            return (
-                                <Link
-                                    key={item.href}
-                                    to={item.href}
-                                    aria-current={active ? "page" : undefined}
-                                    className={cn(
-                                        "flex min-w-0 items-center gap-2 rounded-xl px-3 py-2.5 text-sm font-medium transition-all duration-200 active:scale-[0.98]",
-                                        active
-                                            ? "bg-violet-600/10 text-violet-700 dark:bg-violet-500/15 dark:text-violet-300"
-                                            : "text-slate-600 hover:bg-slate-100/80 hover:text-slate-900 dark:text-zinc-400 dark:hover:bg-zinc-800/70 dark:hover:text-zinc-100"
-                                    )}
-                                >
-                                    <Icon className="h-4 w-4 shrink-0" />
-                                    <span className="truncate">{item.label}</span>
-                                </Link>
-                            );
-                        })}
-                    </motion.nav>
-                )}
-            </AnimatePresence>
+            <nav
+                aria-label="Main navigation"
+                onClickCapture={(event) => {
+                    if (suppressNavClick.current) {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        suppressNavClick.current = false;
+                    }
+                }}
+                onPointerLeave={() => {
+                    if (!longPressActive.current) window.clearTimeout(longPressTimer.current);
+                }}
+                className="pointer-events-auto grid w-full grid-cols-2 gap-1 border-t border-slate-200/70 p-2 dark:border-zinc-800/60 sm:flex sm:flex-wrap sm:justify-center 2xl:flex-nowrap"
+            >
+                {navItems.map((item) => {
+                    const active = item.end ? location.pathname === item.href : location.pathname.startsWith(item.href);
+                    const Icon = item.icon;
+                    return (
+                        <Link
+                            key={item.href}
+                            to={item.href}
+                            data-nav-href={item.href}
+                            onPointerDown={() => startNavPress(item.href)}
+                            aria-label={item.label}
+                            aria-current={active ? "page" : undefined}
+                            title={`Hold and drag to rearrange ${item.label}`}
+                            className="flex min-w-0 touch-manipulation sm:flex-none 2xl:touch-none"
+                        >
+                            <motion.span
+                                layout
+                                transition={{ type: "spring", stiffness: 420, damping: 25, mass: 0.6 }}
+                                className={cn(
+                                    "group relative flex w-full items-center justify-center gap-2 rounded-full px-2.5 py-2.5 text-sm font-medium leading-none transition-colors duration-200",
+                                    active ? "text-violet-800 dark:text-violet-100" : "text-slate-600 hover:text-slate-950 dark:text-zinc-400 dark:hover:text-zinc-100",
+                                    draggingHref === item.href && "z-20 scale-110 -translate-y-1 cursor-grabbing",
+                                    draggingHref && draggingHref !== item.href && "cursor-grab"
+                                )}
+                            >
+                                {active && (
+                                    <motion.span
+                                        layoutId="portal-active-tab"
+                                        transition={{ type: "spring", stiffness: 420, damping: 23, mass: 0.5 }}
+                                        className="absolute inset-0 rounded-full bg-violet-100/75 shadow-[0_2px_8px_-4px_rgba(109,40,217,0.28),inset_0_1px_0_rgba(255,255,255,0.7)] ring-1 ring-violet-200/70 dark:bg-white/15 dark:shadow-[0_3px_12px_-5px_rgba(139,92,246,0.4),inset_0_1px_1px_rgba(255,255,255,0.2)] dark:ring-white/10"
+                                    />
+                                )}
+                                <Icon className="relative z-10 h-[18px] w-[18px] shrink-0 transition-transform duration-300 group-hover:-translate-y-0.5" />
+                                <span className="relative z-10 whitespace-nowrap">{item.label}</span>
+                            </motion.span>
+                        </Link>
+                    );
+                })}
+            </nav>
 
             {breadcrumbs.length > 0 && (
                 <div className="flex items-center gap-1 border-t border-slate-200/70 px-5 py-2 text-xs text-slate-500 dark:border-zinc-800/60 dark:text-zinc-400">

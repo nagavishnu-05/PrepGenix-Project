@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { Search, Users, FileText, BrainCircuit, Download } from "lucide-react";
+import { Search, Users, FileText, BrainCircuit, Download, Pencil } from "lucide-react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -9,6 +9,7 @@ import { PageHeader, EmptyState, LoadingState } from "@/components/portal/primit
 import { api } from "@/lib/api";
 import { downloadExcel } from "@/lib/excel-export";
 import { getStudentSection } from "@/lib/student-section";
+import { StudentEditDialog } from "@/components/portal/StudentEditDialog";
 
 export default function PlacementStudents() {
     const [rows, setRows] = useState([]);
@@ -16,6 +17,7 @@ export default function PlacementStudents() {
     const [batch, setBatch] = useState("");
     const [search, setSearch] = useState("");
     const [cat, setCat] = useState("");
+    const [studentToEdit, setStudentToEdit] = useState(null);
 
     const load = useCallback(() => {
         setLoading(true);
@@ -97,6 +99,7 @@ export default function PlacementStudents() {
                                     <TableHead>Coding</TableHead>
                                     <TableHead>Interview</TableHead>
                                     <TableHead>Category</TableHead>
+                                    <TableHead className="text-right">Actions</TableHead>
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
@@ -121,6 +124,11 @@ export default function PlacementStudents() {
                                                 <BrainCircuit className="h-3.5 w-3.5 text-slate-400 dark:text-zinc-650" />
                                             )}
                                         </TableCell>
+                                        <TableCell className="text-right">
+                                            <Button variant="ghost" size="sm" onClick={() => setStudentToEdit(s)}>
+                                                <Pencil className="h-4 w-4" /> Edit
+                                            </Button>
+                                        </TableCell>
                                     </TableRow>
                                 ))}
                             </TableBody>
@@ -128,6 +136,14 @@ export default function PlacementStudents() {
                     )}
                 </CardContent>
             </Card>
+
+            <StudentEditDialog
+                student={studentToEdit}
+                onClose={() => setStudentToEdit(null)}
+                onSaved={(updatedStudent) => {
+                    setRows((current) => current.map((row) => row.regNo === updatedStudent.regNo ? { ...row, ...updatedStudent } : row));
+                }}
+            />
         </div>
     );
 }
