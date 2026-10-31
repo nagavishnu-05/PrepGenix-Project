@@ -337,12 +337,13 @@ export function Header({ breadcrumbs = [] }) {
                     })}
                 </nav>
 
+                <div className="pointer-events-auto flex shrink-0 items-center gap-1 justify-self-end sm:gap-2">
                 <button
                     type="button"
                     aria-label={mobileNavOpen ? "Close navigation menu" : "Open navigation menu"}
                     aria-expanded={mobileNavOpen}
                     onClick={() => setMobileNavOpen((open) => !open)}
-                    className="pointer-events-auto flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-slate-600 transition-colors hover:bg-white/60 dark:text-zinc-300 dark:hover:bg-white/10 2xl:hidden"
+                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-slate-600 transition-colors hover:bg-white/60 dark:text-zinc-300 dark:hover:bg-white/10 2xl:hidden"
                 >
                     <motion.span
                         key={mobileNavOpen ? "close" : "menu"}
@@ -353,8 +354,6 @@ export function Header({ breadcrumbs = [] }) {
                         {mobileNavOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
                     </motion.span>
                 </button>
-
-                <div className="pointer-events-auto flex shrink-0 items-center gap-1 sm:gap-2">
                 {/* Theme Switch Toggle Button */}
                 <button
                     type="button"
@@ -468,7 +467,7 @@ export function Header({ breadcrumbs = [] }) {
                         animate={{ opacity: 1, height: "auto" }}
                         exit={{ opacity: 0, height: 0 }}
                         transition={{ type: "spring", stiffness: 360, damping: 32 }}
-                        className="pointer-events-auto absolute left-1/2 top-full mt-2 grid w-[min(22rem,calc(100vw-2rem))] -translate-x-1/2 grid-cols-2 gap-1 rounded-2xl border border-white/70 bg-white/80 p-2.5 shadow-lg backdrop-blur-2xl dark:border-white/10 dark:bg-zinc-900/80 2xl:hidden"
+                        className="pointer-events-auto relative grid w-full grid-cols-2 gap-1 border-t border-slate-200/70 bg-white/50 p-3 dark:border-zinc-800/60 dark:bg-zinc-950/50 2xl:hidden"
                     >
                         {navItems.map((item) => {
                             const active = item.end ? location.pathname === item.href : location.pathname.startsWith(item.href);
