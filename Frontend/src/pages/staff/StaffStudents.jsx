@@ -20,6 +20,9 @@ export default function StaffStudents() {
     const [search, setSearch] = useState("");
     const [addOpen, setAddOpen] = useState(false);
     const [importOpen, setImportOpen] = useState(false);
+    const [batchDeleteOpen, setBatchDeleteOpen] = useState(false);
+    const [batchToDelete, setBatchToDelete] = useState("");
+    const [batchDeleteConfirmation, setBatchDeleteConfirmation] = useState("");
     const [file, setFile] = useState(null);
     const [busy, setBusy] = useState(false);
     const [newStudent, setNewStudent] = useState({ regNo: "", rollNo: "", name: "", email: "", mobile: "", cgpa: "", batch: "" });
@@ -103,9 +106,28 @@ export default function StaffStudents() {
     };
 
     const remove = async (regNo) => {
-        if (!confirm(`Delete student ${regNo}? This removes their account, attempts and resume.`)) return;
+        if (!confirm(`Delete student ${regNo}? This removes their account, performance and resume. Test and interview history will remain.`)) return;
         await api.students.remove(regNo).catch((e) => alert(e.message));
         load();
+    };
+
+    const deleteBatch = async () => {
+        if (!batchToDelete || batchDeleteConfirmation !== batchToDelete) return;
+        setBusy(true);
+        try {
+            const result = await api.students.removeBatch(batchToDelete);
+            alert(`Deleted ${result.studentsDeleted} students and ${result.accountsDeleted} student accounts from batch ${batchToDelete}.`);
+            setBatchDeleteOpen(false);
+            setBatchDeleteConfirmation("");
+            const remainingBatches = await api.students.batches();
+            setBatches(remainingBatches);
+            if (batch === batchToDelete) setBatch("");
+            else load();
+        } catch (e) {
+            alert(e.message);
+        } finally {
+            setBusy(false);
+        }
     };
 
     // Grouping rows locally
@@ -124,6 +146,14 @@ export default function StaffStudents() {
                 action={
                     <>
                         <Button variant="outline" onClick={() => setImportOpen(true)} className="cursor-pointer"><Upload className="h-4 w-4" /> Import Excel</Button>
+                        <Button
+                            variant="outline"
+                            onClick={() => { setBatchToDelete(""); setBatchDeleteConfirmation(""); setBatchDeleteOpen(true); }}
+                            disabled={!batches.length}
+                            className="cursor-pointer border-red-300 text-red-700 hover:bg-red-50 dark:border-red-900 dark:text-red-400 dark:hover:bg-red-950/40"
+                        >
+                            <Trash2 className="h-4 w-4" /> Delete Batch
+                        </Button>
                         <Button onClick={() => setAddOpen(true)} className="cursor-pointer"><Plus className="h-4 w-4" /> Add Student</Button>
                     </>
                 }
@@ -284,6 +314,50 @@ export default function StaffStudents() {
                             <Button variant="outline" onClick={() => setImportOpen(false)}>Cancel</Button>
                             <Button onClick={doImport} disabled={!file || busy}>{busy ? "Importing..." : "Import"}</Button>
                         </div>
+                    </div>
+                </DialogContent>
+            </Dialog>
+            <Dialog open={batchDeleteOpen} onOpenChange={setBatchDeleteOpen}>
+                <DialogContent>
+                    <DialogHeader>
+                        <DialogTitle className="flex items-center gap-2 text-red-700 dark:text-red-400">
+                            <AlertTriangle className="h-5 w-5" /> Delete an entire batch?
+                        </DialogTitle>
+                        <DialogDescription>
+                            This permanently deletes the selected batch&apos;s student profiles, student login accounts, performance records, and resumes. Test attempts, interviews, and violation history are preserved. Back up your database before continuing.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-3">
+                        <div className="space-y-1.5">
+                            <Label htmlFor="delete-student-batch">Batch to delete</Label>
+                            <Select value={batchToDelete} onValueChange={(value) => { setBatchToDelete(value); setBatchDeleteConfirmation(""); }}>
+                                <SelectTrigger id="delete-student-batch"><SelectValue placeholder="Select a batch" /></SelectTrigger>
+                                <SelectContent>
+                                    {batches.map((b) => <SelectItem key={b} value={b}>{b}</SelectItem>)}
+                                </SelectContent>
+                            </Select>
+                        </div>
+                        {batchToDelete && (
+                            <div className="space-y-1.5">
+                                <Label htmlFor="confirm-student-batch">Type <span className="font-bold">{batchToDelete}</span> to confirm</Label>
+                                <Input
+                                    id="confirm-student-batch"
+                                    value={batchDeleteConfirmation}
+                                    onChange={(event) => setBatchDeleteConfirmation(event.target.value)}
+                                    autoComplete="off"
+                                />
+                            </div>
+                        )}
+                    </div>
+                    <div className="flex justify-end gap-2">
+                        <Button variant="outline" onClick={() => setBatchDeleteOpen(false)} disabled={busy}>Cancel</Button>
+                        <Button
+                            onClick={deleteBatch}
+                            disabled={busy || !batchToDelete || batchDeleteConfirmation !== batchToDelete}
+                            className="bg-red-600 text-white hover:bg-red-700"
+                        >
+                            {busy ? "Deleting..." : "Delete batch"}
+                        </Button>
                     </div>
                 </DialogContent>
             </Dialog>

@@ -72,6 +72,7 @@ export const api = {
         create: (data) => request("/students", { method: "POST", body: data }),
         update: (regNo, data) => request(`/students/${regNo}`, { method: "PUT", body: data }),
         remove: (regNo) => request(`/students/${regNo}`, { method: "DELETE" }),
+        removeBatch: (batch) => request(`/students/batches/${encodeURIComponent(batch)}`, { method: "DELETE" }),
         importExcel: (file) => request("/students/import", { method: "POST", body: formData(file) }),
         performance: (regNo) => request(`/students/${regNo}/performance`),
     },

@@ -182,6 +182,43 @@ router.put("/:regNo/performance", authenticate, async (req, res) => {
   }
 });
 
+// DELETE /api/students/batches/:batchName  (staff/placement)
+router.delete("/batches/:batchName", authenticate, async (req, res) => {
+  try {
+    if (!STAFF.includes(req.user.role)) return res.status(403).json({ error: "Insufficient permissions" });
+    const batchName = req.params.batchName;
+    if (!batchName.trim()) return res.status(400).json({ error: "Batch name is required" });
+
+    const students = col("students");
+    const batchStudents = await students.find({ batch: batchName }, { projection: { regNo: 1 } }).toArray();
+    if (!batchStudents.length) return res.status(404).json({ error: "No students found for this batch" });
+
+    const regNos = [...new Set(batchStudents.map((student) => student.regNo).filter(Boolean))];
+    const deletions = [
+      students.deleteMany({ batch: batchName }),
+    ];
+    if (regNos.length) {
+      deletions.push(
+        col("users").deleteMany({ role: "student", username: { $in: regNos } }),
+        col("performances", "perf").deleteMany({ regNo: { $in: regNos } }),
+        col("resumes", "resume").deleteMany({ regNo: { $in: regNos } })
+      );
+    }
+
+    const [studentResult, userResult, performanceResult, resumeResult] = await Promise.all(deletions);
+    res.json({
+      message: `Batch ${batchName} deleted`,
+      studentsDeleted: studentResult.deletedCount,
+      accountsDeleted: userResult ? userResult.deletedCount : 0,
+      performancesDeleted: performanceResult ? performanceResult.deletedCount : 0,
+      resumesDeleted: resumeResult ? resumeResult.deletedCount : 0,
+    });
+  } catch (err) {
+    console.error("Failed to delete student batch:", err);
+    res.status(500).json({ error: "Failed to delete student batch" });
+  }
+});
+
 // DELETE /api/students/:regNo
 router.delete("/:regNo", authenticate, async (req, res) => {
   try {
