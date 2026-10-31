@@ -24,10 +24,9 @@ function interviewAvailability(interview, now = Date.now()) {
 }
 
 function interviewCanStart(interview, now = Date.now()) {
-    const resumable = interview.session?.status === "in_progress";
     return ["scheduled", "in_progress"].includes(interview.status) &&
         interview.session?.status !== "terminated" &&
-        (resumable || interviewAvailability(interview, now) === "available");
+        interviewAvailability(interview, now) === "available";
 }
 
 function deduplicateInterviews(interviews) {
@@ -277,6 +276,21 @@ export default function StudentInterviews() {
                                     </p>
                                     {selectedInterview.notes && (
                                         <p className="mt-2 text-sm text-emerald-900/80 dark:text-emerald-200/80">{selectedInterview.notes}</p>
+                                    )}
+                                    {selectedInterview.reportStatus === "generating" && (
+                                        <p className="mt-2 text-sm text-emerald-900/80 dark:text-emerald-200/80">Your interview feedback is being prepared.</p>
+                                    )}
+                                    {selectedInterview.report?.overall != null && (
+                                        <div className="mt-3 space-y-2 border-t border-emerald-200 pt-3 dark:border-emerald-500/30">
+                                            <p className="text-sm font-semibold text-emerald-900 dark:text-emerald-200">
+                                                Interview score: {selectedInterview.report.overall}/5
+                                                {selectedInterview.report.questionsAnswered != null &&
+                                                    ` · ${selectedInterview.report.questionsAnswered}/${selectedInterview.report.totalQuestions} questions answered`}
+                                            </p>
+                                            {selectedInterview.report.candidateSummary && (
+                                                <p className="text-sm text-emerald-900/80 dark:text-emerald-200/80">{selectedInterview.report.candidateSummary}</p>
+                                            )}
+                                        </div>
                                     )}
                                 </div>
                             ) : selectedInterview.status === "disqualified" ? (

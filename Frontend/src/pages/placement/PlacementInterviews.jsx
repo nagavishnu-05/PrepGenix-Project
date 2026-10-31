@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Plus, Star, CalendarClock, ListChecks, FileText, Loader2, AlertTriangle, RotateCcw, ChevronDown, UserPlus, BarChart3, Trash2, Users } from "lucide-react";
+import { Plus, Star, CalendarClock, ListChecks, FileText, Loader2, AlertTriangle, RotateCcw, ChevronDown, UserPlus, BarChart3, Trash2, Users, Download } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,6 +14,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { api } from "@/lib/api";
 import { getProctoringApiBase } from "@/lib/proctoring-config";
 import { getStudentSection } from "@/lib/student-section";
+import { downloadExcel } from "@/lib/excel-export";
 
 function toDatetimeLocal(value) {
     if (!value) return "";
@@ -112,6 +113,26 @@ export default function PlacementInterviews() {
     const [studentFilters, setStudentFilters] = useState({ batch: "all", section: "all", search: "" });
     const [result, setResult] = useState({ rating: 3, notes: "", strengths: "", weaknesses: "", status: "completed" });
 
+    const exportInterviewCandidates = async () => {
+        if (!analyticsData) return;
+        try {
+            const groupName = analyticsData.group?.name || "Interview";
+            const filename = groupName.trim().replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "");
+            await downloadExcel(`${filename || "Interview"}-Candidates`, (analyticsData.candidates || []).map((candidate) => ({
+                Name: candidate.studentName || "",
+                "Registration Number": candidate.regNo || "",
+                Status: candidate.status || "",
+                Rating: candidate.rating ?? "",
+                "AI Report Score": candidate.reportScore ?? "",
+                "Questions Answered": candidate.answeredCount ?? 0,
+                "Questions Planned": candidate.plannedQuestions ?? 0,
+                "Proctoring Violations": candidate.violationCount ?? 0,
+            })), "Candidates");
+        } catch (error) {
+            alert(`Failed to export interview candidates: ${error.message}`);
+        }
+    };
+
     const load = () => {
         setLoading(true);
         Promise.all([api.interviews.list(), api.students.list({})])
@@ -125,11 +146,11 @@ export default function PlacementInterviews() {
     const batches = [...new Set(students.map((student) => student.batch).filter(Boolean))].sort();
     const availableSections = [...new Set(students
         .filter((student) => studentFilters.batch === "all" || student.batch === studentFilters.batch)
-        .map((student) => getStudentSection(student.regNo))
+        .map((student) => getStudentSection(student.regNo, student.rollNo))
         .filter(Boolean))].sort();
     const filteredStudents = students.filter((student) => {
         if (studentFilters.batch !== "all" && student.batch !== studentFilters.batch) return false;
-        if (studentFilters.section !== "all" && getStudentSection(student.regNo) !== studentFilters.section) return false;
+        if (studentFilters.section !== "all" && getStudentSection(student.regNo, student.rollNo) !== studentFilters.section) return false;
         const query = studentFilters.search.trim().toLowerCase();
         return !query || `${student.name} ${student.regNo}`.toLowerCase().includes(query);
     });
@@ -594,7 +615,7 @@ export default function PlacementInterviews() {
                             </div>
                             <div className="max-h-64 space-y-1.5 overflow-y-auto rounded-xl border border-slate-200 bg-white p-2 dark:border-zinc-800 dark:bg-zinc-900/50">
                                 {availableScheduleStudents.map((student) => {
-                                    const section = getStudentSection(student.regNo);
+                                    const section = getStudentSection(student.regNo, student.rollNo);
                                     const details = [student.batch, section && `Section ${section}`].filter(Boolean).join(" · ");
                                     const isSelected = sched.regNos.includes(student.regNo);
                                     return (
@@ -663,6 +684,11 @@ export default function PlacementInterviews() {
                         <DialogDescription>
                             {analyticsData?.group?.name || "Group-level candidate progress, interview outcomes, and proctoring summary."}
                         </DialogDescription>
+                        {analyticsData && (
+                            <Button variant="outline" size="sm" onClick={exportInterviewCandidates} disabled={!analyticsData.candidates?.length}>
+                                <Download className="h-4 w-4" /> Export candidates
+                            </Button>
+                        )}
                     </DialogHeader>
                     {analyticsLoading ? (
                         <LoadingState label="Loading interview analytics" className="py-12" />

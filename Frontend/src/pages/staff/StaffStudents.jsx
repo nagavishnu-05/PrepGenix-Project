@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { Plus, Search, Upload, Trash2, FileText, Users, ChevronDown, ChevronRight, AlertTriangle, GraduationCap, Mail, Phone } from "lucide-react";
+import { Plus, Search, Upload, Trash2, FileText, Users, ChevronDown, ChevronRight, AlertTriangle, GraduationCap, Mail, Phone, Download } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,6 +11,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { PageHeader, EmptyState, LoadingState } from "@/components/portal/primitives";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { downloadExcel } from "@/lib/excel-export";
+import { getStudentSection } from "@/lib/student-section";
 
 export default function StaffStudents() {
     const [rows, setRows] = useState([]);
@@ -48,13 +50,12 @@ export default function StaffStudents() {
     useEffect(() => {
         api.students.batches().then((bList) => {
             setBatches(bList);
-            // Expand all batches by default
-            const initialExpanded = {};
-            bList.forEach(b => { initialExpanded[b] = true; });
-            initialExpanded["No Batch"] = true;
-            setExpandedBatches(initialExpanded);
         }).catch(() => {});
     }, []);
+
+    useEffect(() => {
+        if (batch) setExpandedBatches({ [batch]: true });
+    }, [batch]);
 
     const openStudentReport = async (s) => {
         setReportLoading(true);
@@ -70,6 +71,29 @@ export default function StaffStudents() {
 
     const toggleBatch = (b) => {
         setExpandedBatches(x => ({ ...x, [b]: !x[b] }));
+    };
+
+    const exportStudents = async () => {
+        try {
+            const exportBatch = batch ? `-${batch.replace(/[^a-z0-9-]+/gi, "-")}` : "";
+            await downloadExcel(`Student-Records${exportBatch}`, rows.map((student) => ({
+                Name: student.name || "",
+                "Registration Number": student.regNo || "",
+                "Roll Number": student.rollNo || "",
+                Section: getStudentSection(student.regNo, student.rollNo) || "",
+                Batch: student.batch || "",
+                CGPA: student.cgpa ?? "",
+                Email: student.email || "",
+                Mobile: student.mobile || "",
+                Resume: student.hasResume ? "Yes" : "No",
+                "Resume Category": student.topCategory || "",
+                "Aptitude Average (%)": student.aptitudeAverage ?? "",
+                "Coding Average (%)": student.codingAverage ?? "",
+                Interviews: student.interviewCount ?? 0,
+            })), "Students");
+        } catch (error) {
+            alert(`Failed to export students: ${error.message}`);
+        }
     };
 
     const addStudent = async () => {
@@ -116,7 +140,7 @@ export default function StaffStudents() {
         setBusy(true);
         try {
             const result = await api.students.removeBatch(batchToDelete);
-            alert(`Deleted ${result.studentsDeleted} students and ${result.accountsDeleted} student accounts from batch ${batchToDelete}.`);
+            alert(`Deleted ${result.studentsDeleted} student records from batch ${batchToDelete}.`);
             setBatchDeleteOpen(false);
             setBatchDeleteConfirmation("");
             const remainingBatches = await api.students.batches();
@@ -166,13 +190,40 @@ export default function StaffStudents() {
                             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400 dark:text-zinc-500" />
                             <Input placeholder="Search by name or reg number..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" />
                         </div>
-                        <Select value={batch} onValueChange={setBatch}>
-                            <SelectTrigger className="w-40"><SelectValue placeholder="All batches" /></SelectTrigger>
-                            <SelectContent>
-                                <SelectItem value="">All batches</SelectItem>
-                                {batches.map((b) => <SelectItem key={b} value={b}>{b}</SelectItem>)}
-                            </SelectContent>
-                        </Select>
+                        <Button variant="outline" onClick={exportStudents} disabled={loading || rows.length === 0}>
+                            <Download className="h-4 w-4" /> Export Excel
+                        </Button>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2" aria-label="Filter students by batch">
+                        <Button type="button" size="sm" variant={batch === "" ? "default" : "outline"} aria-pressed={batch === ""} onClick={() => setBatch("")}>
+                            All batches
+                        </Button>
+                        {batches.map((item) => (
+                            <Button
+                                key={item}
+                                type="button"
+                                size="sm"
+                                variant={batch === item ? "default" : "outline"}
+                                aria-pressed={batch === item}
+                                onClick={() => setBatch(item)}
+                            >
+                                {item}
+                            </Button>
+                        ))}
+                        {Object.keys(grouped).length > 1 && (
+                            <Button
+                                type="button"
+                                size="sm"
+                                variant="ghost"
+                                className="ml-auto"
+                                onClick={() => {
+                                    const expandAll = !Object.keys(grouped).every((key) => expandedBatches[key]);
+                                    setExpandedBatches(Object.fromEntries(Object.keys(grouped).map((key) => [key, expandAll])));
+                                }}
+                            >
+                                {Object.keys(grouped).every((key) => expandedBatches[key]) ? "Collapse all" : "Expand all"}
+                            </Button>
+                        )}
                     </div>
                 </CardHeader>
                 <CardContent className="space-y-6">
@@ -188,9 +239,11 @@ export default function StaffStudents() {
                             return (
                                 <div key={batchKey} className="rounded-xl border border-slate-200 dark:border-zinc-800/60 bg-white/50 dark:bg-zinc-900/10 overflow-hidden shadow-sm">
                                     {/* Collapsible header section */}
-                                    <div 
-                                        onClick={() => toggleBatch(batchKey)} 
-                                        className="flex items-center justify-between px-4 py-3 bg-slate-50 dark:bg-zinc-950/60 hover:bg-slate-100 dark:hover:bg-zinc-800/50 cursor-pointer border-b border-slate-200 dark:border-zinc-800 transition-colors"
+                                    <button
+                                        type="button"
+                                        aria-expanded={isExpanded}
+                                        onClick={() => toggleBatch(batchKey)}
+                                        className="flex w-full items-center justify-between px-4 py-3 bg-slate-50 text-left transition-colors hover:bg-slate-100 dark:bg-zinc-950/60 dark:hover:bg-zinc-800/50 border-b border-slate-200 dark:border-zinc-800"
                                     >
                                         <div className="flex items-center gap-2">
                                             {isExpanded ? <ChevronDown className="h-4 w-4 text-slate-500" /> : <ChevronRight className="h-4 w-4 text-slate-500" />}
@@ -201,10 +254,11 @@ export default function StaffStudents() {
                                                 {studentList.length} student{studentList.length !== 1 ? 's' : ''}
                                             </span>
                                         </div>
-                                    </div>
+                                    </button>
 
                                     {/* Expanded table */}
                                     {isExpanded && (
+                                        <div className="overflow-x-auto">
                                         <Table>
                                             <TableHeader>
                                                 <TableRow>
@@ -224,7 +278,7 @@ export default function StaffStudents() {
                                                             <p onClick={() => openStudentReport(s)} className="font-semibold text-slate-800 dark:text-zinc-150 cursor-pointer hover:text-violet-650 dark:hover:text-violet-400 hover:underline">
                                                                 {s.name}
                                                             </p>
-                                                            <p className="text-xs text-slate-500">{s.regNo}</p>
+                                                            <p className="text-xs text-slate-500">{s.regNo}{s.rollNo ? ` · Roll ${s.rollNo}` : ""}</p>
                                                         </TableCell>
                                                         <TableCell className="text-sm text-slate-700 dark:text-zinc-300 font-medium">{s.cgpa ?? "—"}</TableCell>
                                                         <TableCell>
@@ -251,6 +305,7 @@ export default function StaffStudents() {
                                                 ))}
                                             </TableBody>
                                         </Table>
+                                        </div>
                                     )}
                                 </div>
                             );
@@ -324,7 +379,7 @@ export default function StaffStudents() {
                             <AlertTriangle className="h-5 w-5" /> Delete an entire batch?
                         </DialogTitle>
                         <DialogDescription>
-                            This permanently deletes the selected batch&apos;s student profiles, student login accounts, performance records, and resumes. Test attempts, interviews, and violation history are preserved. Back up your database before continuing.
+                            This permanently deletes the selected batch&apos;s student records, performance records, and resumes. Test attempts, interviews, and violation history are preserved. Back up your database before continuing.
                         </DialogDescription>
                     </DialogHeader>
                     <div className="space-y-3">

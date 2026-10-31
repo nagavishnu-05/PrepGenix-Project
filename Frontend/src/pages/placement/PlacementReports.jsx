@@ -67,7 +67,7 @@ export default function PlacementReports() {
         return (testReport?.attempts || []).filter((attempt) => {
             const student = studentByRegNo.get(attempt.studentRegNo);
             if (batch !== "all" && student?.batch !== batch) return false;
-            return section === "all" || getStudentSection(attempt.studentRegNo) === section;
+            return section === "all" || getStudentSection(attempt.studentRegNo, student?.rollNo) === section;
         });
     }, [batch, section, students, testReport]);
 
@@ -111,7 +111,7 @@ export default function PlacementReports() {
     const visibleRows = useMemo(
         () => rows.filter((row) => {
             if (batch !== "all" && row.batch !== batch) return false;
-            return section === "all" || getStudentSection(row.regNo) === section;
+            return section === "all" || getStudentSection(row.regNo, row.rollNo) === section;
         }),
         [batch, rows, section]
     );
@@ -151,6 +151,8 @@ export default function PlacementReports() {
                 await downloadExcel(exportFilename("Student-Summary"), visibleRows.map((student) => ({
                     Name: student.name || "",
                     "Registration Number": student.regNo || "",
+                    "Roll Number": student.rollNo || "",
+                    Section: getStudentSection(student.regNo, student.rollNo) || "",
                     Batch: student.batch || "",
                     CGPA: student.cgpa ?? "",
                     "Aptitude Tests": student.aptitudeCount ?? 0,
@@ -170,14 +172,15 @@ export default function PlacementReports() {
             const selectedTestInfo = testsForType.find((test) => test.id === selectedTest);
             if (!selectedTestInfo) throw new Error("Select a test before exporting its report.");
             const formatLabel = testCategoryLabel(selectedTestInfo);
-            const batchByRegNo = new Map(students.map((student) => [student.regNo, student.batch]));
+            const studentByRegNo = new Map(students.map((student) => [student.regNo, student]));
             await downloadExcel(exportFilename(`${formatLabel}-${selectedTestInfo.title}`), visibleAttempts.map((attempt) => ({
                 Test: selectedTestInfo.title || "",
                 Format: formatLabel,
                 Name: attempt.studentName || "",
                 "Registration Number": attempt.studentRegNo || "",
-                Batch: batchByRegNo.get(attempt.studentRegNo) || "",
-                Section: getStudentSection(attempt.studentRegNo) || "",
+                "Roll Number": studentByRegNo.get(attempt.studentRegNo)?.rollNo || "",
+                Batch: studentByRegNo.get(attempt.studentRegNo)?.batch || "",
+                Section: getStudentSection(attempt.studentRegNo, studentByRegNo.get(attempt.studentRegNo)?.rollNo) || "",
                 Score: attempt.score ?? 0,
                 "Total Score": attempt.totalScore ?? "",
                 Result: attempt.result || "",

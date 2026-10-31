@@ -1,5 +1,5 @@
 import { useState, useEffect, Fragment } from "react";
-import { Search, Users, FileCode, BrainCircuit, AlertTriangle, ChevronDown, ChevronRight, TrendingUp, RefreshCw } from "lucide-react";
+import { Search, Users, FileCode, BrainCircuit, AlertTriangle, ChevronDown, ChevronRight, TrendingUp, RefreshCw, Download } from "lucide-react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -8,6 +8,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { PageHeader, EmptyState, LoadingState } from "@/components/portal/primitives";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip } from "recharts";
 import { api } from "@/lib/api";
+import { downloadExcel } from "@/lib/excel-export";
+import { getStudentSection } from "@/lib/student-section";
 
 export default function StaffReports() {
     const [rows, setRows] = useState([]);
@@ -73,6 +75,51 @@ export default function StaffReports() {
         }
     };
 
+    const exportStudentReport = async () => {
+        try {
+            await downloadExcel("Student-Performance-Report", rows.map((student) => ({
+                Name: student.name || "",
+                "Registration Number": student.regNo || "",
+                "Roll Number": student.rollNo || "",
+                Batch: student.batch || "",
+                Section: getStudentSection(student.regNo, student.rollNo) || "",
+                "Aptitude Tests": student.aptitudeCount ?? 0,
+                "Aptitude Average (%)": student.aptitudeAverage ?? "",
+                "Latest Aptitude Result": student.lastAptitude?.result || "",
+                "Coding Tests": student.codingCount ?? 0,
+                "Coding Average (%)": student.codingAverage ?? "",
+                "Latest Coding Result": student.lastCoding?.result || "",
+                Interviews: student.interviewCount ?? 0,
+                "Latest Interview Rating": student.lastInterview?.rating ?? "",
+                Violations: student.violationCount ?? 0,
+                "Resume Category": student.topCategory || "",
+            })), "Student Report");
+        } catch (error) {
+            alert(`Failed to export student report: ${error.message}`);
+        }
+    };
+
+    const exportTestReport = async () => {
+        if (!testReport) return;
+        try {
+            const testTitle = testReport.test?.title || "Test";
+            const filename = testTitle.trim().replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "");
+            await downloadExcel(`${filename || "Test"}-Results`, (testReport.attempts || []).map((attempt) => ({
+                Test: testTitle,
+                Name: attempt.studentName || "",
+                "Registration Number": attempt.studentRegNo || "",
+                Score: attempt.score ?? 0,
+                "Total Score": attempt.totalScore ?? "",
+                Result: attempt.result || "",
+                Correct: attempt.correct ?? 0,
+                "Total Questions": attempt.totalQuestions ?? 0,
+                "Completed At": attempt.completedAt ? new Date(attempt.completedAt).toLocaleString() : "",
+            })), "Test Results");
+        } catch (error) {
+            alert(`Failed to export test report: ${error.message}`);
+        }
+    };
+
     const resultColor = (r) => {
         if (r === "selected") return "text-emerald-400";
         if (r === "passed") return "text-blue-400";
@@ -114,6 +161,9 @@ export default function StaffReports() {
                                     {[...new Set(rows.map((r) => r.batch).filter(Boolean))].map((b) => <SelectItem key={b} value={b}>{b}</SelectItem>)}
                                 </SelectContent>
                             </Select>
+                            <Button variant="outline" onClick={exportStudentReport} disabled={loading || rows.length === 0}>
+                                <Download className="h-4 w-4" /> Export Excel
+                            </Button>
                         </div>
                     </CardHeader>
                     <CardContent>
@@ -177,6 +227,12 @@ export default function StaffReports() {
                                 <RefreshCw className="mr-2 h-3.5 w-3.5" />
                                 Refresh test list
                             </Button>
+                            {testReport && (
+                                <Button type="button" variant="outline" size="sm" onClick={exportTestReport} disabled={!testReport.attempts?.length}>
+                                    <Download className="mr-2 h-3.5 w-3.5" />
+                                    Export Excel
+                                </Button>
+                            )}
                         </div>
                         {testListError && <p role="alert" className="text-sm text-red-500">{testListError}</p>}
                     </CardHeader>

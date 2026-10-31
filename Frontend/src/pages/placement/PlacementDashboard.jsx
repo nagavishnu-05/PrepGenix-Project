@@ -34,7 +34,7 @@ export default function PlacementDashboard() {
                 title="Placement Dashboard"
                 description="Shortlist candidates, manage resumes, and track interviews"
                 action={
-                    <Link to="/placement/interviews" className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-50">
+                    <Link to="/placement/interviews" className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-emerald-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2">
                         Schedule Interview
                     </Link>
                 }

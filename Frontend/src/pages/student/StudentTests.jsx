@@ -98,7 +98,7 @@ export default function StudentTests() {
                                 <div className="mt-5">
                                     <Button
                                         className="w-full"
-                                        variant={t.attempt?.status === "in_progress" || !t.attempt ? "default" : "outline"}
+                                    variant={(t.attempt?.status === "in_progress" && availability !== "ended") || !t.attempt ? "default" : "outline"}
                                         disabled={attemptLoading || (!t.attempt && availability !== "available")}
                                         onClick={() => act(t)}
                                     >
@@ -109,7 +109,7 @@ export default function StudentTests() {
                                                     ? "Test window ended"
                                                     : "Start Test"
                                             : t.attempt.status === "in_progress"
-                                                ? "Resume Test"
+                                                ? availability === "ended" ? "View Result" : "Resume Test"
                                                 : t.attempt.status === "flagged"
                                                     ? "Locked — Awaiting Staff Reset"
                                                     : t.attempt.status === "disqualified"

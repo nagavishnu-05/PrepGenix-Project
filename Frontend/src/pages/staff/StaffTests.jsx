@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { Plus, Trash2, Users, ClipboardList, Code2, BrainCircuit, CheckCircle2, BarChart3, Clock, TrendingUp, ShieldCheck, AlertTriangle, Camera, Eye } from "lucide-react";
+import { Plus, Trash2, Users, ClipboardList, Code2, BrainCircuit, CheckCircle2, BarChart3, Clock, TrendingUp, ShieldCheck, AlertTriangle, Camera, Eye, Download } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -13,6 +13,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { PageHeader, EmptyState, LoadingState } from "@/components/portal/primitives";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { downloadExcel } from "@/lib/excel-export";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip } from "recharts";
 
 const VIOLATION_LABELS = {
@@ -112,6 +113,28 @@ export default function StaffTests() {
             alert("Failed to load test report: " + e.message);
         } finally {
             setAnalyticsLoading(false);
+        }
+    };
+
+    const exportTestAnalytics = async () => {
+        if (!testAnalytics) return;
+        try {
+            const title = testAnalytics.test?.title || "Test";
+            const filename = title.trim().replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "");
+            await downloadExcel(`${filename || "Test"}-Results`, (testAnalytics.attempts || []).map((attempt) => ({
+                Test: title,
+                Name: attempt.studentName || "",
+                "Registration Number": attempt.studentRegNo || "",
+                Score: attempt.score ?? 0,
+                "Total Score": attempt.totalScore ?? "",
+                Result: attempt.result || "",
+                Correct: attempt.correct ?? 0,
+                "Total Questions": attempt.totalQuestions ?? 0,
+                Violations: attempt.violationCount ?? 0,
+                "Completed At": attempt.completedAt ? new Date(attempt.completedAt).toLocaleString() : "",
+            })), "Test Results");
+        } catch (error) {
+            alert(`Failed to export test results: ${error.message}`);
         }
     };
 
@@ -277,7 +300,8 @@ export default function StaffTests() {
                             <EmptyState icon={ClipboardList} title="No tests yet" description="Create your first test to assign it to students." />
                         </div>
                     ) : (
-                        <Table>
+                        <div className="overflow-x-auto">
+                        <Table className="min-w-[900px]">
                             <TableHeader>
                                 <TableRow>
                                     <TableHead className="w-10"><Checkbox checked={tests.length > 0 && tests.every((t) => selectedIds.includes(t.id))} onCheckedChange={(checked) => setSelectedIds(checked ? tests.map((t) => t.id) : [])} aria-label="Select all tests" /></TableHead>
@@ -342,6 +366,7 @@ export default function StaffTests() {
                                 ))}
                             </TableBody>
                         </Table>
+                        </div>
                     )}
                 </CardContent>
             </Card>
@@ -597,6 +622,11 @@ export default function StaffTests() {
                         <DialogDescription>
                             Overall metrics and student completions for: <strong className="text-slate-800 dark:text-zinc-100">{testAnalytics?.test?.title}</strong>
                         </DialogDescription>
+                        {testAnalytics && (
+                            <Button variant="outline" size="sm" onClick={exportTestAnalytics} disabled={!testAnalytics.attempts?.length}>
+                                <Download className="h-4 w-4" /> Export results
+                            </Button>
+                        )}
                     </DialogHeader>
 
                     {testAnalytics && (

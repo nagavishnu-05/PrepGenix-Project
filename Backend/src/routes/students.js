@@ -3,10 +3,11 @@
 const express = require("express");
 const bcrypt = require("bcryptjs");
 const multer = require("multer");
-const { col, toId, id, upsertDoc } = require("../db");
+const { col, id, upsertDoc } = require("../db");
 const { authenticate } = require("../middleware/auth");
 const { rowsFromBuffer, parseStudents } = require("../excel-parse");
 const { getPerformance } = require("../perf");
+const { publicStudent } = require("../lib/student-accounts");
 
 const router = express.Router();
 const upload = multer({
@@ -16,19 +17,19 @@ const upload = multer({
 
 const STAFF = ["staff", "placement"];
 
-async function upsertStudentLogin(student) {
-  const passwordHash = await bcrypt.hash(student.rollNo || "student", 10);
-  await upsertDoc(
-    col("users"),
-    { role: "student", username: student.regNo },
-    { name: student.name, passwordHash, updatedAt: new Date() },
-    null,
-    { createdAt: new Date() }
-  );
+async function getStudentPasswordHash(student) {
+  const students = col("students");
+  const existingStudent = await students.findOne({ regNo: student.regNo });
+  const legacyUser = await col("users").findOne({ role: "student", username: student.regNo });
+  const passwordHash = existingStudent?.passwordHash
+    || legacyUser?.passwordHash
+    || await bcrypt.hash(student.rollNo || "student", 10);
+  return passwordHash;
 }
 
 async function upsertStudent(student) {
   const doc = {
+    passwordHash: await getStudentPasswordHash(student),
     rollNo: student.rollNo || "",
     name: student.name,
     email: student.email || "",
@@ -42,8 +43,8 @@ async function upsertStudent(student) {
   const students = col("students");
   await upsertDoc(students, { regNo: student.regNo }, doc, null, { createdAt: new Date() });
   await students.updateOne({ regNo: student.regNo }, { $unset: { department: "" } });
-  await upsertStudentLogin(student);
-  return { ...doc, regNo: student.regNo };
+  await col("users").deleteOne({ role: "student", username: student.regNo });
+  return publicStudent(await students.findOne({ regNo: student.regNo }));
 }
 
 // GET /api/students?batch=&search=
@@ -57,7 +58,7 @@ router.get("/", authenticate, async (req, res) => {
       filter.$or = [{ name: rx }, { regNo: rx }];
     }
     const students = await col("students").find(filter).sort({ regNo: 1 }).toArray();
-    res.json(students.map(toId));
+    res.json(students.map(publicStudent));
   } catch {
     res.status(500).json({ error: "Failed to fetch students" });
   }
@@ -84,7 +85,7 @@ router.get("/:regNo", authenticate, async (req, res) => {
       col("resumes", "resume").findOne({ regNo }),
     ]);
     res.json({
-      ...toId(student),
+      ...publicStudent(student),
       performance,
       resumeCategories: resume ? resume.categories : [],
       resumeSkills: resume ? resume.skills : [],
@@ -149,7 +150,7 @@ router.put("/:regNo", authenticate, async (req, res) => {
       { returnDocument: "after" }
     );
     if (!student) return res.status(404).json({ error: "Student not found" });
-    res.json(toId(student));
+    res.json(publicStudent(student));
   } catch {
     res.status(500).json({ error: "Failed to update student" });
   }
@@ -194,9 +195,7 @@ router.delete("/batches/:batchName", authenticate, async (req, res) => {
     if (!batchStudents.length) return res.status(404).json({ error: "No students found for this batch" });
 
     const regNos = [...new Set(batchStudents.map((student) => student.regNo).filter(Boolean))];
-    const deletions = [
-      students.deleteMany({ batch: batchName }),
-    ];
+    const deletions = [students.deleteMany({ batch: batchName })];
     if (regNos.length) {
       deletions.push(
         col("users").deleteMany({ role: "student", username: { $in: regNos } }),

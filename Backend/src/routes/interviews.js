@@ -98,12 +98,80 @@ function interviewWindowError(interview, now = new Date()) {
   return null;
 }
 
+function queueInterviewReport(interview) {
+  setImmediate(() => {
+    generateReport(interview, interview.plan)
+      .then(async (report) => {
+        await col("interviews").updateOne(
+          { _id: interview._id, reportStatus: "generating" },
+          { $set: { report, reportStatus: "ready", reportGeneratedAt: new Date(), updatedAt: new Date() } }
+        );
+      })
+      .catch(async (error) => {
+        console.error("Auto report generation failed:", error.message);
+        try {
+          await col("interviews").updateOne(
+            { _id: interview._id, reportStatus: "generating" },
+            { $set: { reportStatus: "failed", updatedAt: new Date() } }
+          );
+        } catch (updateError) {
+          console.error("Failed to update interview report status:", updateError.message);
+        }
+      });
+  });
+}
+
+async function expireInterviewIfOverdue(interview, now = new Date()) {
+  if (
+    !interview ||
+    interview.session?.status !== "in_progress" ||
+    interviewAvailability(interview, now) !== "ended"
+  ) {
+    return interview;
+  }
+
+  const completedAt = new Date(interview.endsAt);
+  const session = {
+    ...(interview.session || {}),
+    status: "completed",
+    endedAt: completedAt,
+  };
+  const shouldGenerateReport = Boolean(interview.plan?.questions?.length);
+  const update = await col("interviews").updateOne(
+    { _id: interview._id, "session.status": "in_progress", status: { $ne: "disqualified" } },
+    {
+      $set: {
+        session,
+        status: "completed",
+        ...(shouldGenerateReport ? { reportStatus: "generating" } : {}),
+        completedAt,
+        updatedAt: now,
+      },
+    }
+  );
+  if (!update.matchedCount) {
+    return (await col("interviews").findOne({ _id: interview._id })) || interview;
+  }
+
+  const completedInterview = {
+    ...interview,
+    session,
+    status: "completed",
+    ...(shouldGenerateReport ? { reportStatus: "generating" } : {}),
+    completedAt,
+    updatedAt: now,
+  };
+  if (shouldGenerateReport) queueInterviewReport(completedInterview);
+  return completedInterview;
+}
+
 // GET /api/interviews  (placement sees all; students see their own)
 router.get("/", authenticate, async (req, res) => {
   try {
     const filter = req.user.role === "student" ? { regNo: req.user.username } : {};
     const interviews = await col("interviews").find(filter).sort({ scheduledAt: -1 }).toArray();
-    res.json(interviews.map((interview) => ({
+    const currentInterviews = await Promise.all(interviews.map((interview) => expireInterviewIfOverdue(interview)));
+    res.json(currentInterviews.map((interview) => ({
       ...toId(interview),
       availabilityStatus: interviewAvailability(interview),
     })));
@@ -210,11 +278,12 @@ router.get("/groups/:groupId/analytics", authenticate, async (req, res) => {
 // GET /api/interviews/:id
 router.get("/:id", authenticate, async (req, res) => {
   try {
-    const interview = await col("interviews").findOne({ _id: id(req.params.id) });
+    let interview = await col("interviews").findOne({ _id: id(req.params.id) });
     if (!interview) return res.status(404).json({ error: "Interview not found" });
     if (req.user.role === "student" && interview.regNo !== req.user.username) {
       return res.status(403).json({ error: "Access denied" });
     }
+    interview = await expireInterviewIfOverdue(interview);
     res.json({ ...toId(interview), availabilityStatus: interviewAvailability(interview) });
   } catch {
     res.status(500).json({ error: "Failed to fetch interview" });
@@ -432,9 +501,10 @@ router.get("/:id/report", authenticate, async (req, res) => {
 router.post("/:id/consent", authenticate, async (req, res) => {
   try {
     if (req.user.role !== "student") return res.status(403).json({ error: "Candidate consent only" });
-    const interview = await loadInterview(req.params.id);
+    let interview = await loadInterview(req.params.id);
     if (!interview) return res.status(404).json({ error: "Interview not found" });
     if (interview.regNo !== req.user.username) return res.status(403).json({ error: "Access denied" });
+    interview = await expireInterviewIfOverdue(interview);
     if (interview.session?.status !== "in_progress") {
       const windowError = interviewWindowError(interview);
       if (windowError) return res.status(403).json({ error: windowError });
@@ -467,9 +537,10 @@ router.post("/:id/consent", authenticate, async (req, res) => {
 router.post("/:id/reference-face", authenticate, async (req, res) => {
   try {
     if (req.user.role !== "student") return res.status(403).json({ error: "Candidate only" });
-    const interview = await loadInterview(req.params.id);
+    let interview = await loadInterview(req.params.id);
     if (!interview) return res.status(404).json({ error: "Interview not found" });
     if (interview.regNo !== req.user.username) return res.status(403).json({ error: "Access denied" });
+    interview = await expireInterviewIfOverdue(interview);
     if (interview.session?.status !== "in_progress") {
       const windowError = interviewWindowError(interview);
       if (windowError) return res.status(403).json({ error: windowError });
@@ -509,9 +580,10 @@ router.post("/:id/reference-face", authenticate, async (req, res) => {
 router.post("/:id/session/start", authenticate, async (req, res) => {
   try {
     if (req.user.role !== "student") return res.status(403).json({ error: "Candidate only" });
-    const interview = await loadInterview(req.params.id);
+    let interview = await loadInterview(req.params.id);
     if (!interview) return res.status(404).json({ error: "Interview not found" });
     if (interview.regNo !== req.user.username) return res.status(403).json({ error: "Access denied" });
+    interview = await expireInterviewIfOverdue(interview);
     if (!interview.consent?.consentedAt) return res.status(400).json({ error: "Consent must be given before starting" });
     if (interview.consent.camera !== true || interview.consent.microphone !== true) {
       return res.status(400).json({ error: "Camera and microphone consent are required for a proctored interview" });
@@ -574,9 +646,10 @@ router.post("/:id/session/start", authenticate, async (req, res) => {
 router.post("/:id/answer", authenticate, async (req, res) => {
   try {
     if (req.user.role !== "student") return res.status(403).json({ error: "Candidate only" });
-    const interview = await loadInterview(req.params.id);
+    let interview = await loadInterview(req.params.id);
     if (!interview) return res.status(404).json({ error: "Interview not found" });
     if (interview.regNo !== req.user.username) return res.status(403).json({ error: "Access denied" });
+    interview = await expireInterviewIfOverdue(interview);
     if (interview.status === "disqualified" || interview.session?.status === "terminated") {
       return res.status(403).json({ error: "This interview was terminated after repeated proctoring violations" });
     }
@@ -645,9 +718,10 @@ router.post("/:id/answer", authenticate, async (req, res) => {
 router.post("/:id/proctoring-event", authenticate, async (req, res) => {
   try {
     if (req.user.role !== "student") return res.status(403).json({ error: "Candidate only" });
-    const interview = await loadInterview(req.params.id);
+    let interview = await loadInterview(req.params.id);
     if (!interview) return res.status(404).json({ error: "Interview not found" });
     if (interview.regNo !== req.user.username) return res.status(403).json({ error: "Access denied" });
+    interview = await expireInterviewIfOverdue(interview);
     if (interview.session?.status !== "in_progress") {
       return res.status(409).json({ error: "Proctoring events can only be recorded during an active interview" });
     }
@@ -707,9 +781,13 @@ router.post("/:id/proctoring-event", authenticate, async (req, res) => {
 router.post("/:id/complete", authenticate, async (req, res) => {
   try {
     if (req.user.role !== "student") return res.status(403).json({ error: "Candidate only" });
-    const interview = await loadInterview(req.params.id);
+    let interview = await loadInterview(req.params.id);
     if (!interview) return res.status(404).json({ error: "Interview not found" });
     if (interview.regNo !== req.user.username) return res.status(403).json({ error: "Access denied" });
+    interview = await expireInterviewIfOverdue(interview);
+    if (interview.status === "completed") {
+      return res.json(toId(interview));
+    }
     if (interview.status === "disqualified" || interview.session?.status === "terminated") {
       return res.status(403).json({ error: "This interview was terminated after repeated proctoring violations" });
     }
@@ -742,28 +820,7 @@ router.post("/:id/complete", authenticate, async (req, res) => {
       completedAt,
       updatedAt: completedAt,
     }));
-    if (shouldGenerateReport) {
-      setImmediate(() => {
-        generateReport(interview, interview.plan)
-          .then(async (report) => {
-            await col("interviews").updateOne(
-              { _id: interview._id, reportStatus: "generating" },
-              { $set: { report, reportStatus: "ready", reportGeneratedAt: new Date(), updatedAt: new Date() } }
-            );
-          })
-          .catch(async (error) => {
-            console.error("Auto report generation failed:", error.message);
-            try {
-              await col("interviews").updateOne(
-                { _id: interview._id, reportStatus: "generating" },
-                { $set: { reportStatus: "failed", updatedAt: new Date() } }
-              );
-            } catch (updateError) {
-              console.error("Failed to update interview report status:", updateError.message);
-            }
-          });
-      });
-    }
+    if (shouldGenerateReport) queueInterviewReport({ ...interview, session, status: "completed" });
   } catch {
     res.status(500).json({ error: "Failed to complete interview" });
   }

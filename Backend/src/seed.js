@@ -15,16 +15,10 @@ async function upsertCoordinator(username, password, name, role) {
 
 async function upsertStudentStudent(student) {
   const students = col("students");
-  await upsertDoc(students, { regNo: student.regNo }, student);
-  await students.updateOne({ regNo: student.regNo }, { $unset: { department: "" } });
   const passwordHash = await bcrypt.hash(student.rollNo, 10);
-  await upsertDoc(
-    col("users"),
-    { role: "student", username: student.regNo },
-    { name: student.name, passwordHash, updatedAt: new Date() },
-    null,
-    { createdAt: new Date() }
-  );
+  await upsertDoc(students, { regNo: student.regNo }, { ...student, passwordHash });
+  await students.updateOne({ regNo: student.regNo }, { $unset: { department: "" } });
+  await col("users").deleteOne({ role: "student", username: student.regNo });
 }
 
 async function main() {

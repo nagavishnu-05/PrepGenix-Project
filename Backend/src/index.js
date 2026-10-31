@@ -47,6 +47,10 @@ async function main() {
     await connectDB();
     console.log("Connected to database");
 
+    const { migrated, removedIncomplete } = await require("./lib/student-accounts").migrateLegacyStudentAccounts();
+    if (migrated) console.log(`Migrated ${migrated} student login(s) into student records`);
+    if (removedIncomplete) console.warn(`Removed ${removedIncomplete} incomplete student login(s) that had no valid credentials`);
+
     // Image assets live in Supabase Storage; MongoDB holds only object paths.
     // Failure here is non-fatal so the rest of the API still boots.
     try {

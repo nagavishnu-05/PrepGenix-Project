@@ -234,7 +234,7 @@ export default function InterviewRoom() {
             } else if (data.status === "completed") {
                 setDone(true);
                 setStep("done");
-            } else if (data.session?.status !== "in_progress" && interviewAvailability(data) !== "available") {
+            } else if (interviewAvailability(data) !== "available") {
                 const availability = interviewAvailability(data);
                 setError(availability === "upcoming"
                     ? `This interview is available from ${new Date(data.startsAt || data.scheduledAt).toLocaleString()}.`
@@ -289,9 +289,9 @@ export default function InterviewRoom() {
         };
     }, [stream, step, attachVideoFeed]);
 
-    // Keep a ticking clock so the readiness panel can show "checked Xs ago".
+    // Keep the schedule deadline enforced in the active interview as well as in readiness.
     useEffect(() => {
-        if (step !== "check") return undefined;
+        if (step !== "check" && step !== "interview") return undefined;
         const timer = window.setInterval(() => setNow(Date.now()), 1000);
         return () => window.clearInterval(timer);
     }, [step]);
@@ -1066,6 +1066,13 @@ export default function InterviewRoom() {
         await finishInterview();
     };
 
+    const windowEnded = interview && interviewAvailability(interview, now) === "ended";
+    useEffect(() => {
+        if (step === "interview" && windowEnded && interview?.session?.status === "in_progress") {
+            void finishInterview();
+        }
+    }, [step, windowEnded, interview?.session?.status]);
+
     const candidateTurns = useMemo(() => transcript.filter((t) => t.role === "candidate").length, [transcript]);
     const progress = total ? Math.min(100, Math.round((candidateTurns / total) * 100)) : 0;
     const liveCamera = Boolean(stream?.getVideoTracks?.().some((track) => track.readyState === "live"));
@@ -1079,7 +1086,7 @@ export default function InterviewRoom() {
         && !proctorSignal.deviceDetected
         && !monitorStale;
     const canResume = cameraHealthy && liveCamera && liveMicrophone;
-    const canContinue = canResume && fullscreenActive && online && !pausedReason && !terminatingRef.current
+    const canContinue = canResume && fullscreenActive && online && !pausedReason && !windowEnded && !terminatingRef.current
         && identityStatus !== "mismatch"
         && monitorState !== MONITOR_STATE.TERMINATED && monitorState !== MONITOR_STATE.TERMINATING;
     const identityBlocked = step === "interview" && faceVerificationRequired && (
@@ -1089,6 +1096,7 @@ export default function InterviewRoom() {
     );
     const showPauseDialog = step === "interview"
         && (pausedReason || !canContinue)
+        && !windowEnded
         && !identityBlocked
         && !phoneConfirmed
         && monitorState !== MONITOR_STATE.TERMINATED

@@ -271,7 +271,7 @@ export function Header({ breadcrumbs = [] }) {
     return (
         <motion.header
             initial={false}
-            className="sticky top-4 z-50 mx-auto w-[92%] rounded-2xl border border-slate-200/60 bg-white/30 shadow-lg backdrop-blur-xl transition-colors duration-300 dark:border-zinc-800/30 dark:bg-zinc-950/30 sm:w-[95%] sm:max-w-7xl"
+            className="sticky top-4 z-50 mx-auto w-[92%] rounded-2xl border border-slate-200/60 bg-white/30 shadow-lg backdrop-blur-xl transition-colors duration-300 dark:border-zinc-800/30 dark:bg-zinc-950/30 sm:w-[95%] sm:max-w-screen-2xl"
         >
             <div className="pointer-events-none relative grid h-20 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 px-3 sm:gap-4 sm:px-6">
                 <Link to={useAuthStore.getState().homeFor(user?.role) || "/"} className="pointer-events-auto flex shrink-0 items-center gap-2.5 rounded-xl px-1 py-1">
@@ -296,7 +296,7 @@ export function Header({ breadcrumbs = [] }) {
                     onPointerLeave={() => {
                         if (!longPressActive.current) window.clearTimeout(longPressTimer.current);
                     }}
-                    className="pointer-events-auto hidden min-w-0 items-center justify-center gap-1 justify-self-center xl:flex"
+                    className="pointer-events-auto hidden min-w-0 items-center justify-center gap-1 justify-self-center 2xl:flex"
                 >
                     {navItems.map((item) => {
                         const active = item.end ? location.pathname === item.href : location.pathname.startsWith(item.href);
@@ -316,7 +316,7 @@ export function Header({ breadcrumbs = [] }) {
                                     layout
                                     transition={{ type: "spring", stiffness: 420, damping: 25, mass: 0.6 }}
                                     className={cn(
-                                        "group relative flex items-center justify-center gap-2 rounded-full px-2.5 py-2.5 text-sm font-medium leading-none transition-colors duration-200 2xl:px-3",
+                                        "group relative flex items-center justify-center gap-2 rounded-full px-2.5 py-2.5 text-sm font-medium leading-none transition-colors duration-200",
                                         active ? "text-violet-800 dark:text-violet-100" : "text-slate-600 hover:text-slate-950 dark:text-zinc-400 dark:hover:text-zinc-100",
                                         draggingHref === item.href && "z-20 scale-110 -translate-y-1 cursor-grabbing",
                                         draggingHref && draggingHref !== item.href && "cursor-grab"
@@ -330,7 +330,7 @@ export function Header({ breadcrumbs = [] }) {
                                         />
                                     )}
                                     <Icon className="relative z-10 h-[18px] w-[18px] shrink-0 transition-transform duration-300 group-hover:-translate-y-0.5" />
-                                    <span className="relative z-10 hidden whitespace-nowrap 2xl:inline">{item.label}</span>
+                                    <span className="relative z-10 whitespace-nowrap">{item.label}</span>
                                 </motion.span>
                             </Link>
                         );
@@ -342,7 +342,7 @@ export function Header({ breadcrumbs = [] }) {
                     aria-label={mobileNavOpen ? "Close navigation menu" : "Open navigation menu"}
                     aria-expanded={mobileNavOpen}
                     onClick={() => setMobileNavOpen((open) => !open)}
-                    className="pointer-events-auto flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-slate-600 transition-colors hover:bg-white/60 dark:text-zinc-300 dark:hover:bg-white/10 xl:hidden"
+                    className="pointer-events-auto flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-slate-600 transition-colors hover:bg-white/60 dark:text-zinc-300 dark:hover:bg-white/10 2xl:hidden"
                 >
                     <motion.span
                         key={mobileNavOpen ? "close" : "menu"}
@@ -468,7 +468,7 @@ export function Header({ breadcrumbs = [] }) {
                         animate={{ opacity: 1, height: "auto" }}
                         exit={{ opacity: 0, height: 0 }}
                         transition={{ type: "spring", stiffness: 360, damping: 32 }}
-                        className="pointer-events-auto absolute left-1/2 top-full mt-2 grid w-[min(22rem,calc(100vw-2rem))] -translate-x-1/2 grid-cols-2 gap-1 rounded-2xl border border-white/70 bg-white/80 p-2.5 shadow-lg backdrop-blur-2xl dark:border-white/10 dark:bg-zinc-900/80 xl:hidden"
+                        className="pointer-events-auto absolute left-1/2 top-full mt-2 grid w-[min(22rem,calc(100vw-2rem))] -translate-x-1/2 grid-cols-2 gap-1 rounded-2xl border border-white/70 bg-white/80 p-2.5 shadow-lg backdrop-blur-2xl dark:border-white/10 dark:bg-zinc-900/80 2xl:hidden"
                     >
                         {navItems.map((item) => {
                             const active = item.end ? location.pathname === item.href : location.pathname.startsWith(item.href);

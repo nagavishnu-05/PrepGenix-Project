@@ -12,6 +12,7 @@ import { PageHeader, EmptyState } from "@/components/portal/primitives";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/lib/api";
 import { getSectionsForBatch, getStudentSection } from "@/lib/student-section";
+import { downloadExcel } from "@/lib/excel-export";
 
 export default function PlacementResumes() {
     const [resumes, setResumes] = useState([]);
@@ -63,8 +64,9 @@ export default function PlacementResumes() {
     const visibleResumes = useMemo(() => {
         const byRegNo = new Map(batchStudents.map((student) => [student.regNo, student]));
         return resumes.filter((resume) => {
-            if (!byRegNo.has(resume.regNo)) return false;
-            return section === "all" || getStudentSection(resume.regNo) === section;
+            const student = byRegNo.get(resume.regNo);
+            if (!student) return false;
+            return section === "all" || getStudentSection(resume.regNo, student.rollNo) === section;
         });
     }, [batchStudents, resumes, section]);
 
@@ -164,12 +166,41 @@ export default function PlacementResumes() {
         }
     };
 
+    const exportResumes = async () => {
+        const studentByRegNo = new Map(students.map((student) => [student.regNo, student]));
+        try {
+            await downloadExcel("Resume-Shortlist", visibleResumes.map((resume) => {
+                const student = studentByRegNo.get(resume.regNo);
+                return {
+                    Name: resume.studentName || "",
+                    "Registration Number": resume.regNo || "",
+                    "Roll Number": student?.rollNo || "",
+                    Batch: student?.batch || "",
+                    Section: getStudentSection(resume.regNo, student?.rollNo) || "",
+                    "Resume File": resume.fileName || "",
+                    Skills: (resume.skills || []).join(", "),
+                    Categories: (resume.categories || []).map((category) => (typeof category === "string" ? category : category.name)).join(", "),
+                    "Top Category": resume.topCategory || "",
+                };
+            }), "Resumes");
+        } catch (error) {
+            alert(`Failed to export resumes: ${error.message}`);
+        }
+    };
+
     return (
         <div>
             <PageHeader
                 title="Resumes"
                 description="Upload and categorize student resumes for shortlisting"
-                action={<Button onClick={() => setUploadOpen(true)}><Upload className="h-4 w-4" /> Upload Resume</Button>}
+                action={
+                    <div className="flex flex-wrap gap-2">
+                        <Button variant="outline" onClick={exportResumes} disabled={loading || visibleResumes.length === 0}>
+                            <Download className="h-4 w-4" /> Export Excel
+                        </Button>
+                        <Button onClick={() => setUploadOpen(true)}><Upload className="h-4 w-4" /> Upload Resume</Button>
+                    </div>
+                }
             />
 
             <div className="mb-4 flex flex-wrap gap-3">
@@ -216,7 +247,8 @@ export default function PlacementResumes() {
                             <EmptyState icon={FileText} title="No resumes found" description="No uploaded resumes match the selected batch and roll number." />
                         </div>
                     ) : (
-                        <Table>
+                        <div className="overflow-x-auto">
+                        <Table className="min-w-[900px]">
                             <TableHeader>
                                 <TableRow>
                                     <TableHead>Student</TableHead>
@@ -285,6 +317,7 @@ export default function PlacementResumes() {
                                 ))}
                             </TableBody>
                         </Table>
+                        </div>
                     )}
                 </CardContent>
             </Card>

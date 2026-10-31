@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { ClipboardList, Video, Award, User, BrainCircuit, FileCode } from "lucide-react";
+import { ClipboardList, Video, Award, User, BrainCircuit } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { StatsCard } from "@/components/portal/stats-card";
@@ -83,25 +83,6 @@ export default function StudentDashboard() {
                     </CardContent>
                 </Card>
             )}
-
-            <Card className="mb-8 border-violet-200/80 bg-violet-50/60 dark:border-violet-500/20 dark:bg-violet-500/5">
-                <CardContent className="flex flex-wrap items-center justify-between gap-4 p-5">
-                    <div className="flex items-start gap-3">
-                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-violet-100 dark:bg-violet-500/10">
-                            <FileCode className="h-5 w-5 text-violet-600 dark:text-violet-400" />
-                        </div>
-                        <div>
-                            <p className="font-semibold text-slate-900 dark:text-white">Resume parsing & interview profile</p>
-                            <p className="mt-1 text-sm text-slate-600 dark:text-zinc-400">
-                                Upload or update your resume. AI uses it to tailor interview questions to your experience.
-                            </p>
-                        </div>
-                    </div>
-                    <Button asChild variant="outline">
-                        <Link to="/student/resume">Manage resume</Link>
-                    </Button>
-                </CardContent>
-            </Card>
 
             <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
                 <Card className="border-slate-200/80 dark:border-zinc-800/80 bg-white/70 dark:bg-zinc-900/40">

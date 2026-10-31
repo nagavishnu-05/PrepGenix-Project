@@ -5,6 +5,7 @@ const bcrypt = require("bcryptjs");
 const { col, toId, id } = require("../db");
 const { authenticate, generateToken } = require("../middleware/auth");
 const storage = require("../lib/storage");
+const { publicStudent } = require("../lib/student-accounts");
 
 const router = express.Router();
 
@@ -27,12 +28,12 @@ function stripSensitive(user) {
 async function attachProfile(user) {
   const profile = user.role === "student" ? await col("students").findOne({ regNo: user.username }) : null;
   let avatar = user.role === "student" ? await storage.getStudentAvatar(user.username) : null;
-  const legacyAvatar = LEGACY_STUDENT_AVATARS[user.avatar];
+  const legacyAvatar = LEGACY_STUDENT_AVATARS[user.avatar || profile?.avatar];
   if (!avatar && legacyAvatar) {
     avatar = await storage.setStudentAvatar(user.username, legacyAvatar);
-    await col("users").updateOne({ _id: id(user.id) }, { $unset: { avatar: "" } });
+    await col("students").updateOne({ regNo: user.username }, { $unset: { avatar: "" } });
   }
-  return stripSensitive({ ...user, avatar, profile: profile ? toId(profile) : null });
+  return stripSensitive({ ...user, avatar, profile: profile ? publicStudent(profile) : null });
 }
 
 // POST /api/auth/login  { role, username, password }
@@ -45,8 +46,10 @@ router.post("/login", async (req, res) => {
       console.log("  → 400: Invalid role");
       return res.status(400).json({ error: "Invalid role" });
     }
-    const users = col("users");
-    const user = await users.findOne({ role: normalizedRole, username: String(username || "").trim() });
+    const normalizedUsername = String(username || "").trim();
+    const user = normalizedRole === "student"
+      ? await col("students").findOne({ regNo: normalizedUsername })
+      : await col("users").findOne({ role: normalizedRole, username: normalizedUsername });
     if (!user || !user.passwordHash) {
       console.log("  → 401: User not found or no password");
       return res.status(401).json({ error: "Invalid credentials" });
@@ -58,8 +61,11 @@ router.post("/login", async (req, res) => {
       return res.status(401).json({ error: "Invalid credentials" });
     }
     console.log("  JWT generation started");
-    const token = generateToken({ userId: user._id.toString(), role: user.role, username: user.username });
-    const sanitized = await attachProfile(toId(user));
+    const identity = normalizedRole === "student"
+      ? { id: user._id.toString(), username: user.regNo, role: "student", name: user.name, avatar: user.avatar }
+      : toId(user);
+    const token = generateToken({ userId: user._id.toString(), role: normalizedRole, username: normalizedUsername });
+    const sanitized = await attachProfile(identity);
     console.log("  → 200: Login successful");
     res.json({ token, user: sanitized });
   } catch (err) {
@@ -71,9 +77,14 @@ router.post("/login", async (req, res) => {
 // POST /api/auth/me
 router.get("/me", authenticate, async (req, res) => {
   try {
-    const user = await col("users").findOne({ _id: id(req.user.userId) });
+    const user = req.user.role === "student"
+      ? await col("students").findOne({ regNo: req.user.username })
+      : await col("users").findOne({ _id: id(req.user.userId), role: req.user.role });
     if (!user) return res.status(404).json({ error: "User not found" });
-    res.json(await attachProfile(toId(user)));
+    const identity = req.user.role === "student"
+      ? { id: user._id.toString(), username: user.regNo, role: "student", name: user.name, avatar: user.avatar }
+      : toId(user);
+    res.json(await attachProfile(identity));
   } catch (err) {
     console.error("Failed to fetch authenticated user profile:", err);
     res.status(500).json({ error: "Failed to fetch user" });
@@ -91,13 +102,11 @@ router.put("/profile", authenticate, async (req, res) => {
       return res.status(400).json({ error: "Choose one of the available student avatars" });
     }
 
-    const user = await col("users").findOne({ _id: id(req.user.userId), role: "student" });
+    const user = await col("students").findOne({ regNo: req.user.username });
     if (!user) return res.status(404).json({ error: "Student account not found" });
-    await storage.setStudentAvatar(user.username, avatar);
-    if (user.avatar) {
-      await col("users").updateOne({ _id: user._id }, { $unset: { avatar: "" } });
-    }
-    res.json(await attachProfile(toId({ ...user, avatar: undefined })));
+    await storage.setStudentAvatar(user.regNo, avatar);
+    await col("students").updateOne({ _id: user._id }, { $unset: { avatar: "" } });
+    res.json(await attachProfile({ id: user._id.toString(), username: user.regNo, role: "student", name: user.name }));
   } catch (err) {
     console.error("Failed to update profile avatar:", err);
     res.status(500).json({ error: `Failed to update profile avatar: ${err.message}` });
@@ -140,11 +149,14 @@ router.put("/password", authenticate, async (req, res) => {
     if (!currentPassword || !newPassword) {
       return res.status(400).json({ error: "currentPassword and newPassword are required" });
     }
-    const user = await col("users").findOne({ _id: id(req.user.userId) });
+    const collection = req.user.role === "student" ? col("students") : col("users");
+    const user = req.user.role === "student"
+      ? await collection.findOne({ regNo: req.user.username })
+      : await collection.findOne({ _id: id(req.user.userId), role: req.user.role });
     if (!user) return res.status(404).json({ error: "User not found" });
     const valid = await bcrypt.compare(String(currentPassword), user.passwordHash);
     if (!valid) return res.status(401).json({ error: "Current password is incorrect" });
-    await col("users").updateOne(
+    await collection.updateOne(
       { _id: user._id },
       { $set: { passwordHash: await bcrypt.hash(String(newPassword), 10), updatedAt: new Date() } }
     );

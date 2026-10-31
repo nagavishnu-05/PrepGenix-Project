@@ -1,6 +1,9 @@
-export function getStudentSection(regNo) {
-    const match = String(regNo || "").match(/CSE([A-D])(?=\d|$)/i);
-    return match?.[1]?.toUpperCase() || null;
+export function getStudentSection(regNo, rollNo) {
+    for (const identifier of [rollNo, regNo]) {
+        const match = String(identifier || "").match(/CSE([A-D])(?=\d|$)/i);
+        if (match) return match[1].toUpperCase();
+    }
+    return null;
 }
 
 function getBatchStartYear(batch) {
@@ -19,7 +22,7 @@ export function getSectionsForBatch(batch, students) {
         return year !== null && year >= 2025;
     });
     const hasUnclassifiedBatch = scopedBatches.some((item) => getBatchStartYear(item) === null);
-    const hasDSectionId = scopedStudents.some((student) => getStudentSection(student.regNo) === "D");
+    const hasDSectionId = scopedStudents.some((student) => getStudentSection(student.regNo, student.rollNo) === "D");
     const sections = ["A", "B", "C"];
 
     if (hasDSectionBatch || (hasUnclassifiedBatch && hasDSectionId)) {

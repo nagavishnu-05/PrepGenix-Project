@@ -1,11 +1,14 @@
 import { useState, useEffect, useCallback } from "react";
-import { Search, Users, FileText, BrainCircuit } from "lucide-react";
+import { Search, Users, FileText, BrainCircuit, Download } from "lucide-react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { PageHeader, EmptyState, LoadingState } from "@/components/portal/primitives";
 import { api } from "@/lib/api";
+import { downloadExcel } from "@/lib/excel-export";
+import { getStudentSection } from "@/lib/student-section";
 
 export default function PlacementStudents() {
     const [rows, setRows] = useState([]);
@@ -26,6 +29,26 @@ export default function PlacementStudents() {
         const t = setTimeout(load, search ? 400 : 0);
         return () => clearTimeout(t);
     }, [load]);
+
+    const exportStudents = async () => {
+        try {
+            await downloadExcel("Placement-Students", rows.map((student) => ({
+                Name: student.name || "",
+                "Registration Number": student.regNo || "",
+                "Roll Number": student.rollNo || "",
+                Section: getStudentSection(student.regNo, student.rollNo) || "",
+                Batch: student.batch || "",
+                CGPA: student.cgpa ?? "",
+                "Tests Taken": (student.aptitudeCount || 0) + (student.codingCount || 0),
+                "Aptitude Average (%)": student.aptitudeAverage ?? "",
+                "Coding Average (%)": student.codingAverage ?? "",
+                "Interview Rating": student.lastInterview?.rating ?? "",
+                "Resume Category": student.topCategory || "",
+            })), "Students");
+        } catch (error) {
+            alert(`Failed to export students: ${error.message}`);
+        }
+    };
 
     return (
         <div>
@@ -52,6 +75,9 @@ export default function PlacementStudents() {
                                 <SelectItem value="categorized">Categorized (have resume)</SelectItem>
                             </SelectContent>
                         </Select>
+                        <Button variant="outline" onClick={exportStudents} disabled={loading || rows.length === 0}>
+                            <Download className="h-4 w-4" /> Export Excel
+                        </Button>
                     </div>
                 </CardHeader>
                 <CardContent>
@@ -78,7 +104,7 @@ export default function PlacementStudents() {
                                     <TableRow key={s.regNo}>
                                         <TableCell>
                                             <p className="font-medium text-slate-800 dark:text-zinc-100">{s.name}</p>
-                                            <p className="text-xs text-slate-500 dark:text-zinc-500">{s.regNo}</p>
+                                            <p className="text-xs text-slate-500 dark:text-zinc-500">{s.regNo}{s.rollNo ? ` · Roll ${s.rollNo}` : ""}</p>
                                         </TableCell>
                                         <TableCell className="text-sm text-slate-600 dark:text-zinc-300">{s.batch || "—"}</TableCell>
                                         <TableCell className="text-sm text-slate-600 dark:text-zinc-300">{s.cgpa ?? "—"}</TableCell>

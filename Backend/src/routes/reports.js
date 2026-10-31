@@ -5,6 +5,7 @@ const { col, toId, id } = require("../db");
 const { authenticate } = require("../middleware/auth");
 const { getPerformance } = require("../perf");
 const storage = require("../lib/storage");
+const { publicStudent } = require("../lib/student-accounts");
 
 const router = express.Router();
 
@@ -172,6 +173,7 @@ router.get("/students", authenticate, async (req, res) => {
       const lastInterview = interview[interview.length - 1];
       return {
         regNo: s.regNo,
+        rollNo: s.rollNo,
         name: s.name,
         batch: s.batch,
         cgpa: s.cgpa,
@@ -310,7 +312,7 @@ router.get("/student/:regNo", authenticate, async (req, res) => {
     performance.aptitude = (performance.aptitude || []).filter((entry) => activeTestIds.has(String(entry.testId)));
     performance.coding = (performance.coding || []).filter((entry) => activeTestIds.has(String(entry.testId)));
     res.json({
-      ...toId(student),
+      ...publicStudent(student),
       performance,
       resume: resume ? { categories: resume.categories, topCategory: resume.topCategory, skills: resume.skills } : null,
     });
