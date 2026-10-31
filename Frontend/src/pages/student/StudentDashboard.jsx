@@ -9,7 +9,7 @@ import { StatusBadge } from "@/components/portal/status-badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { useAuthStore } from "@/store/auth-store";
 import { api } from "@/lib/api";
-import { cn } from "@/lib/utils";
+import { cn, formatAcademicPercentage } from "@/lib/utils";
 
 export default function StudentDashboard() {
     const user = useAuthStore((s) => s.user);
@@ -77,8 +77,8 @@ export default function StudentDashboard() {
                         <CardTitle className="text-sm font-medium text-slate-500 dark:text-zinc-400">Academic Snapshot</CardTitle>
                     </CardHeader>
                     <CardContent className="grid grid-cols-2 gap-6 sm:grid-cols-3">
-                        <div><p className="text-xs text-slate-500 dark:text-zinc-500">10th</p><p className="text-lg font-semibold text-slate-900 dark:text-white">{profile.tenth || "—"}%</p></div>
-                        <div><p className="text-xs text-slate-500 dark:text-zinc-500">12th</p><p className="text-lg font-semibold text-slate-900 dark:text-white">{profile.twelfth || "—"}%</p></div>
+                        <div><p className="text-xs text-slate-500 dark:text-zinc-500">10th</p><p className="text-lg font-semibold text-slate-900 dark:text-white">{formatAcademicPercentage(profile.tenth)}</p></div>
+                        <div><p className="text-xs text-slate-500 dark:text-zinc-500">12th</p><p className="text-lg font-semibold text-slate-900 dark:text-white">{formatAcademicPercentage(profile.twelfth)}</p></div>
                         <div><p className="text-xs text-slate-500 dark:text-zinc-500">Batch</p><p className="text-lg font-semibold text-slate-900 dark:text-white">{profile.batch || "—"}</p></div>
                     </CardContent>
                 </Card>

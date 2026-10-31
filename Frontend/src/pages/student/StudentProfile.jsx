@@ -6,6 +6,7 @@ import { StatusBadge } from "@/components/portal/status-badge";
 import { useAuthStore } from "@/store/auth-store";
 import { api } from "@/lib/api";
 import { getAvatarImage } from "@/lib/avatar-options";
+import { formatAcademicPercentage } from "@/lib/utils";
 
 function PerfRow({ label, list }) {
     if (!list?.length) return <p className="text-sm text-zinc-500">No {label.toLowerCase()} yet.</p>;
@@ -75,8 +76,8 @@ export default function StudentProfile() {
                     <Card className="border-zinc-800/80 bg-zinc-900/40">
                         <CardHeader><CardTitle className="text-sm font-medium text-zinc-400">Academic Record</CardTitle></CardHeader>
                         <CardContent className="grid grid-cols-3 gap-4">
-                            <div className="rounded-lg border border-zinc-800 bg-zinc-950/40 p-4 text-center"><p className="text-2xl font-bold text-white">{p.tenth || "—"}%</p><p className="text-xs text-zinc-500">10th</p></div>
-                            <div className="rounded-lg border border-zinc-800 bg-zinc-950/40 p-4 text-center"><p className="text-2xl font-bold text-white">{p.twelfth || "—"}%</p><p className="text-xs text-zinc-500">12th</p></div>
+                            <div className="rounded-lg border border-zinc-800 bg-zinc-950/40 p-4 text-center"><p className="text-2xl font-bold text-white">{formatAcademicPercentage(p.tenth)}</p><p className="text-xs text-zinc-500">10th</p></div>
+                            <div className="rounded-lg border border-zinc-800 bg-zinc-950/40 p-4 text-center"><p className="text-2xl font-bold text-white">{formatAcademicPercentage(p.twelfth)}</p><p className="text-xs text-zinc-500">12th</p></div>
                             <div className="rounded-lg border border-zinc-800 bg-zinc-950/40 p-4 text-center"><p className="text-2xl font-bold text-white">{p.cgpa || "—"}</p><p className="text-xs text-zinc-500">CGPA</p></div>
                         </CardContent>
                     </Card>

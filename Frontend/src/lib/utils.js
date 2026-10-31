@@ -19,6 +19,12 @@ export function formatDateTime(date) {
         minute: "2-digit",
     });
 }
+export function formatAcademicPercentage(value) {
+    const text = String(value ?? "").trim();
+    if (!text) return "—";
+    if (text.toLowerCase() === "pass") return "PASS";
+    return `${text}%`;
+}
 export function formatTime(seconds) {
     const hrs = Math.floor(seconds / 3600);
     const mins = Math.floor((seconds % 3600) / 60);

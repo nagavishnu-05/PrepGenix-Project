@@ -95,7 +95,7 @@ export default function StaffStudents() {
         setBusy(true);
         try {
             const r = await api.students.importExcel(file);
-            alert(`Imported ${r.count || 0} students.`);
+            alert(`Import complete: ${r.total} students processed (${r.created} new, ${r.updated} updated).`);
             setImportOpen(false);
             load();
         } catch (e) {

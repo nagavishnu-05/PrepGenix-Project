@@ -9,7 +9,7 @@ import { useAuthStore } from "@/store/auth-store";
 import { useUIStore } from "@/store/ui-store";
 import { api } from "@/lib/api";
 import { STUDENT_AVATARS, getAvatarImage } from "@/lib/avatar-options";
-import { cn } from "@/lib/utils";
+import { cn, formatAcademicPercentage } from "@/lib/utils";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 
 function PerfRow({ label, list }) {
@@ -37,7 +37,7 @@ export default function SettingsPage() {
     const user = useAuthStore((s) => s.user);
     const updateUser = useAuthStore((s) => s.updateUser);
     const { theme, setTheme } = useUIStore();
-    const [student, setStudent] = useState(null);
+    const [student, setStudent] = useState(user?.profile || null);
     const [loadingStudent, setLoadingStudent] = useState(user?.role === "student");
 
     // Password state
@@ -51,9 +51,10 @@ export default function SettingsPage() {
 
     useEffect(() => {
         if (user?.role === "student" && regNo) {
+            setStudent(user.profile || null);
             api.students.get(regNo)
                 .then(setStudent)
-                .catch(() => {})
+                .catch(() => setStudent(user.profile || null))
                 .finally(() => setLoadingStudent(false));
         }
     }, [user, regNo]);
@@ -175,7 +176,7 @@ export default function SettingsPage() {
                             {isStudent && (
                                 <>
                                     <div className="flex flex-wrap justify-center gap-2 text-xs text-slate-600 dark:text-zinc-400">
-                                        <span className="rounded-md bg-slate-100 dark:bg-zinc-800 px-2.5 py-1">{p.batch || "2023-2027"}</span>
+                                        <span className="rounded-md bg-slate-100 dark:bg-zinc-800 px-2.5 py-1">{p.batch || "—"}</span>
                                         <span className="rounded-md bg-slate-100 dark:bg-zinc-800 px-2.5 py-1">CGPA {p.cgpa || "—"}</span>
                                     </div>
                                     <div className="mt-2 w-full space-y-2 text-sm text-slate-600 dark:text-zinc-400">
@@ -296,11 +297,11 @@ export default function SettingsPage() {
                                 <CardHeader><CardTitle className="text-sm font-medium text-slate-500 dark:text-zinc-400">Academic Records</CardTitle></CardHeader>
                                 <CardContent className="grid grid-cols-3 gap-4">
                                     <div className="rounded-lg border border-slate-200 dark:border-zinc-800 bg-slate-50 dark:bg-zinc-950/40 p-4 text-center">
-                                        <p className="text-2xl font-bold text-slate-900 dark:text-white">{p.tenth || "—"}%</p>
+                                        <p className="text-2xl font-bold text-slate-900 dark:text-white">{formatAcademicPercentage(p.tenth)}</p>
                                         <p className="text-xs text-slate-500 dark:text-zinc-500">10th Percentage</p>
                                     </div>
                                     <div className="rounded-lg border border-slate-200 dark:border-zinc-800 bg-slate-50 dark:bg-zinc-950/40 p-4 text-center">
-                                        <p className="text-2xl font-bold text-slate-900 dark:text-white">{p.twelfth || "—"}%</p>
+                                        <p className="text-2xl font-bold text-slate-900 dark:text-white">{formatAcademicPercentage(p.twelfth)}</p>
                                         <p className="text-xs text-slate-500 dark:text-zinc-500">12th Percentage</p>
                                     </div>
                                     <div className="rounded-lg border border-slate-200 dark:border-zinc-800 bg-slate-50 dark:bg-zinc-950/40 p-4 text-center">

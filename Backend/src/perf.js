@@ -3,9 +3,9 @@
 const { col, toId, upsertDoc } = require("./db");
 
 async function getPerformance(regNo) {
-  let doc = await col("performances", "perf").findOne({ regNo });
+  const doc = await col("performances", "perf").findOne({ regNo });
   if (!doc) {
-    doc = { regNo, aptitude: [], coding: [], interview: [], updatedAt: new Date() };
+    return { regNo, aptitude: [], coding: [], interview: [], updatedAt: new Date() };
   }
   return toId(doc);
 }

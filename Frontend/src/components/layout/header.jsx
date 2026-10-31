@@ -271,7 +271,7 @@ export function Header({ breadcrumbs = [] }) {
     return (
         <motion.header
             initial={false}
-            className="sticky top-4 z-50 mx-auto w-[92%] rounded-2xl border border-slate-200/60 bg-white/30 shadow-lg backdrop-blur-xl transition-colors duration-300 dark:border-zinc-800/30 dark:bg-zinc-950/30 sm:w-[95%] sm:max-w-6xl"
+            className="sticky top-4 z-50 mx-auto w-[92%] rounded-2xl border border-slate-200/60 bg-white/30 shadow-lg backdrop-blur-xl transition-colors duration-300 dark:border-zinc-800/30 dark:bg-zinc-950/30 sm:w-[95%] sm:max-w-7xl"
         >
             <div className="pointer-events-none relative grid h-20 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 px-3 sm:gap-4 sm:px-6">
                 <Link to={useAuthStore.getState().homeFor(user?.role) || "/"} className="pointer-events-auto flex shrink-0 items-center gap-2.5 rounded-xl px-1 py-1">
@@ -307,6 +307,7 @@ export function Header({ breadcrumbs = [] }) {
                                 to={item.href}
                                 data-nav-href={item.href}
                                 onPointerDown={() => startNavPress(item.href)}
+                                aria-label={item.label}
                                 aria-current={active ? "page" : undefined}
                                 title={`Hold and drag to rearrange ${item.label}`}
                                 className="flex shrink-0 touch-none"
@@ -329,7 +330,7 @@ export function Header({ breadcrumbs = [] }) {
                                         />
                                     )}
                                     <Icon className="relative z-10 h-[18px] w-[18px] shrink-0 transition-transform duration-300 group-hover:-translate-y-0.5" />
-                                    <span className="relative z-10 whitespace-nowrap">{item.label}</span>
+                                    <span className="relative z-10 hidden whitespace-nowrap 2xl:inline">{item.label}</span>
                                 </motion.span>
                             </Link>
                         );
