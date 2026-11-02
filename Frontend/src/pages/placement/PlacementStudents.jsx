@@ -74,8 +74,8 @@ export default function PlacementStudents() {
 
             <Card className="border-slate-200/80 bg-white/80 dark:border-zinc-800/80 dark:bg-zinc-900/50">
                 <CardHeader className="p-4 sm:p-5">
-                    <div className="flex flex-col gap-3 xl:flex-row xl:flex-wrap xl:items-end">
-                        <div className="relative min-w-0 xl:w-56 xl:flex-none">
+                    <div className="flex w-full flex-col gap-3 xl:flex-row xl:flex-nowrap xl:items-end">
+                        <div className="relative min-w-0 xl:flex-1">
                             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400 dark:text-zinc-500" />
                             <Input
                                 placeholder="Search by name or registration number..."
@@ -84,8 +84,8 @@ export default function PlacementStudents() {
                                 className="h-10 bg-white pl-9 dark:bg-zinc-900"
                             />
                         </div>
-                        <div className="grid flex-1 gap-3 sm:grid-cols-3 xl:flex-none">
-                            <div className="min-w-0 space-y-1.5 xl:w-36">
+                        <div className="grid min-w-0 flex-1 gap-3 sm:grid-cols-3">
+                            <div className="min-w-0 space-y-1.5">
                                 <label className="text-xs font-medium text-slate-500 dark:text-zinc-400">Batch</label>
                                 <InlineSelect
                                     ariaLabel="Filter by batch"
@@ -97,7 +97,7 @@ export default function PlacementStudents() {
                                     options={[{ value: "all", label: "All batches" }, ...batches.map((item) => ({ value: item, label: item }))]}
                                 />
                             </div>
-                            <div className="min-w-0 space-y-1.5 xl:w-36">
+                            <div className="min-w-0 space-y-1.5">
                                 <label className="text-xs font-medium text-slate-500 dark:text-zinc-400">Section</label>
                                 <InlineSelect
                                     ariaLabel="Filter by section"
@@ -106,7 +106,7 @@ export default function PlacementStudents() {
                                     options={[{ value: "all", label: "All sections" }, ...sections.map((item) => ({ value: item, label: `Section ${item}` }))]}
                                 />
                             </div>
-                            <div className="min-w-0 space-y-1.5 xl:w-36">
+                            <div className="min-w-0 space-y-1.5">
                                 <label className="text-xs font-medium text-slate-500 dark:text-zinc-400">Resume</label>
                                 <InlineSelect
                                     ariaLabel="Filter by resume"
