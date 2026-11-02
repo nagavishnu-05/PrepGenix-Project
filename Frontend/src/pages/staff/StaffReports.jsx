@@ -20,10 +20,10 @@ export default function StaffReports() {
     const [selectedTest, setSelectedTest] = useState("");
     const [loading, setLoading] = useState(true);
     const [batch, setBatch] = useState("");
+    const [section, setSection] = useState("");
     const [search, setSearch] = useState("");
     const [studentSearchInput, setStudentSearchInput] = useState("");
     const [tab, setTab] = useState("students");
-    const [studentAnalyticsOpen, setStudentAnalyticsOpen] = useState(false);
     const [testPopup, setTestPopup] = useState(null);
     const [selectedAttempt, setSelectedAttempt] = useState(null);
     const [batches, setBatches] = useState([]);
@@ -94,7 +94,7 @@ export default function StaffReports() {
 
     const exportStudentReport = async () => {
         try {
-            await downloadExcel("Student-Performance-Report", rows.map((student) => ({
+            await downloadExcel("Student-Performance-Report", studentRows.map((student) => ({
                 Name: student.name || "",
                 "Registration Number": student.regNo || "",
                 "Roll Number": student.rollNo || "",
@@ -137,10 +137,10 @@ export default function StaffReports() {
         }
     };
 
-    const openStudentAnalytics = () => {
-        setTab("students");
-        setStudentAnalyticsOpen(true);
-    };
+    const studentRows = rows.filter((student) => !section || getStudentSection(student.regNo, student.rollNo) === section);
+    const sectionOptions = [...new Set(rows
+        .map((student) => getStudentSection(student.regNo, student.rollNo))
+        .filter(Boolean))].sort();
 
     const resultColor = (r) => {
         if (r === "selected") return "text-emerald-400";
@@ -150,116 +150,124 @@ export default function StaffReports() {
     };
 
     return (
-        <div>
+        <div className="space-y-5">
             <PageHeader title="Reports" description="Performance analytics across students and tests" />
 
-            <div className="mb-4 flex gap-2">
+            <div role="tablist" aria-label="Report views" className="inline-flex flex-wrap gap-1 rounded-xl border border-slate-200 bg-white p-1 shadow-sm dark:border-zinc-800 dark:bg-zinc-900/70">
                 <button
-                    onClick={openStudentAnalytics}
-                    className={`rounded-lg px-3 py-1.5 text-sm font-medium ${tab === "students" ? "bg-violet-600 text-white" : "bg-zinc-800/60 text-zinc-400 hover:text-zinc-200"}`}
+                    type="button"
+                    role="tab"
+                    aria-selected={tab === "students"}
+                    onClick={() => setTab("students")}
+                    className={`inline-flex items-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold transition-colors ${tab === "students" ? "bg-violet-600 text-white shadow-sm" : "text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"}`}
                 >
-                    Student Analytics
+                    <Users className="h-4 w-4" /> Student Analytics
                 </button>
                 <button
+                    type="button"
+                    role="tab"
+                    aria-selected={tab === "test"}
                     onClick={() => setTab("test")}
-                    className={`rounded-lg px-3 py-1.5 text-sm font-medium ${tab === "test" ? "bg-violet-600 text-white" : "bg-zinc-800/60 text-zinc-400 hover:text-zinc-200"}`}
+                    className={`inline-flex items-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold transition-colors ${tab === "test" ? "bg-violet-600 text-white shadow-sm" : "text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"}`}
                 >
-                    Per Test
+                    <FileCode className="h-4 w-4" /> Per Test
                 </button>
             </div>
 
             {tab === "students" && (
-                <Card className="border-slate-200/80 dark:border-zinc-800/80 bg-white/70 dark:bg-zinc-900/40">
-                    <CardHeader className="space-y-3">
+                <Card className="border-slate-200/80 bg-white/70 dark:border-zinc-800/80 dark:bg-zinc-900/40">
+                    <CardHeader className="space-y-4">
                         <div>
                             <h2 className="text-lg font-semibold text-slate-900 dark:text-zinc-100">Student analytics</h2>
-                            <p className="text-sm text-slate-500 dark:text-zinc-400">Search and review individual student performance in a dedicated popup.</p>
+                            <p className="text-sm text-slate-500 dark:text-zinc-400">Review student performance and narrow results by batch or section.</p>
+                        </div>
+                        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-[minmax(240px,1fr)_220px_180px_auto]">
+                            <div className="relative min-w-0">
+                                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400 dark:text-zinc-500" />
+                                <Input
+                                    placeholder="Search name or registration number..."
+                                    value={studentSearchInput}
+                                    onChange={(event) => setStudentSearchInput(event.target.value)}
+                                    className="pl-9"
+                                />
+                            </div>
+                            <Select
+                                value={batch || "__all_batches__"}
+                                onValueChange={(value) => {
+                                    setBatch(value === "__all_batches__" ? "" : value);
+                                    setSection("");
+                                }}
+                            >
+                                <SelectTrigger><SelectValue placeholder="All batches" /></SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="__all_batches__">All batches</SelectItem>
+                                    {batches.map((item) => <SelectItem key={item} value={item}>{item}</SelectItem>)}
+                                </SelectContent>
+                            </Select>
+                            <Select value={section || "__all_sections__"} onValueChange={(value) => setSection(value === "__all_sections__" ? "" : value)}>
+                                <SelectTrigger><SelectValue placeholder="All sections" /></SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="__all_sections__">All sections</SelectItem>
+                                    {sectionOptions.map((item) => <SelectItem key={item} value={item}>Section {item}</SelectItem>)}
+                                </SelectContent>
+                            </Select>
+                            <Button variant="outline" onClick={exportStudentReport} disabled={loading || studentRows.length === 0}>
+                                <Download className="h-4 w-4" /> Export Excel
+                            </Button>
                         </div>
                     </CardHeader>
                     <CardContent>
-                        <Button onClick={openStudentAnalytics}>
-                            <Users className="h-4 w-4" /> Open student analytics
-                        </Button>
+                        {loading ? (
+                            <LoadingState label="Loading reports" className="py-10" />
+                        ) : studentRows.length === 0 ? (
+                            <EmptyState icon={Users} title="No students found" description="No student records match the search, batch, and section filters." />
+                        ) : (
+                            <div className="max-h-[70vh] overflow-auto rounded-lg border border-slate-200 dark:border-zinc-800">
+                                <Table>
+                                    <TableHeader>
+                                        <TableRow>
+                                            <TableHead>Student</TableHead>
+                                            <TableHead>Batch</TableHead>
+                                            <TableHead>Section</TableHead>
+                                            <TableHead>Aptitude</TableHead>
+                                            <TableHead>Coding</TableHead>
+                                            <TableHead>Interviews</TableHead>
+                                            <TableHead>Violations</TableHead>
+                                            <TableHead>Top Category</TableHead>
+                                        </TableRow>
+                                    </TableHeader>
+                                    <TableBody>
+                                        {studentRows.map((student) => (
+                                            <TableRow key={student.regNo}>
+                                                <TableCell>
+                                                    <p className="font-medium text-slate-800 dark:text-zinc-100">{student.name}</p>
+                                                    <p className="text-xs text-slate-500 dark:text-zinc-500">{student.regNo}</p>
+                                                </TableCell>
+                                                <TableCell className="text-sm text-slate-600 dark:text-zinc-300">{student.batch || "—"}</TableCell>
+                                                <TableCell className="text-sm text-slate-600 dark:text-zinc-300">{getStudentSection(student.regNo, student.rollNo) || "—"}</TableCell>
+                                                <TableCell>
+                                                    <p className="text-sm text-slate-700 dark:text-zinc-200">{student.aptitudeCount ? `${student.aptitudeAverage}% avg` : "—"}</p>
+                                                    {student.lastAptitude && <p className={`text-xs ${resultColor(student.lastAptitude.result)}`}>{student.lastAptitude.result} · {student.lastAptitude.percentage}%</p>}
+                                                </TableCell>
+                                                <TableCell>
+                                                    <p className="text-sm text-slate-700 dark:text-zinc-200">{student.codingCount ? `${student.codingAverage}% avg` : "—"}</p>
+                                                    {student.lastCoding && <p className={`text-xs ${resultColor(student.lastCoding.result)}`}>{student.lastCoding.result} · {student.lastCoding.percentage}%</p>}
+                                                </TableCell>
+                                                <TableCell>
+                                                    <p className="text-sm text-slate-700 dark:text-zinc-200">{student.interviewCount || "—"}</p>
+                                                    {student.lastInterview && <p className="text-xs text-slate-500 dark:text-zinc-400">rating {student.lastInterview.rating}/5</p>}
+                                                </TableCell>
+                                                <TableCell className="text-sm text-slate-700 dark:text-zinc-200">{student.violationCount ?? 0}</TableCell>
+                                                <TableCell className="text-sm text-slate-600 dark:text-zinc-300">{student.topCategory || "—"}</TableCell>
+                                            </TableRow>
+                                        ))}
+                                    </TableBody>
+                                </Table>
+                            </div>
+                        )}
                     </CardContent>
                 </Card>
             )}
-
-            <Dialog open={studentAnalyticsOpen} onOpenChange={setStudentAnalyticsOpen}>
-                <DialogContent className="max-h-[90vh] max-w-7xl overflow-y-auto">
-                    <DialogHeader>
-                        <DialogTitle>Student Analytics</DialogTitle>
-                        <DialogDescription>Search students by name or registration number and filter by batch.</DialogDescription>
-                    </DialogHeader>
-                    <div className="flex flex-wrap items-center gap-3">
-                        <div className="relative min-w-48 flex-1">
-                            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400 dark:text-zinc-500" />
-                            <Input
-                                placeholder="Search by student name or registration number..."
-                                value={studentSearchInput}
-                                onChange={(event) => setStudentSearchInput(event.target.value)}
-                                className="pl-9"
-                            />
-                        </div>
-                        <Select
-                            value={batch || "__all_batches__"}
-                            onValueChange={(value) => setBatch(value === "__all_batches__" ? "" : value)}
-                        >
-                            <SelectTrigger className="w-48"><SelectValue placeholder="All batches" /></SelectTrigger>
-                            <SelectContent>
-                                <SelectItem value="__all_batches__">All batches</SelectItem>
-                                {batches.map((item) => <SelectItem key={item} value={item}>{item}</SelectItem>)}
-                            </SelectContent>
-                        </Select>
-                        <Button variant="outline" onClick={exportStudentReport} disabled={loading || rows.length === 0}>
-                            <Download className="h-4 w-4" /> Export Excel
-                        </Button>
-                    </div>
-                    {loading ? (
-                        <LoadingState label="Loading reports" className="py-10" />
-                    ) : rows.length === 0 ? (
-                        <EmptyState icon={Users} title="No data" description="No student performance data matches the search and batch filters." />
-                    ) : (
-                        <div className="max-h-[60vh] overflow-auto rounded-lg border border-slate-200 dark:border-zinc-800">
-                            <Table>
-                                <TableHeader>
-                                    <TableRow>
-                                        <TableHead>Student</TableHead>
-                                        <TableHead>Aptitude</TableHead>
-                                        <TableHead>Coding</TableHead>
-                                        <TableHead>Interviews</TableHead>
-                                        <TableHead>Violations</TableHead>
-                                        <TableHead>Top Category</TableHead>
-                                    </TableRow>
-                                </TableHeader>
-                                <TableBody>
-                                    {rows.map((student) => (
-                                        <TableRow key={student.regNo}>
-                                            <TableCell>
-                                                <p className="font-medium text-slate-800 dark:text-zinc-100">{student.name}</p>
-                                                <p className="text-xs text-slate-500 dark:text-zinc-500">{student.regNo}</p>
-                                            </TableCell>
-                                            <TableCell>
-                                                <p className="text-sm text-slate-700 dark:text-zinc-200">{student.aptitudeCount ? `${student.aptitudeAverage}% avg` : "—"}</p>
-                                                {student.lastAptitude && <p className={`text-xs ${resultColor(student.lastAptitude.result)}`}>{student.lastAptitude.result} · {student.lastAptitude.percentage}%</p>}
-                                            </TableCell>
-                                            <TableCell>
-                                                <p className="text-sm text-slate-700 dark:text-zinc-200">{student.codingCount ? `${student.codingAverage}% avg` : "—"}</p>
-                                                {student.lastCoding && <p className={`text-xs ${resultColor(student.lastCoding.result)}`}>{student.lastCoding.result} · {student.lastCoding.percentage}%</p>}
-                                            </TableCell>
-                                            <TableCell>
-                                                <p className="text-sm text-slate-700 dark:text-zinc-200">{student.interviewCount || "—"}</p>
-                                                {student.lastInterview && <p className="text-xs text-slate-500 dark:text-zinc-400">rating {student.lastInterview.rating}/5</p>}
-                                            </TableCell>
-                                            <TableCell className="text-sm text-slate-700 dark:text-zinc-200">{student.violationCount ?? 0}</TableCell>
-                                            <TableCell className="text-sm text-slate-600 dark:text-zinc-300">{student.topCategory || "—"}</TableCell>
-                                        </TableRow>
-                                    ))}
-                                </TableBody>
-                            </Table>
-                        </div>
-                    )}
-                </DialogContent>
-            </Dialog>
 
             {tab === "test" && (
                 <Card className="border-slate-200/80 dark:border-zinc-800/80 bg-white/70 dark:bg-zinc-900/40">
