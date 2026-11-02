@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { Plus, Search, Trash2, Edit3, Upload, Sparkles, BrainCircuit, FileCode, ChevronDown, ChevronRight, Layers, Library, SlidersHorizontal } from "lucide-react";
+import { Plus, Search, Trash2, Edit3, Upload, Sparkles, BrainCircuit, FileCode, ChevronRight, Layers, Library, SlidersHorizontal } from "lucide-react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -32,8 +32,7 @@ export default function StaffQuestions() {
     const [msg, setMsg] = useState("");
     const [selectedIds, setSelectedIds] = useState([]);
 
-    // Grouping state
-    const [expandedGroups, setExpandedGroups] = useState({ pool: true });
+    const [selectedGroup, setSelectedGroup] = useState(null);
 
     const load = useCallback(() => {
         setLoading(true);
@@ -197,79 +196,28 @@ export default function StaffQuestions() {
                             });
                         }
 
-                        const toggleGroup = (id) => {
-                            setExpandedGroups(x => ({ ...x, [id]: !x[id] }));
-                        };
-
                         return (
                             <div className="space-y-4">
                                 {groups.map((g) => {
-                                    const isExpanded = !!expandedGroups[g.id];
                                     const GroupIcon = g.id === "pool" ? Library : Layers;
                                     return (
                                         <div key={g.id} className="rounded-xl border border-slate-200/85 dark:border-zinc-800/80 bg-white/70 dark:bg-zinc-900/20 overflow-hidden shadow-sm hover:shadow transition-shadow">
                                             <button
                                                 type="button"
-                                                onClick={() => toggleGroup(g.id)}
-                                                className="flex w-full items-center justify-between px-4 py-3.5 bg-slate-50/70 text-left dark:bg-zinc-950/30 hover:bg-slate-100/50 dark:hover:bg-zinc-800/20 cursor-pointer border-b border-slate-200/80 dark:border-zinc-800 transition-colors"
+                                                onClick={() => setSelectedGroup(g)}
+                                                className="flex w-full items-center justify-between px-4 py-3.5 bg-slate-50/70 text-left dark:bg-zinc-950/30 hover:bg-slate-100/50 dark:hover:bg-zinc-800/20 cursor-pointer transition-colors"
+                                                aria-label={`View ${g.questions.length} questions in ${g.name}`}
                                             >
                                                 <div className="flex items-center gap-3">
-                                                    {isExpanded ? <ChevronDown className="h-4 w-4 text-slate-400 dark:text-zinc-500" /> : <ChevronRight className="h-4 w-4 text-slate-400 dark:text-zinc-500" />}
+                                                    <ChevronRight className="h-4 w-4 text-slate-400 dark:text-zinc-500" />
                                                     <GroupIcon className={cn("h-4.5 w-4.5", g.id === "pool" ? "text-amber-600 dark:text-amber-400" : "text-violet-605 dark:text-violet-400")} />
                                                     <span className="font-bold text-sm text-slate-800 dark:text-zinc-200">{g.name}</span>
                                                     <span className="rounded-full bg-violet-50 dark:bg-violet-500/10 px-2.5 py-0.5 text-xs text-violet-650 dark:text-violet-400 font-semibold border border-violet-100 dark:border-violet-500/20">
                                                         {g.questions.length} Questions
                                                     </span>
                                                 </div>
+                                                <span className="text-sm font-medium text-violet-700 dark:text-violet-300">View questions</span>
                                             </button>
-                                            {isExpanded && (
-                                                <Table>
-                                                    <TableHeader>
-                                                        <TableRow>
-                                                            <TableHead className="w-10"><Checkbox checked={g.questions.length > 0 && g.questions.every((q) => selectedIds.includes(q.id))} onCheckedChange={(checked) => setSelectedIds((ids) => checked ? [...new Set([...ids, ...g.questions.map((q) => q.id)])] : ids.filter((id) => !g.questions.some((q) => q.id === id)))} aria-label={`Select all questions in ${g.name}`} /></TableHead>
-                                                            <TableHead>Question</TableHead>
-                                                            <TableHead>Type</TableHead>
-                                                            <TableHead>Format</TableHead>
-                                                            <TableHead>Difficulty</TableHead>
-                                                            <TableHead>Points</TableHead>
-                                                            <TableHead>Source</TableHead>
-                                                            <TableHead className="text-right">Actions</TableHead>
-                                                        </TableRow>
-                                                    </TableHeader>
-                                                    <TableBody>
-                                                        {g.questions.map((q) => (
-                                                            <TableRow key={q.id} className="hover:bg-slate-50/40 dark:hover:bg-zinc-800/10 transition-colors">
-                                                                <TableCell><Checkbox checked={selectedIds.includes(q.id)} onCheckedChange={(checked) => setSelectedIds((ids) => checked ? [...new Set([...ids, q.id])] : ids.filter((id) => id !== q.id))} aria-label={`Select ${q.title}`} /></TableCell>
-                                                                <TableCell>
-                                                                    <p className="font-semibold text-slate-800 dark:text-zinc-200">{q.title}</p>
-                                                                    <p className="max-w-xs truncate text-xs text-slate-555 dark:text-zinc-500">{q.description}</p>
-                                                                </TableCell>
-                                                                <TableCell>
-                                                                    <span className="flex items-center gap-1.5 text-sm text-slate-700 dark:text-zinc-300 capitalize">
-                                                                        {q.type === "coding" ? <FileCode className="h-3.5 w-3.5 text-violet-550" /> : <BrainCircuit className="h-3.5 w-3.5 text-emerald-555" />}
-                                                                        {q.type}
-                                                                    </span>
-                                                                </TableCell>
-                                                                <TableCell className="text-sm text-slate-700 dark:text-zinc-300 capitalize">{q.format}</TableCell>
-                                                                <TableCell><DifficultyBadge difficulty={q.difficulty} /></TableCell>
-                                                                <TableCell className="text-sm text-slate-700 dark:text-zinc-300 font-medium">{q.points}</TableCell>
-                                                                <TableCell className="text-sm text-slate-500 dark:text-zinc-405 capitalize">{q.source || (q.sourceFile ? "AIML" : "manual")}</TableCell>
-                                                                <TableCell className="text-right">
-                                                                    <div className="flex items-center justify-end gap-1">
-                                                                        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={(e) => { e.stopPropagation(); openEdit(q); }}><Edit3 className="h-4 w-4" /></Button>
-                                                                        <Button variant="ghost" size="icon" className="h-8 w-8 text-red-650 hover:text-red-500 dark:text-red-400 dark:hover:text-red-300" onClick={(e) => { e.stopPropagation(); remove(q); }}><Trash2 className="h-4 w-4" /></Button>
-                                                                    </div>
-                                                                </TableCell>
-                                                            </TableRow>
-                                                        ))}
-                                                        {g.questions.length === 0 && (
-                                                            <TableRow>
-                                                                <TableCell colSpan={8} className="py-4 text-center text-slate-500">No questions match filters.</TableCell>
-                                                            </TableRow>
-                                                        )}
-                                                    </TableBody>
-                                                </Table>
-                                            )}
                                         </div>
                                     );
                                 })}
@@ -278,6 +226,85 @@ export default function StaffQuestions() {
                     })()}
                 </CardContent>
             </Card>
+
+            <Dialog open={selectedGroup !== null} onOpenChange={(open) => { if (!open) setSelectedGroup(null); }}>
+                <DialogContent className="max-h-[90vh] max-w-6xl overflow-y-auto">
+                    <DialogHeader>
+                        <DialogTitle>{selectedGroup?.name || "Questions"}</DialogTitle>
+                        <DialogDescription>
+                            {selectedGroup?.questions.length || 0} question{selectedGroup?.questions.length === 1 ? "" : "s"} in this group.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="overflow-x-auto">
+                        <Table>
+                            <TableHeader>
+                                <TableRow>
+                                    <TableHead className="w-10">
+                                        <Checkbox
+                                            checked={Boolean(selectedGroup?.questions.length) && selectedGroup.questions.every((question) => selectedIds.includes(question.id))}
+                                            onCheckedChange={(checked) => setSelectedIds((ids) => checked
+                                                ? [...new Set([...ids, ...selectedGroup.questions.map((question) => question.id)])]
+                                                : ids.filter((id) => !selectedGroup.questions.some((question) => question.id === id)))}
+                                            aria-label={`Select all questions in ${selectedGroup?.name || "group"}`}
+                                        />
+                                    </TableHead>
+                                    <TableHead>Question</TableHead>
+                                    <TableHead>Type</TableHead>
+                                    <TableHead>Format</TableHead>
+                                    <TableHead>Difficulty</TableHead>
+                                    <TableHead>Points</TableHead>
+                                    <TableHead>Source</TableHead>
+                                    <TableHead className="text-right">Actions</TableHead>
+                                </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                                {(selectedGroup?.questions || []).map((question) => (
+                                    <TableRow key={question.id}>
+                                        <TableCell>
+                                            <Checkbox
+                                                checked={selectedIds.includes(question.id)}
+                                                onCheckedChange={(checked) => setSelectedIds((ids) => checked
+                                                    ? [...new Set([...ids, question.id])]
+                                                    : ids.filter((id) => id !== question.id))}
+                                                aria-label={`Select ${question.title}`}
+                                            />
+                                        </TableCell>
+                                        <TableCell>
+                                            <p className="font-semibold text-slate-800 dark:text-zinc-200">{question.title}</p>
+                                            <p className="max-w-xs truncate text-xs text-slate-500 dark:text-zinc-500">{question.description}</p>
+                                        </TableCell>
+                                        <TableCell>
+                                            <span className="flex items-center gap-1.5 text-sm capitalize text-slate-700 dark:text-zinc-300">
+                                                {question.type === "coding" ? <FileCode className="h-3.5 w-3.5 text-violet-500" /> : <BrainCircuit className="h-3.5 w-3.5 text-emerald-500" />}
+                                                {question.type}
+                                            </span>
+                                        </TableCell>
+                                        <TableCell className="text-sm capitalize text-slate-700 dark:text-zinc-300">{question.format}</TableCell>
+                                        <TableCell><DifficultyBadge difficulty={question.difficulty} /></TableCell>
+                                        <TableCell className="text-sm font-medium text-slate-700 dark:text-zinc-300">{question.points}</TableCell>
+                                        <TableCell className="text-sm capitalize text-slate-500 dark:text-zinc-400">{question.source || (question.sourceFile ? "AIML" : "manual")}</TableCell>
+                                        <TableCell className="text-right">
+                                            <div className="flex items-center justify-end gap-1">
+                                                <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEdit(question)} aria-label={`Edit ${question.title}`}>
+                                                    <Edit3 className="h-4 w-4" />
+                                                </Button>
+                                                <Button variant="ghost" size="icon" className="h-8 w-8 text-red-600 hover:text-red-500 dark:text-red-400" onClick={() => remove(question)} aria-label={`Delete ${question.title}`}>
+                                                    <Trash2 className="h-4 w-4" />
+                                                </Button>
+                                            </div>
+                                        </TableCell>
+                                    </TableRow>
+                                ))}
+                                {selectedGroup?.questions.length === 0 && (
+                                    <TableRow>
+                                        <TableCell colSpan={8} className="py-4 text-center text-slate-500">No questions match filters.</TableCell>
+                                    </TableRow>
+                                )}
+                            </TableBody>
+                        </Table>
+                    </div>
+                </DialogContent>
+            </Dialog>
 
             <Dialog open={filtersOpen} onOpenChange={setFiltersOpen}>
                 <DialogContent>
