@@ -79,6 +79,7 @@ export default function StaffTests() {
     // Grouping & Analytics popup state
     const [expandedTestId, setExpandedTestId] = useState(null);
     const [testAnalytics, setTestAnalytics] = useState(null);
+    const [testAnalyticsView, setTestAnalyticsView] = useState("overview");
     const [analyticsLoading, setAnalyticsLoading] = useState(false);
     const [violationReportAttempt, setViolationReportAttempt] = useState(null);
 
@@ -106,6 +107,8 @@ export default function StaffTests() {
 
     const openAnalytics = async (t) => {
         setAnalyticsLoading(true);
+        setTestAnalyticsView("overview");
+        setViolationReportAttempt(null);
         try {
             const data = await api.reports.perTest(t.id);
             setTestAnalytics(data);
@@ -277,6 +280,11 @@ export default function StaffTests() {
             setBusy(false);
         }
     };
+
+    const reportViolations = violationReportAttempt?.violations || [];
+    const reportViolationTypes = [...new Set(reportViolations.map((violation) => violation.type || "UNKNOWN"))];
+    const reportHighSeverityCount = reportViolations.filter((violation) => violation.severity === "high").length;
+    const reportEvidenceCount = reportViolations.filter((violation) => violation.cameraFrameUrl).length;
 
     return (
         <div>
@@ -615,21 +623,27 @@ export default function StaffTests() {
             </Dialog>
 
             {/* Test Analytics popup dialog */}
-            <Dialog open={testAnalytics !== null} onOpenChange={(open) => { if (!open) setTestAnalytics(null); }}>
+            <Dialog open={testAnalytics !== null && testAnalyticsView !== "violations"} onOpenChange={(open) => {
+                if (!open) {
+                    setTestAnalytics(null);
+                    setTestAnalyticsView("overview");
+                }
+            }}>
                 <DialogContent className="max-h-[90vh] max-w-4xl overflow-y-auto">
                     <DialogHeader>
-                        <DialogTitle>Test Performance Analytics</DialogTitle>
+                        <DialogTitle>{testAnalyticsView === "attempts" ? "Student Attempts" : "Test Performance Analytics"}</DialogTitle>
                         <DialogDescription>
-                            Overall metrics and student completions for: <strong className="text-slate-800 dark:text-zinc-100">{testAnalytics?.test?.title}</strong>
+                            {testAnalyticsView === "attempts" ? "Completed attempts for: " : "Overall metrics and student completions for: "}
+                            <strong className="text-slate-800 dark:text-zinc-100">{testAnalytics?.test?.title}</strong>
                         </DialogDescription>
-                        {testAnalytics && (
+                        {testAnalytics && testAnalyticsView === "overview" && (
                             <Button variant="outline" size="sm" onClick={exportTestAnalytics} disabled={!testAnalytics.attempts?.length}>
                                 <Download className="h-4 w-4" /> Export results
                             </Button>
                         )}
                     </DialogHeader>
 
-                    {testAnalytics && (
+                    {testAnalytics && testAnalyticsView === "overview" && (
                         <div className="space-y-6 pt-4">
                             {/* Summary Cards */}
                             <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
@@ -653,7 +667,6 @@ export default function StaffTests() {
                                 </div>
                             </div>
 
-                            {/* Chart representation */}
                             {testAnalytics.attempts?.length > 0 && (
                                 <div className="rounded-lg border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/40 p-4">
                                     <p className="mb-3 text-xs font-bold uppercase tracking-wider text-slate-550 dark:text-zinc-400 flex items-center gap-1.5"><TrendingUp className="h-4 w-4 text-violet-500" /> Score Distribution Chart</p>
@@ -670,90 +683,81 @@ export default function StaffTests() {
                                     </div>
                                 </div>
                             )}
-
-                            {/* Student Attempts Table */}
-                            <div className="space-y-2">
-                                <p className="text-xs font-bold uppercase tracking-wider text-slate-550 dark:text-zinc-400">Student Attempts Listing</p>
-                                <div className="rounded-lg border border-slate-200 dark:border-zinc-800 overflow-hidden">
-                                    <Table>
-                                        <TableHeader>
-                                            <TableRow>
-                                                <TableHead>Student</TableHead>
-                                                <TableHead>Score</TableHead>
-                                                <TableHead>Outcome</TableHead>
-                                                <TableHead>Violations</TableHead>
-                                                <TableHead>Completed Date</TableHead>
-                                                <TableHead className="text-right">Actions</TableHead>
+                            <Button
+                                type="button"
+                                variant="outline"
+                                className="w-full"
+                                onClick={() => setTestAnalyticsView("attempts")}
+                                disabled={!testAnalytics.attempts?.length}
+                            >
+                                <Users className="h-4 w-4" /> View Student Attempts ({testAnalytics.attempts?.length || 0})
+                            </Button>
+                        </div>
+                    )}
+                    {testAnalytics && testAnalyticsView === "attempts" && (
+                        <div className="space-y-4 pt-2">
+                            <Button type="button" variant="outline" onClick={() => setTestAnalyticsView("overview")}>
+                                Back to performance analytics
+                            </Button>
+                            <div className="overflow-x-auto rounded-lg border border-slate-200 dark:border-zinc-800">
+                                <Table>
+                                    <TableHeader>
+                                        <TableRow>
+                                            <TableHead>Student</TableHead>
+                                            <TableHead>Score</TableHead>
+                                            <TableHead>Completed Date / Time</TableHead>
+                                            <TableHead>Outcome</TableHead>
+                                            <TableHead>View Violations</TableHead>
+                                            <TableHead className="text-right">Actions</TableHead>
+                                        </TableRow>
+                                    </TableHeader>
+                                    <TableBody>
+                                        {(testAnalytics.attempts || []).map((attempt) => (
+                                            <TableRow key={attempt.id}>
+                                                <TableCell>
+                                                    <p className="font-semibold text-slate-800 dark:text-zinc-200">{attempt.studentName || "Student"}</p>
+                                                    <p className="text-xs text-slate-500 dark:text-zinc-400">{attempt.studentRegNo}</p>
+                                                </TableCell>
+                                                <TableCell className="font-medium text-slate-800 dark:text-zinc-200">
+                                                    {attempt.score ?? 0} / {attempt.totalScore ?? "—"}
+                                                </TableCell>
+                                                <TableCell className="text-xs text-slate-500 dark:text-zinc-400">
+                                                    {attempt.completedAt ? new Date(attempt.completedAt).toLocaleString() : "—"}
+                                                </TableCell>
+                                                <TableCell className="capitalize">{attempt.result || "completed"}</TableCell>
+                                                <TableCell>
+                                                    <Button
+                                                        type="button"
+                                                        variant="outline"
+                                                        size="sm"
+                                                        onClick={() => {
+                                                            setViolationReportAttempt(attempt);
+                                                            setTestAnalyticsView("violations");
+                                                        }}
+                                                    >
+                                                        <Eye className="h-4 w-4" /> View Violations ({attempt.violationCount ?? attempt.violations?.length ?? 0})
+                                                    </Button>
+                                                </TableCell>
+                                                <TableCell className="text-right">
+                                                    <Button
+                                                        type="button"
+                                                        variant="ghost"
+                                                        size="sm"
+                                                        className="text-red-500 font-semibold hover:bg-red-50 dark:hover:bg-red-950/20"
+                                                        onClick={() => handleResetAttempt(attempt.id, testAnalytics.test)}
+                                                    >
+                                                        Reset Attempt
+                                                    </Button>
+                                                </TableCell>
                                             </TableRow>
-                                        </TableHeader>
-                                        <TableBody>
-                                            {(testAnalytics.attempts || []).map((a) => {
-                                                const rows = a.violations || [];
-                                                return (
-                                                    <TableRow key={a.id} className="hover:bg-slate-50/40 dark:hover:bg-zinc-800/10">
-                                                            <TableCell>
-                                                                <p className="font-semibold text-slate-800 dark:text-zinc-200">{a.studentName}</p>
-                                                                <p className="text-xs text-slate-500">{a.studentRegNo}</p>
-                                                            </TableCell>
-                                                            <TableCell className="text-slate-800 dark:text-zinc-200 font-medium">
-                                                                {a.score} / {a.totalScore}
-                                                            </TableCell>
-                                                            <TableCell className="capitalize">
-                                                                <span className={cn(
-                                                                    "rounded-full px-2 py-0.5 text-xs font-bold",
-                                                                    a.result === "passed" ? "bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" :
-                                                                    a.result === "failed" ? "bg-red-50 dark:bg-red-500/10 text-red-650 dark:text-red-400" :
-                                                                    "bg-slate-100 dark:bg-zinc-800 text-slate-600 dark:text-zinc-300"
-                                                                )}>
-                                                                    {a.result || "completed"}
-                                                                </span>
-                                                            </TableCell>
-                                                            <TableCell>
-                                                                {rows.length > 0 ? (
-                                                                    <button
-                                                                        type="button"
-                                                                        onClick={() => setViolationReportAttempt(a)}
-                                                                        className="inline-flex cursor-pointer items-center gap-1.5 rounded-full bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-700 transition-colors hover:bg-amber-100 dark:bg-amber-500/10 dark:text-amber-400 dark:hover:bg-amber-500/20"
-                                                                    >
-                                                                        <AlertTriangle className="h-3 w-3" />
-                                                                        {rows.length}
-                                                                        <Eye className="h-3 w-3" />
-                                                                    </button>
-                                                                ) : (
-                                                                    <span className="text-slate-500 dark:text-zinc-500">0</span>
-                                                                )}
-                                                            </TableCell>
-                                                            <TableCell className="text-xs text-slate-500">
-                                                                {a.completedAt ? new Date(a.completedAt).toLocaleString() : "—"}
-                                                            </TableCell>
-                                                            <TableCell className="text-right">
-                                                                <div className="flex justify-end gap-1">
-                                                                    {rows.length > 0 && (
-                                                                        <Button variant="ghost" size="sm" className="cursor-pointer" onClick={() => setViolationReportAttempt(a)}>
-                                                                            <Eye className="h-4 w-4" /> Report
-                                                                        </Button>
-                                                                    )}
-                                                                    <Button
-                                                                        variant="ghost"
-                                                                        size="sm"
-                                                                        className="text-red-500 font-semibold cursor-pointer hover:bg-red-50 dark:hover:bg-red-950/20"
-                                                                        onClick={() => handleResetAttempt(a.id, testAnalytics.test)}
-                                                                    >
-                                                                        Reset Attempt
-                                                                    </Button>
-                                                                </div>
-                                                            </TableCell>
-                                                        </TableRow>
-                                                );
-                                            })}
-                                            {!(testAnalytics.attempts || []).length && (
-                                                <TableRow>
-                                                    <TableCell colSpan={6} className="py-6 text-center text-sm text-slate-500">No attempts completed yet.</TableCell>
-                                                </TableRow>
-                                            )}
-                                        </TableBody>
-                                    </Table>
-                                </div>
+                                        ))}
+                                        {!testAnalytics.attempts?.length && (
+                                            <TableRow>
+                                                <TableCell colSpan={6} className="py-6 text-center text-sm text-slate-500">No attempts completed yet.</TableCell>
+                                            </TableRow>
+                                        )}
+                                    </TableBody>
+                                </Table>
                             </div>
                         </div>
                     )}
@@ -761,20 +765,56 @@ export default function StaffTests() {
             </Dialog>
 
             {/* Violation report popup */}
-            <Dialog open={violationReportAttempt !== null} onOpenChange={(open) => { if (!open) setViolationReportAttempt(null); }}>
+            <Dialog open={violationReportAttempt !== null} onOpenChange={(open) => {
+                if (!open) {
+                    setViolationReportAttempt(null);
+                    setTestAnalyticsView("attempts");
+                }
+            }}>
                 <DialogContent className="max-h-[90vh] max-w-4xl overflow-y-auto">
                     <DialogHeader>
-                        <DialogTitle>Violation Report</DialogTitle>
+                        <DialogTitle>Attempt Violation Details</DialogTitle>
                         <DialogDescription>
                             {violationReportAttempt?.studentName || "Student"}
                             {violationReportAttempt?.studentRegNo ? ` · ${violationReportAttempt.studentRegNo}` : ""}
                             {" · "}
-                            {(violationReportAttempt?.violations || []).length} recorded event{(violationReportAttempt?.violations || []).length === 1 ? "" : "s"}
+                            {testAnalytics?.test?.title || "Test"} · {reportViolations.length} recorded event{reportViolations.length === 1 ? "" : "s"}
                         </DialogDescription>
                     </DialogHeader>
                     <div className="space-y-3 pt-2">
+                        <Button type="button" variant="outline" onClick={() => {
+                            setViolationReportAttempt(null);
+                            setTestAnalyticsView("attempts");
+                        }}>
+                            Back to student attempts
+                        </Button>
+                        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                            {[
+                                { label: "Score", value: `${violationReportAttempt?.score ?? 0} / ${violationReportAttempt?.totalScore ?? "—"}` },
+                                { label: "Total violations", value: reportViolations.length },
+                                { label: "Violation types", value: reportViolationTypes.length },
+                                { label: "High severity", value: reportHighSeverityCount },
+                            ].map((stat) => (
+                                <div key={stat.label} className="rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-zinc-800 dark:bg-zinc-950/40">
+                                    <p className="text-xs text-slate-500 dark:text-zinc-400">{stat.label}</p>
+                                    <p className="mt-1 text-lg font-semibold text-slate-900 dark:text-zinc-100">{stat.value}</p>
+                                </div>
+                            ))}
+                        </div>
+                        {reportViolationTypes.length > 0 && (
+                            <div className="flex flex-wrap gap-2">
+                                {reportViolationTypes.map((type) => (
+                                    <span key={type} className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-medium text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-300">
+                                        {violationLabel(type)} · {reportViolations.filter((violation) => (violation.type || "UNKNOWN") === type).length}
+                                    </span>
+                                ))}
+                            </div>
+                        )}
+                        <p className="text-xs text-slate-500 dark:text-zinc-400">
+                            Camera evidence available for {reportEvidenceCount} of {reportViolations.length} recorded events.
+                        </p>
                         <div className="grid gap-3 md:grid-cols-2">
-                            {(violationReportAttempt?.violations || []).map((v, i) => (
+                            {reportViolations.map((v, i) => (
                                 <div key={i} className="flex gap-3 rounded-lg border border-slate-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900/60">
                                     {v.cameraFrameUrl ? (
                                         <img
@@ -802,7 +842,7 @@ export default function StaffTests() {
                                     </div>
                                 </div>
                             ))}
-                            {!(violationReportAttempt?.violations || []).length && (
+                            {!reportViolations.length && (
                                 <p className="text-sm text-slate-500 dark:text-zinc-500">No violations recorded for this attempt.</p>
                             )}
                         </div>
@@ -818,13 +858,17 @@ export default function StaffTests() {
                                     onClick={() => {
                                         const target = violationReportAttempt;
                                         setViolationReportAttempt(null);
+                                        setTestAnalyticsView("attempts");
                                         handleResetAttempt(target.id, testAnalytics?.test);
                                     }}
                                 >
                                     Reset Attempt
                                 </Button>
                             )}
-                            <Button variant="outline" onClick={() => setViolationReportAttempt(null)}>Close</Button>
+                            <Button variant="outline" onClick={() => {
+                                setViolationReportAttempt(null);
+                                setTestAnalyticsView("attempts");
+                            }}>Close</Button>
                         </div>
                     </div>
                 </DialogContent>

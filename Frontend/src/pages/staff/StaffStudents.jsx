@@ -199,29 +199,60 @@ export default function StaffStudents() {
                         <EmptyState icon={Users} title="No students found" description="Add students manually or import them from an Excel file." />
                     ) : (
                         <div className="grid grid-cols-1 gap-3">
-                            {Object.entries(grouped).map(([batchKey, studentList]) => (
-                                <button
-                                    key={batchKey}
-                                    type="button"
-                                    onClick={() => { setBatchStudentSearch(""); setSelectedBatch(batchKey); }}
-                                    className="group flex min-h-24 items-center justify-between gap-4 rounded-xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-violet-300 hover:bg-violet-50/50 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 dark:border-zinc-800 dark:bg-zinc-900/60 dark:hover:border-violet-800 dark:hover:bg-violet-950/20"
-                                >
-                                    <span className="flex min-w-0 items-center gap-3">
-                                        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-violet-100 text-violet-700 dark:bg-violet-500/15 dark:text-violet-300">
-                                            <Layers3 className="h-5 w-5" />
-                                        </span>
-                                        <span className="min-w-0">
-                                            <span className="block truncate font-semibold text-slate-900 dark:text-zinc-100">
-                                                {batchKey === "No Batch" ? "Unassigned Batch" : batchKey}
+                            {Object.entries(grouped).map(([batchKey, studentList]) => {
+                                const studentsWithCgpa = studentList.filter((student) =>
+                                    student.cgpa !== null
+                                    && student.cgpa !== undefined
+                                    && student.cgpa !== ""
+                                    && Number.isFinite(Number(student.cgpa))
+                                );
+                                const averageCgpa = studentsWithCgpa.length
+                                    ? (studentsWithCgpa.reduce((total, student) => total + Number(student.cgpa), 0) / studentsWithCgpa.length).toFixed(2)
+                                    : "—";
+                                const aptitudeAttempts = studentList.reduce((total, student) => total + (Number(student.aptitudeCount) || 0), 0);
+                                const codingAttempts = studentList.reduce((total, student) => total + (Number(student.codingCount) || 0), 0);
+                                const resumeCount = studentList.filter((student) => student.hasResume).length;
+                                const sectionCount = new Set(studentList.map((student) => getStudentSection(student.regNo, student.rollNo)).filter(Boolean)).size;
+                                return (
+                                    <button
+                                        key={batchKey}
+                                        type="button"
+                                        onClick={() => { setBatchStudentSearch(""); setSelectedBatch(batchKey); }}
+                                        className="group rounded-xl border border-slate-200 bg-white p-5 text-left shadow-sm transition hover:border-violet-300 hover:bg-violet-50/50 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 dark:border-zinc-800 dark:bg-zinc-900/60 dark:hover:border-violet-800 dark:hover:bg-violet-950/20"
+                                    >
+                                        <span className="flex flex-wrap items-center justify-between gap-4">
+                                            <span className="flex min-w-0 items-center gap-3">
+                                                <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-violet-100 text-violet-700 dark:bg-violet-500/15 dark:text-violet-300">
+                                                    <Layers3 className="h-5 w-5" />
+                                                </span>
+                                                <span className="min-w-0">
+                                                    <span className="block truncate text-base font-semibold text-slate-900 dark:text-zinc-100">
+                                                        {batchKey === "No Batch" ? "Unassigned Batch" : batchKey}
+                                                    </span>
+                                                    <span className="mt-1 block text-sm text-slate-500 dark:text-zinc-400">
+                                                        {studentList.length} student{studentList.length !== 1 ? "s" : ""} in this batch
+                                                    </span>
+                                                </span>
                                             </span>
-                                            <span className="mt-1 block text-sm text-slate-500 dark:text-zinc-400">
-                                                {studentList.length} student{studentList.length !== 1 ? "s" : ""}
-                                            </span>
+                                            <span className="shrink-0 rounded-lg bg-violet-50 px-3 py-2 text-sm font-semibold text-violet-700 group-hover:bg-violet-100 dark:bg-violet-500/10 dark:text-violet-300 dark:group-hover:bg-violet-500/20">View students</span>
                                         </span>
-                                    </span>
-                                    <span className="shrink-0 text-sm font-medium text-violet-700 group-hover:underline dark:text-violet-300">View students</span>
-                                </button>
-                            ))}
+                                        <span className="mt-5 grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
+                                            {[
+                                                { label: "Average CGPA", value: averageCgpa },
+                                                { label: "Aptitude attempts", value: aptitudeAttempts },
+                                                { label: "Coding attempts", value: codingAttempts },
+                                                { label: "Resume uploaded", value: `${resumeCount} / ${studentList.length}` },
+                                                { label: "Sections", value: sectionCount || "—" },
+                                            ].map((stat) => (
+                                                <span key={stat.label} className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-950/40">
+                                                    <span className="block text-xs text-slate-500 dark:text-zinc-400">{stat.label}</span>
+                                                    <span className="mt-0.5 block text-sm font-semibold text-slate-800 dark:text-zinc-100">{stat.value}</span>
+                                                </span>
+                                            ))}
+                                        </span>
+                                    </button>
+                                );
+                            })}
                         </div>
                     )}
                 </CardContent>

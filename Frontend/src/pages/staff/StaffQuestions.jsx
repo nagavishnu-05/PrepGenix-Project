@@ -197,6 +197,15 @@ export default function StaffQuestions() {
                             ) : (
                             <div className="grid grid-cols-1 gap-3">
                                 {groups.map((g) => {
+                                    const aptitudeCount = g.questions.filter((question) => question.type === "aptitude").length;
+                                    const codingCount = g.questions.filter((question) => question.type === "coding").length;
+                                    const totalPoints = g.questions.reduce((total, question) => total + (Number(question.points) || 0), 0);
+                                    const difficultyCounts = ["easy", "medium", "hard"]
+                                        .map((level) => ({
+                                            level,
+                                            count: g.questions.filter((question) => question.difficulty === level).length,
+                                        }))
+                                        .filter(({ count }) => count > 0);
                                     return (
                                         <div
                                             key={g.id}
@@ -209,20 +218,44 @@ export default function StaffQuestions() {
                                                     setSelectedGroup(g);
                                                 }
                                             }}
-                                            className="group flex min-h-24 cursor-pointer items-center justify-between gap-4 rounded-xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-violet-300 hover:bg-violet-50/50 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 dark:border-zinc-800 dark:bg-zinc-900/60 dark:hover:border-violet-800 dark:hover:bg-violet-950/20"
+                                            className="group cursor-pointer rounded-xl border border-slate-200 bg-white p-5 text-left shadow-sm transition hover:border-violet-300 hover:bg-violet-50/50 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 dark:border-zinc-800 dark:bg-zinc-900/60 dark:hover:border-violet-800 dark:hover:bg-violet-950/20"
                                         >
-                                            <span className="flex min-w-0 items-center gap-3">
-                                                <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-violet-100 text-violet-700 dark:bg-violet-500/15 dark:text-violet-300">
-                                                    <Layers className="h-5 w-5" />
-                                                </span>
-                                                <span className="min-w-0">
-                                                    <span className="block truncate font-semibold text-slate-900 dark:text-zinc-100">{g.name}</span>
-                                                    <span className="mt-1 block text-sm text-slate-500 dark:text-zinc-400">
-                                                        {g.questions.length} question{g.questions.length === 1 ? "" : "s"}
+                                            <span className="flex flex-wrap items-center justify-between gap-4">
+                                                <span className="flex min-w-0 items-center gap-3">
+                                                    <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-violet-100 text-violet-700 dark:bg-violet-500/15 dark:text-violet-300">
+                                                        <Layers className="h-5 w-5" />
+                                                    </span>
+                                                    <span className="min-w-0">
+                                                        <span className="block truncate text-base font-semibold text-slate-900 dark:text-zinc-100">{g.name}</span>
+                                                        <span className="mt-1 block text-sm text-slate-500 dark:text-zinc-400">
+                                                            {g.questions.length} question{g.questions.length === 1 ? "" : "s"} assigned
+                                                        </span>
                                                     </span>
                                                 </span>
+                                                <span className="shrink-0 rounded-lg bg-violet-50 px-3 py-2 text-sm font-semibold text-violet-700 group-hover:bg-violet-100 dark:bg-violet-500/10 dark:text-violet-300 dark:group-hover:bg-violet-500/20">View questions</span>
                                             </span>
-                                            <span className="shrink-0 text-sm font-medium text-violet-700 group-hover:underline dark:text-violet-300">View questions</span>
+                                            <span className="mt-5 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                                                {[
+                                                    { label: "Aptitude", value: aptitudeCount },
+                                                    { label: "Coding", value: codingCount },
+                                                    { label: "Total points", value: totalPoints },
+                                                    { label: "Difficulty levels", value: difficultyCounts.length },
+                                                ].map((stat) => (
+                                                    <span key={stat.label} className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-950/40">
+                                                        <span className="block text-xs text-slate-500 dark:text-zinc-400">{stat.label}</span>
+                                                        <span className="mt-0.5 block text-sm font-semibold text-slate-800 dark:text-zinc-100">{stat.value}</span>
+                                                    </span>
+                                                ))}
+                                            </span>
+                                            {difficultyCounts.length > 0 && (
+                                                <span className="mt-3 flex flex-wrap gap-2">
+                                                    {difficultyCounts.map(({ level, count }) => (
+                                                        <span key={level} className="rounded-full border border-slate-200 px-2.5 py-1 text-xs capitalize text-slate-600 dark:border-zinc-700 dark:text-zinc-300">
+                                                            {level}: {count}
+                                                        </span>
+                                                    ))}
+                                                </span>
+                                            )}
                                         </div>
                                     );
                                 })}
