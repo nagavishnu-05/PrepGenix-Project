@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, } from "@/components/ui/dialog";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 const ROLE_COLORS = {
     admin: "bg-violet-500/10 text-violet-400 border-violet-500/20",
     candidate: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",
@@ -220,11 +221,16 @@ export default function AdminUsersPage() {
               </div>)}
             <div className="space-y-2">
               <label className="text-xs text-zinc-400">Role</label>
-              <select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })} className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100">
-                <option value="candidate">Candidate</option>
-                <option value="admin">Admin</option>
-                <option value="interviewer">Interviewer</option>
-              </select>
+              <Select value={form.role} onValueChange={(role) => setForm({ ...form, role })}>
+                <SelectTrigger className="border-zinc-700 bg-zinc-800 text-zinc-100">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="candidate">Candidate</SelectItem>
+                  <SelectItem value="admin">Admin</SelectItem>
+                  <SelectItem value="interviewer">Interviewer</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">

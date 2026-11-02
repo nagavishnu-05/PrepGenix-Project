@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { Plus, Search, Trash2, Edit3, Upload, Sparkles, BrainCircuit, FileCode, ChevronDown, ChevronRight, Layers, Library } from "lucide-react";
+import { Plus, Search, Trash2, Edit3, Upload, Sparkles, BrainCircuit, FileCode, ChevronDown, ChevronRight, Layers, Library, SlidersHorizontal } from "lucide-react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,6 +20,7 @@ export default function StaffQuestions() {
     const [type, setType] = useState("");
     const [difficulty, setDifficulty] = useState("");
     const [search, setSearch] = useState("");
+    const [filtersOpen, setFiltersOpen] = useState(false);
     const [formOpen, setFormOpen] = useState(false);
     const [editing, setEditing] = useState(null);
     const [importOpen, setImportOpen] = useState(false);
@@ -147,23 +148,10 @@ export default function StaffQuestions() {
                             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400 dark:text-zinc-500" />
                             <Input placeholder="Search questions..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" />
                         </div>
-                        <Select value={type} onValueChange={setType}>
-                            <SelectTrigger className="w-36"><SelectValue placeholder="All types" /></SelectTrigger>
-                            <SelectContent>
-                                <SelectItem value="">All types</SelectItem>
-                                <SelectItem value="aptitude">Aptitude</SelectItem>
-                                <SelectItem value="coding">Coding</SelectItem>
-                            </SelectContent>
-                        </Select>
-                        <Select value={difficulty} onValueChange={setDifficulty}>
-                            <SelectTrigger className="w-36"><SelectValue placeholder="Difficulty" /></SelectTrigger>
-                            <SelectContent>
-                                <SelectItem value="">All</SelectItem>
-                                <SelectItem value="easy">Easy</SelectItem>
-                                <SelectItem value="medium">Medium</SelectItem>
-                                <SelectItem value="hard">Hard</SelectItem>
-                            </SelectContent>
-                        </Select>
+                        <Button variant="outline" onClick={() => setFiltersOpen(true)}>
+                            <SlidersHorizontal className="h-4 w-4" />
+                            Filters{type || difficulty ? " (active)" : ""}
+                        </Button>
                         {selectedIds.length > 0 && <Button variant="destructive" onClick={removeSelected} disabled={busy}><Trash2 className="h-4 w-4" /> Delete selected ({selectedIds.length})</Button>}
                     </div>
                 </CardHeader>
@@ -290,6 +278,61 @@ export default function StaffQuestions() {
                     })()}
                 </CardContent>
             </Card>
+
+            <Dialog open={filtersOpen} onOpenChange={setFiltersOpen}>
+                <DialogContent>
+                    <DialogHeader>
+                        <DialogTitle>Filter questions</DialogTitle>
+                        <DialogDescription>Choose the question types and difficulty levels to show.</DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-5">
+                        <section className="space-y-2">
+                            <h3 className="text-sm font-medium">Type</h3>
+                            <div className="flex flex-wrap gap-2">
+                                {[
+                                    { value: "", label: "All types" },
+                                    { value: "aptitude", label: "Aptitude" },
+                                    { value: "coding", label: "Coding" },
+                                ].map((option) => (
+                                    <Button
+                                        key={option.value || "all"}
+                                        type="button"
+                                        variant={type === option.value ? "default" : "outline"}
+                                        aria-pressed={type === option.value}
+                                        onClick={() => setType(option.value)}
+                                    >
+                                        {option.label}
+                                    </Button>
+                                ))}
+                            </div>
+                        </section>
+                        <section className="space-y-2">
+                            <h3 className="text-sm font-medium">Difficulty</h3>
+                            <div className="flex flex-wrap gap-2">
+                                {[
+                                    { value: "", label: "All" },
+                                    { value: "easy", label: "Easy" },
+                                    { value: "medium", label: "Medium" },
+                                    { value: "hard", label: "Hard" },
+                                ].map((option) => (
+                                    <Button
+                                        key={option.value || "all"}
+                                        type="button"
+                                        variant={difficulty === option.value ? "default" : "outline"}
+                                        aria-pressed={difficulty === option.value}
+                                        onClick={() => setDifficulty(option.value)}
+                                    >
+                                        {option.label}
+                                    </Button>
+                                ))}
+                            </div>
+                        </section>
+                        <div className="flex justify-end">
+                            <Button onClick={() => setFiltersOpen(false)}>Done</Button>
+                        </div>
+                    </div>
+                </DialogContent>
+            </Dialog>
 
             <Dialog open={formOpen} onOpenChange={setFormOpen}>
                 <DialogContent className="max-w-2xl">

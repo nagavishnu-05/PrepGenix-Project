@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useParams, useSearchParams, useNavigate } from "react-router-dom";
-import { Clock, Send, Play, CheckCircle2, XCircle, Camera, Mic, Maximize2, ShieldAlert, Video, VideoOff, MicOff, ScanFace, AlertTriangle, Terminal, Loader2, RotateCcw, Braces, ChevronDown, Move } from "lucide-react";
+import { Clock, Send, Play, CheckCircle2, XCircle, Camera, Mic, Maximize2, ShieldAlert, Video, VideoOff, MicOff, ScanFace, AlertTriangle, Terminal, Loader2, RotateCcw, Braces, Move } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent } from "@/components/ui/card";
@@ -12,6 +12,7 @@ import { TestAttemptReport } from "@/components/assessment/test-attempt-report";
 import { DifficultyBadge, LoadingState } from "@/components/portal/primitives";
 import { StatusBadge } from "@/components/portal/status-badge";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
 import useProctoring from "@/hooks/use-proctoring";
@@ -1034,21 +1035,19 @@ const codeBuffersRef = useRef({});
                         <div className="flex min-h-0 flex-1 flex-col gap-3">
                             <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white dark:border-zinc-800 dark:bg-zinc-900/40">
                                 <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 px-3 py-2 dark:border-zinc-800">
-                                    <div className="relative">
-                                        <Braces className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-violet-400" />
-                                        <select
-                                            aria-label="Programming language"
-                                            value={language}
-                                            onChange={(e) => handleLanguageChange(e.target.value)}
-                                            disabled={answerBlocked}
-                                            className="h-9 min-w-40 appearance-none rounded-lg border border-slate-300 bg-white py-1.5 pl-9 pr-9 text-sm font-medium text-slate-700 shadow-sm transition hover:border-violet-400 focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:border-violet-500"
-                                        >
-                                            {LANGUAGES.map((l) => (
-                                                <option key={l.key} value={l.key}>{l.label}</option>
+                                    <Select value={language} onValueChange={handleLanguageChange} disabled={answerBlocked}>
+                                        <SelectTrigger aria-label="Programming language" className="h-9 min-w-40 border-slate-300 bg-white text-sm font-medium text-slate-700 shadow-sm hover:border-violet-400 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:border-violet-500">
+                                            <span className="flex min-w-0 items-center gap-2">
+                                                <Braces className="h-4 w-4 shrink-0 text-violet-400" />
+                                                <SelectValue />
+                                            </span>
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            {LANGUAGES.map((languageOption) => (
+                                                <SelectItem key={languageOption.key} value={languageOption.key}>{languageOption.label}</SelectItem>
                                             ))}
-                                        </select>
-                                        <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500 dark:text-zinc-400" />
-                                    </div>
+                                        </SelectContent>
+                                    </Select>
                                     <Button size="sm" variant="outline" onClick={handleRun} disabled={answerBlocked || running}>
                                         <Play className="h-3.5 w-3.5" /> {running ? "Running..." : "Run code"}
                                     </Button>

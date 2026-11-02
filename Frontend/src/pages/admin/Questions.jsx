@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useAuthStore } from "@/store/auth-store";
 const DIFFICULTY_COLORS = {
     Easy: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",
@@ -280,18 +281,24 @@ export default function AdminQuestionsPage() {
               <div className="grid grid-cols-3 gap-2">
                 <div className="space-y-2">
                   <label className="text-xs text-zinc-400">Type</label>
-                  <select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })} className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100">
-                    {QUESTION_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
-                  </select>
-                </div>
-                <div className="space-y-2">
-                  <label className="text-xs text-zinc-400">Difficulty</label>
-                  <select value={form.difficulty} onChange={(e) => setForm({ ...form, difficulty: e.target.value })} className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100">
-                    <option value="Easy">Easy</option>
-                    <option value="Medium">Medium</option>
-                    <option value="Hard">Hard</option>
-                  </select>
-                </div>
+                <Select value={form.type} onValueChange={(type) => setForm({ ...form, type })}>
+                  <SelectTrigger className="border-zinc-700 bg-zinc-800 text-zinc-100"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {QUESTION_TYPES.map((type) => <SelectItem key={type.value} value={type.value}>{type.label}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <label className="text-xs text-zinc-400">Difficulty</label>
+                <Select value={form.difficulty} onValueChange={(difficulty) => setForm({ ...form, difficulty })}>
+                  <SelectTrigger className="border-zinc-700 bg-zinc-800 text-zinc-100"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="Easy">Easy</SelectItem>
+                    <SelectItem value="Medium">Medium</SelectItem>
+                    <SelectItem value="Hard">Hard</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
                 <div className="space-y-2">
                   <label className="text-xs text-zinc-400">Points</label>
                   <Input type="number" value={form.points} onChange={(e) => setForm({ ...form, points: parseInt(e.target.value) || 0 })}/>

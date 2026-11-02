@@ -26,7 +26,7 @@ import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/store/auth-store";
 import { useUIStore } from "@/store/ui-store";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { api } from "@/lib/api";
 import { getAvatarImage } from "@/lib/avatar-options";
 import { Button } from "@/components/ui/button";
@@ -77,6 +77,8 @@ export function Header({ breadcrumbs = [] }) {
     const draggingHrefRef = useRef(null);
     const suppressNavClick = useRef(false);
     const [notifications, setNotifications] = useState([]);
+    const [notificationsOpen, setNotificationsOpen] = useState(false);
+    const [profileOpen, setProfileOpen] = useState(false);
     const [notificationError, setNotificationError] = useState("");
     const [notificationLoading, setNotificationLoading] = useState(true);
     const [dismissedIds, setDismissedIds] = useState([]);
@@ -340,101 +342,113 @@ export function Header({ breadcrumbs = [] }) {
                     {theme === "dark" ? <Sun className="h-4.5 w-4.5 text-amber-400" /> : <Moon className="h-4.5 w-4.5 text-indigo-400" />}
                 </button>
 
-                {/* Notifications Dropdown */}
-                <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                        <button aria-label={`Notifications${unreadCount ? `, ${unreadCount} unread` : ""}`} className="relative flex h-9 w-9 items-center justify-center rounded-lg text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-200">
-                            {unreadCount ? <BellRing className="h-4.5 w-4.5" /> : <Bell className="h-4.5 w-4.5" />}
-                            {unreadCount > 0 && (
-                                <motion.span initial={{ scale: 0 }} animate={{ scale: 1 }} className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold text-white">
-                                    {unreadCount}
-                                </motion.span>
-                            )}
-                        </button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end" className="w-80">
-                        <div className="flex items-center justify-between px-2">
-                            <DropdownMenuLabel className="px-0">Notifications</DropdownMenuLabel>
-                            {visibleNotifications.length > 0 && (
-                                <div className="flex items-center gap-1">
-                                    {unreadCount > 0 && (
-                                        <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={markAllRead}>
-                                            <CheckCheck className="h-3.5 w-3.5" /> Mark all read
-                                        </Button>
-                                    )}
-                                    <Button variant="ghost" size="sm" className="h-7 px-2 text-xs text-red-600 hover:text-red-700 dark:text-red-400" onClick={clearNotifications}>
-                                        Clear all
-                                    </Button>
-                                </div>
-                            )}
-                        </div>
-                        <DropdownMenuSeparator />
-                        {notificationLoading ? (
-                            <LoadingState label="Loading notifications" className="px-3 py-5 text-xs" />
-                        ) : notificationError ? (
-                            <p role="alert" className="px-3 py-4 text-xs text-red-500">{notificationError}</p>
-                        ) : visibleNotifications.length === 0 ? (
-                            <p className="px-3 py-5 text-center text-xs text-slate-500 dark:text-zinc-400">You’re all caught up.</p>
-                        ) : visibleNotifications.map((notification) => (
-                            <DropdownMenuItem
-                                key={notification.id}
-                                onSelect={() => {
-                                    markRead(notification.id);
-                                    navigate(notification.href);
-                                }}
-                                className="flex flex-col items-start gap-0.5 py-2"
-                            >
-                                <div className="flex w-full items-center justify-between gap-2">
-                                    <span className="flex min-w-0 items-center gap-2 text-sm font-medium text-slate-800 dark:text-zinc-200">
-                                        {!readIds.includes(notification.id) && <span className="h-2 w-2 shrink-0 rounded-full bg-violet-500" />}
-                                        <span className="truncate">{notification.title}</span>
-                                    </span>
-                                    <span className="shrink-0 text-[10px] text-slate-400 dark:text-zinc-500">{notification.time ? new Date(notification.time).toLocaleDateString() : ""}</span>
-                                </div>
-                                <span className="line-clamp-2 text-xs text-slate-500 dark:text-zinc-400">{notification.message}</span>
-                            </DropdownMenuItem>
-                        ))}
-                    </DropdownMenuContent>
-                </DropdownMenu>
+                <button
+                    type="button"
+                    aria-label={`Notifications${unreadCount ? `, ${unreadCount} unread` : ""}`}
+                    onClick={() => setNotificationsOpen(true)}
+                    className="relative flex h-9 w-9 items-center justify-center rounded-lg text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+                >
+                    {unreadCount ? <BellRing className="h-4.5 w-4.5" /> : <Bell className="h-4.5 w-4.5" />}
+                    {unreadCount > 0 && (
+                        <motion.span initial={{ scale: 0 }} animate={{ scale: 1 }} className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold text-white">
+                            {unreadCount}
+                        </motion.span>
+                    )}
+                </button>
 
-                {/* User Menu Dropdown */}
-                <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                        <button
-                            type="button"
-                            aria-label="Open profile menu"
-                            title="Profile"
-                            className="flex h-10 w-10 items-center justify-center rounded-full transition-colors hover:bg-slate-100 dark:hover:bg-zinc-800/60"
-                        >
-                            <Avatar className="h-9 w-9">
-                                {getAvatarImage(user?.avatar) && <AvatarImage src={getAvatarImage(user?.avatar)} alt="" />}
-                                <AvatarFallback className={cn("bg-gradient-to-br text-[10px] font-bold text-white", ROLE_COLORS[user?.role || "admin"])}>
-                                    {userInitials}
-                                </AvatarFallback>
-                            </Avatar>
-                        </button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end" className="w-56">
-                        <DropdownMenuLabel>
-                            <div className="flex flex-col space-y-1">
-                                <p className="text-sm font-medium text-slate-800 dark:text-zinc-200">{user?.name}</p>
-                                <p className="text-xs text-slate-500 dark:text-zinc-500">{user?.username}</p>
-                            </div>
-                        </DropdownMenuLabel>
-                        <DropdownMenuSeparator />
-                        <DropdownMenuItem onClick={() => navigate(settingsHref)}>
-                            <Settings className="mr-2 h-4 w-4" />
-                            Account Settings
-                        </DropdownMenuItem>
-                        <DropdownMenuSeparator />
-                        <DropdownMenuItem onClick={logout} className="text-red-500 focus:text-red-500 dark:text-red-400 dark:focus:text-red-400">
-                            <LogOut className="mr-2 h-4 w-4" />
-                            Sign out
-                        </DropdownMenuItem>
-                    </DropdownMenuContent>
-                </DropdownMenu>
+                <button
+                    type="button"
+                    aria-label="Open profile menu"
+                    title="Profile"
+                    onClick={() => setProfileOpen(true)}
+                    className="flex h-10 w-10 items-center justify-center rounded-full transition-colors hover:bg-slate-100 dark:hover:bg-zinc-800/60"
+                >
+                    <Avatar className="h-9 w-9">
+                        {getAvatarImage(user?.avatar) && <AvatarImage src={getAvatarImage(user?.avatar)} alt="" />}
+                        <AvatarFallback className={cn("bg-gradient-to-br text-[10px] font-bold text-white", ROLE_COLORS[user?.role || "admin"])}>
+                            {userInitials}
+                        </AvatarFallback>
+                    </Avatar>
+                </button>
             </div>
             </div>
+
+            <Dialog open={notificationsOpen} onOpenChange={setNotificationsOpen}>
+                <DialogContent className="max-h-[85vh] max-w-xl overflow-y-auto">
+                    <DialogHeader>
+                        <DialogTitle>Notifications</DialogTitle>
+                        <DialogDescription>Recent assessments and interview updates.</DialogDescription>
+                    </DialogHeader>
+                    <div className="flex flex-wrap justify-end gap-2">
+                        {visibleNotifications.length > 0 && (
+                            <>
+                                {unreadCount > 0 && (
+                                    <Button variant="ghost" size="sm" onClick={markAllRead}>
+                                        <CheckCheck className="h-3.5 w-3.5" /> Mark all read
+                                    </Button>
+                                )}
+                                <Button variant="ghost" size="sm" className="text-red-600 hover:text-red-700 dark:text-red-400" onClick={clearNotifications}>
+                                    Clear all
+                                </Button>
+                            </>
+                        )}
+                    </div>
+                    {notificationLoading ? (
+                        <LoadingState label="Loading notifications" className="px-3 py-5 text-xs" />
+                    ) : notificationError ? (
+                        <p role="alert" className="px-3 py-4 text-xs text-red-500">{notificationError}</p>
+                    ) : visibleNotifications.length === 0 ? (
+                        <p className="px-3 py-5 text-center text-sm text-slate-500 dark:text-zinc-400">You’re all caught up.</p>
+                    ) : (
+                        <div className="space-y-2">
+                            {visibleNotifications.map((notification) => (
+                                <button
+                                    key={notification.id}
+                                    type="button"
+                                    onClick={() => {
+                                        markRead(notification.id);
+                                        setNotificationsOpen(false);
+                                        navigate(notification.href);
+                                    }}
+                                    className="w-full rounded-lg border border-slate-200 p-3 text-left transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 dark:border-zinc-800 dark:hover:bg-zinc-800/60"
+                                >
+                                    <span className="flex items-center justify-between gap-2">
+                                        <span className="flex min-w-0 items-center gap-2 text-sm font-medium text-slate-800 dark:text-zinc-200">
+                                            {!readIds.includes(notification.id) && <span className="h-2 w-2 shrink-0 rounded-full bg-violet-500" />}
+                                            <span className="truncate">{notification.title}</span>
+                                        </span>
+                                        <span className="shrink-0 text-[10px] text-slate-400 dark:text-zinc-500">{notification.time ? new Date(notification.time).toLocaleDateString() : ""}</span>
+                                    </span>
+                                    <span className="mt-1 block line-clamp-2 text-xs text-slate-500 dark:text-zinc-400">{notification.message}</span>
+                                </button>
+                            ))}
+                        </div>
+                    )}
+                </DialogContent>
+            </Dialog>
+
+            <Dialog open={profileOpen} onOpenChange={setProfileOpen}>
+                <DialogContent className="max-w-sm">
+                    <DialogHeader>
+                        <DialogTitle>{user?.name}</DialogTitle>
+                        <DialogDescription>{user?.username}</DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-2">
+                        <Button variant="outline" className="w-full justify-start" onClick={() => {
+                            setProfileOpen(false);
+                            navigate(settingsHref);
+                        }}>
+                            <Settings className="h-4 w-4" /> Account Settings
+                        </Button>
+                        <Button variant="outline" className="w-full justify-start text-red-500 hover:text-red-500 dark:text-red-400" onClick={() => {
+                            setProfileOpen(false);
+                            logout();
+                        }}>
+                            <LogOut className="h-4 w-4" /> Sign out
+                        </Button>
+                    </div>
+                </DialogContent>
+            </Dialog>
 
             {breadcrumbs.length > 0 && (
                 <div className="flex items-center gap-1 border-t border-slate-200/70 px-5 py-2 text-xs text-slate-500 dark:border-zinc-800/60 dark:text-zinc-400">
