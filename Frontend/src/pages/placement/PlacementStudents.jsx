@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { Search, Users, FileText, BrainCircuit, Download, Pencil } from "lucide-react";
+import { Search, Users, FileText, BrainCircuit, Download, Pencil, SlidersHorizontal, RotateCcw } from "lucide-react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -72,50 +72,84 @@ export default function PlacementStudents() {
         <div>
             <PageHeader title="Students" description="Browse candidates and their assessment profiles" />
 
-            <Card className="border-slate-200/80 dark:border-zinc-800/80 bg-white/70 dark:bg-zinc-900/40">
-                <CardHeader className="space-y-3">
-                    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-[minmax(240px,1fr)_200px_180px_200px_auto]">
-                        <div className="relative flex-1 min-w-48">
+            <Card className="border-slate-200/80 bg-white/80 dark:border-zinc-800/80 dark:bg-zinc-900/50">
+                <CardHeader className="space-y-4 p-4 sm:p-5">
+                    <div className="flex flex-col gap-3 sm:flex-row">
+                        <div className="relative min-w-0 flex-1">
                             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400 dark:text-zinc-500" />
-                            <Input placeholder="Search by name or reg number..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" />
-                        </div>
-                        <div className="space-y-1">
-                            <label className="text-xs font-medium text-slate-500 dark:text-zinc-400">Batch</label>
-                            <InlineSelect
-                                ariaLabel="Filter by batch"
-                                value={batch || "all"}
-                                onValueChange={(value) => {
-                                    setBatch(value === "all" ? "" : value);
-                                    setSection("all");
-                                }}
-                                options={[{ value: "all", label: "All batches" }, ...batches.map((item) => ({ value: item, label: item }))]}
+                            <Input
+                                placeholder="Search by name or registration number..."
+                                value={search}
+                                onChange={(event) => setSearch(event.target.value)}
+                                className="h-11 bg-white pl-9 dark:bg-zinc-900"
                             />
                         </div>
-                        <div className="space-y-1">
-                            <label className="text-xs font-medium text-slate-500 dark:text-zinc-400">Section</label>
-                            <InlineSelect
-                                ariaLabel="Filter by section"
-                                value={section}
-                                onValueChange={setSection}
-                                options={[{ value: "all", label: "All sections" }, ...sections.map((item) => ({ value: item, label: `Section ${item}` }))]}
-                            />
-                        </div>
-                        <div className="space-y-1">
-                            <label className="text-xs font-medium text-slate-500 dark:text-zinc-400">Resume</label>
-                            <InlineSelect
-                                ariaLabel="Filter by resume"
-                                value={resumeFilter}
-                                onValueChange={setResumeFilter}
-                                options={[
-                                    { value: "all", label: "All students" },
-                                    { value: "with_resume", label: "Has resume" },
-                                    { value: "without_resume", label: "No resume" },
-                                ]}
-                            />
-                        </div>
-                        <Button variant="outline" onClick={exportStudents} disabled={loading || visibleRows.length === 0} className="self-end">
+                        <Button variant="outline" onClick={exportStudents} disabled={loading || visibleRows.length === 0} className="h-11 shrink-0">
                             <Download className="h-4 w-4" /> Export Excel
                         </Button>
+                    </div>
+                    <div className="flex flex-col gap-3 border-t border-slate-100 pt-4 dark:border-zinc-800 sm:flex-row sm:flex-wrap sm:items-end">
+                        <div className="flex items-center gap-2 pb-2 text-sm font-semibold text-slate-700 dark:text-zinc-200">
+                            <SlidersHorizontal className="h-4 w-4 text-violet-600 dark:text-violet-400" />
+                            Filters
+                        </div>
+                        <div className="grid flex-1 gap-3 sm:grid-cols-3">
+                            <div className="space-y-1.5">
+                                <label className="text-xs font-medium text-slate-500 dark:text-zinc-400">Batch</label>
+                                <InlineSelect
+                                    ariaLabel="Filter by batch"
+                                    value={batch || "all"}
+                                    onValueChange={(value) => {
+                                        setBatch(value === "all" ? "" : value);
+                                        setSection("all");
+                                    }}
+                                    options={[{ value: "all", label: "All batches" }, ...batches.map((item) => ({ value: item, label: item }))]}
+                                />
+                            </div>
+                            <div className="space-y-1.5">
+                                <label className="text-xs font-medium text-slate-500 dark:text-zinc-400">Section</label>
+                                <InlineSelect
+                                    ariaLabel="Filter by section"
+                                    value={section}
+                                    onValueChange={setSection}
+                                    options={[{ value: "all", label: "All sections" }, ...sections.map((item) => ({ value: item, label: `Section ${item}` }))]}
+                                />
+                            </div>
+                            <div className="space-y-1.5">
+                                <label className="text-xs font-medium text-slate-500 dark:text-zinc-400">Resume</label>
+                                <InlineSelect
+                                    ariaLabel="Filter by resume"
+                                    value={resumeFilter}
+                                    onValueChange={setResumeFilter}
+                                    options={[
+                                        { value: "all", label: "All students" },
+                                        { value: "with_resume", label: "Has resume" },
+                                        { value: "without_resume", label: "No resume" },
+                                    ]}
+                                />
+                            </div>
+                        </div>
+                        <div className="flex items-center justify-between gap-3 pb-2 sm:ml-auto sm:justify-end">
+                            <span className="whitespace-nowrap text-xs text-slate-500 dark:text-zinc-400">
+                                {loading ? "Updating..." : `${visibleRows.length} student${visibleRows.length === 1 ? "" : "s"}`}
+                            </span>
+                            {(batch || section !== "all" || resumeFilter !== "all" || search) && (
+                                <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => {
+                                        setBatch("");
+                                        setSection("all");
+                                        setResumeFilter("all");
+                                        setSearch("");
+                                    }}
+                                    className="h-8 px-2 text-slate-500 dark:text-zinc-400"
+                                >
+                                    <RotateCcw className="h-3.5 w-3.5" /> Clear
+                                </Button>
+                            )}
+                        </div>
                     </div>
                 </CardHeader>
                 <CardContent>
