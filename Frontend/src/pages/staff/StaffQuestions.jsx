@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { Plus, Search, Trash2, Edit3, Upload, Sparkles, BrainCircuit, FileCode, ChevronRight, Layers, Library, SlidersHorizontal } from "lucide-react";
+import { Plus, Search, Trash2, Edit3, Upload, Sparkles, BrainCircuit, FileCode, Layers, SlidersHorizontal } from "lucide-react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -31,7 +31,6 @@ export default function StaffQuestions() {
     const [busy, setBusy] = useState(false);
     const [msg, setMsg] = useState("");
     const [selectedIds, setSelectedIds] = useState([]);
-
     const [selectedGroup, setSelectedGroup] = useState(null);
 
     const load = useCallback(() => {
@@ -58,7 +57,11 @@ export default function StaffQuestions() {
     }, []);
 
     const openCreate = () => { setEditing(null); setFormOpen(true); };
-    const openEdit = (q) => { setEditing(q); setFormOpen(true); };
+    const openEdit = (q) => {
+        setSelectedGroup(null);
+        setEditing(q);
+        setFormOpen(true);
+    };
 
     const save = async (payload) => {
         setBusy(true);
@@ -76,20 +79,30 @@ export default function StaffQuestions() {
 
     const remove = async (q) => {
         if (!confirm(`Delete "${q.title}"?`)) return;
-        await api.questions.remove(q.id).catch((e) => alert(e.message));
-        setSelectedIds((ids) => ids.filter((id) => id !== q.id));
-        load();
+        try {
+            await api.questions.remove(q.id);
+            setSelectedIds((ids) => ids.filter((id) => id !== q.id));
+            setSelectedGroup((group) => group
+                ? { ...group, questions: group.questions.filter((question) => question.id !== q.id) }
+                : group);
+            load();
+        } catch (error) {
+            alert(`Failed to delete question: ${error.message}`);
+        }
     };
 
-    const removeSelected = async () => {
-        if (!selectedIds.length || !confirm(`Delete ${selectedIds.length} selected question${selectedIds.length === 1 ? "" : "s"}?`)) return;
+    const removeSelected = async (questionIds) => {
+        if (!questionIds.length || !confirm(`Delete ${questionIds.length} selected question${questionIds.length === 1 ? "" : "s"}?`)) return;
         setBusy(true);
         try {
-            await Promise.all(selectedIds.map((id) => api.questions.remove(id)));
-            setSelectedIds([]);
+            await Promise.all(questionIds.map((id) => api.questions.remove(id)));
+            setSelectedIds((ids) => ids.filter((id) => !questionIds.includes(id)));
+            setSelectedGroup((group) => group
+                ? { ...group, questions: group.questions.filter((question) => !questionIds.includes(question.id)) }
+                : group);
             load();
         } catch (e) {
-            alert(e.message);
+            alert(`Failed to delete selected questions: ${e.message}`);
         } finally {
             setBusy(false);
         }
@@ -151,7 +164,6 @@ export default function StaffQuestions() {
                             <SlidersHorizontal className="h-4 w-4" />
                             Filters{type || difficulty ? " (active)" : ""}
                         </Button>
-                        {selectedIds.length > 0 && <Button variant="destructive" onClick={removeSelected} disabled={busy}><Trash2 className="h-4 w-4" /> Delete selected ({selectedIds.length})</Button>}
                     </div>
                 </CardHeader>
                 <CardContent className="space-y-6">
@@ -161,9 +173,6 @@ export default function StaffQuestions() {
                         <EmptyState icon={type === "coding" ? FileCode : BrainCircuit} title="No questions found" description="Create a question manually or import from Excel / AIML." />
                     ) : (() => {
                         // Calculate groupings
-                        const assignedQids = new Set(tests.flatMap(t => t.fixedQuestionIds || []));
-                        const poolQuestions = questions.filter(q => !assignedQids.has(q.id));
-
                         const groups = [];
                         tests.forEach(t => {
                             const qList = (t.fixedQuestionIds || []).map(qid => questions.find(q => q.id === qid)).filter(Boolean);
@@ -182,46 +191,43 @@ export default function StaffQuestions() {
                             }
                         });
 
-                        const filteredPool = poolQuestions.filter(q => {
-                            if (type && q.type !== type) return false;
-                            if (difficulty && q.difficulty !== difficulty) return false;
-                            if (search && !q.title.toLowerCase().includes(search.toLowerCase())) return false;
-                            return true;
-                        });
-                        if (filteredPool.length > 0 || (!search && !type && !difficulty)) {
-                            groups.push({
-                                id: "pool",
-                                name: "Independent Pool / Unassigned Questions",
-                                questions: filteredPool
-                            });
-                        }
-
                         return (
-                            <div className="space-y-4">
+                            groups.length === 0 ? (
+                                <EmptyState icon={Layers} title="No test groups found" description="Create a test and assign questions to see question groups here." />
+                            ) : (
+                            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
                                 {groups.map((g) => {
-                                    const GroupIcon = g.id === "pool" ? Library : Layers;
                                     return (
-                                        <div key={g.id} className="rounded-xl border border-slate-200/85 dark:border-zinc-800/80 bg-white/70 dark:bg-zinc-900/20 overflow-hidden shadow-sm hover:shadow transition-shadow">
-                                            <button
-                                                type="button"
-                                                onClick={() => setSelectedGroup(g)}
-                                                className="flex w-full items-center justify-between px-4 py-3.5 bg-slate-50/70 text-left dark:bg-zinc-950/30 hover:bg-slate-100/50 dark:hover:bg-zinc-800/20 cursor-pointer transition-colors"
-                                                aria-label={`View ${g.questions.length} questions in ${g.name}`}
-                                            >
-                                                <div className="flex items-center gap-3">
-                                                    <ChevronRight className="h-4 w-4 text-slate-400 dark:text-zinc-500" />
-                                                    <GroupIcon className={cn("h-4.5 w-4.5", g.id === "pool" ? "text-amber-600 dark:text-amber-400" : "text-violet-605 dark:text-violet-400")} />
-                                                    <span className="font-bold text-sm text-slate-800 dark:text-zinc-200">{g.name}</span>
-                                                    <span className="rounded-full bg-violet-50 dark:bg-violet-500/10 px-2.5 py-0.5 text-xs text-violet-650 dark:text-violet-400 font-semibold border border-violet-100 dark:border-violet-500/20">
-                                                        {g.questions.length} Questions
+                                        <div
+                                            key={g.id}
+                                            role="button"
+                                            tabIndex={0}
+                                            onClick={() => setSelectedGroup(g)}
+                                            onKeyDown={(event) => {
+                                                if (event.key === "Enter" || event.key === " ") {
+                                                    event.preventDefault();
+                                                    setSelectedGroup(g);
+                                                }
+                                            }}
+                                            className="group flex min-h-24 cursor-pointer items-center justify-between gap-4 rounded-xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-violet-300 hover:bg-violet-50/50 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 dark:border-zinc-800 dark:bg-zinc-900/60 dark:hover:border-violet-800 dark:hover:bg-violet-950/20"
+                                        >
+                                            <span className="flex min-w-0 items-center gap-3">
+                                                <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-violet-100 text-violet-700 dark:bg-violet-500/15 dark:text-violet-300">
+                                                    <Layers className="h-5 w-5" />
+                                                </span>
+                                                <span className="min-w-0">
+                                                    <span className="block truncate font-semibold text-slate-900 dark:text-zinc-100">{g.name}</span>
+                                                    <span className="mt-1 block text-sm text-slate-500 dark:text-zinc-400">
+                                                        {g.questions.length} question{g.questions.length === 1 ? "" : "s"}
                                                     </span>
-                                                </div>
-                                                <span className="text-sm font-medium text-violet-700 dark:text-violet-300">View questions</span>
-                                            </button>
+                                                </span>
+                                            </span>
+                                            <span className="shrink-0 text-sm font-medium text-violet-700 group-hover:underline dark:text-violet-300">View questions</span>
                                         </div>
                                     );
                                 })}
                             </div>
+                            )
                         );
                     })()}
                 </CardContent>
@@ -235,6 +241,24 @@ export default function StaffQuestions() {
                             {selectedGroup?.questions.length || 0} question{selectedGroup?.questions.length === 1 ? "" : "s"} in this group.
                         </DialogDescription>
                     </DialogHeader>
+                    {selectedGroup && selectedIds.some((id) => selectedGroup.questions.some((question) => question.id === id)) && (
+                        <div className="flex items-center justify-between gap-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 dark:border-red-900/60 dark:bg-red-950/30">
+                            <p className="text-sm text-red-700 dark:text-red-300">
+                                {selectedGroup.questions.filter((question) => selectedIds.includes(question.id)).length} question(s) selected
+                            </p>
+                            <Button
+                                type="button"
+                                variant="destructive"
+                                size="sm"
+                                disabled={busy}
+                                onClick={() => removeSelected(selectedGroup.questions
+                                    .filter((question) => selectedIds.includes(question.id))
+                                    .map((question) => question.id))}
+                            >
+                                <Trash2 className="h-4 w-4" /> Delete selected
+                            </Button>
+                        </div>
+                    )}
                     <div className="overflow-x-auto">
                         <Table>
                             <TableHeader>

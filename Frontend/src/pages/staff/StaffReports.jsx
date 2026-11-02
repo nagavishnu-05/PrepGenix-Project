@@ -1,5 +1,5 @@
-import { useState, useEffect, Fragment } from "react";
-import { Search, Users, FileCode, BrainCircuit, AlertTriangle, ChevronDown, ChevronRight, TrendingUp, RefreshCw, Download } from "lucide-react";
+import { useState, useEffect } from "react";
+import { Search, Users, FileCode, BrainCircuit, AlertTriangle, TrendingUp, RefreshCw, Download, Eye, ClipboardList } from "lucide-react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -24,8 +24,10 @@ export default function StaffReports() {
     const [studentSearchInput, setStudentSearchInput] = useState("");
     const [tab, setTab] = useState("students");
     const [studentAnalyticsOpen, setStudentAnalyticsOpen] = useState(false);
+    const [testAnalyticsOpen, setTestAnalyticsOpen] = useState(false);
+    const [attemptsOpen, setAttemptsOpen] = useState(false);
+    const [selectedAttempt, setSelectedAttempt] = useState(null);
     const [batches, setBatches] = useState([]);
-    const [openV, setOpenV] = useState({});
     const [reloadKey, setReloadKey] = useState(0);
 
     useEffect(() => {
@@ -83,6 +85,7 @@ export default function StaffReports() {
         if (!confirm("Are you sure you want to reset this student's attempt? They will be able to take the test again from scratch.")) return;
         try {
             await api.tests.resetAttempt(attemptId);
+            setSelectedAttempt(null);
             alert("Attempt reset successfully.");
             setReloadKey((k) => k + 1);
         } catch (e) {
@@ -285,98 +288,16 @@ export default function StaffReports() {
                         ) : loading ? (
                             <LoadingState label="Loading test report" className="py-10" />
                         ) : testReport ? (
-                            <div className="space-y-6">
-                                <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+                            <div className="flex flex-wrap items-center justify-between gap-4">
+                                <div className="grid min-w-0 flex-1 grid-cols-2 gap-3 sm:grid-cols-4">
                                     <Stat label="Attempts" value={testReport._count?.attempts} />
                                     <Stat label="Average" value={`${testReport.stats?.averageScore}%`} />
                                     <Stat label="Best" value={`${testReport.stats?.bestScore}%`} />
-                                    <Stat label="Total score" value={`${testReport.stats?.totalScore}`} />
+                                    <Stat label="Total score" value={testReport.stats?.totalScore} />
                                 </div>
-
-                                {testReport.attempts?.length > 0 && (
-                                    <div className="rounded-lg border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/40 p-4">
-                                        <p className="mb-3 text-xs font-bold uppercase tracking-wider text-slate-550 dark:text-zinc-400 flex items-center gap-1.5"><TrendingUp className="h-4 w-4 text-violet-500" /> Score Distribution Chart</p>
-                                        <div className="h-48 pr-4">
-                                            <ResponsiveContainer width="100%" height="100%">
-                                                <BarChart data={testReport.attempts.slice(0, 15).map(a => ({ name: a.studentName || a.studentRegNo, score: a.score }))}>
-                                                    <CartesianGrid strokeDasharray="3 3" className="stroke-slate-200 dark:stroke-zinc-800/40" />
-                                                    <XAxis dataKey="name" tick={{ fill: 'currentColor', opacity: 0.6 }} className="text-[10px] text-slate-500 dark:text-zinc-500" />
-                                                    <YAxis tick={{ fill: 'currentColor', opacity: 0.6 }} className="text-[10px] text-slate-500" />
-                                                    <RechartsTooltip />
-                                                    <Bar dataKey="score" fill="#8b5cf6" name="Score" radius={[4, 4, 0, 0]} />
-                                                </BarChart>
-                                            </ResponsiveContainer>
-                                        </div>
-                                    </div>
-                                )}
-
-                                <Table>
-                                    <TableHeader>
-                                        <TableRow>
-                                            <TableHead>Student</TableHead>
-                                            <TableHead>Score</TableHead>
-                                            <TableHead>Result</TableHead>
-                                            <TableHead>Correct</TableHead>
-                                            <TableHead>Violations</TableHead>
-                                            <TableHead className="text-right">Actions</TableHead>
-                                        </TableRow>
-                                    </TableHeader>
-                                    <TableBody>
-                                        {testReport.attempts.map((a) => (
-                                            <Fragment key={a.id}>
-                                                <TableRow className="cursor-pointer" onClick={() => setOpenV((o) => ({ ...o, [a.id]: !o[a.id] }))}>
-                                                    <TableCell>
-                                                        <p className="font-medium text-slate-800 dark:text-zinc-100">{a.studentName}</p>
-                                                        <p className="text-xs text-slate-500 dark:text-zinc-500">{a.studentRegNo}</p>
-                                                    </TableCell>
-                                                    <TableCell className="text-sm text-slate-700 dark:text-zinc-200">{a.score}/{a.totalScore}</TableCell>
-                                                    <TableCell className={`text-sm capitalize ${resultColor(a.result)}`}>{a.result}</TableCell>
-                                                    <TableCell className="text-sm text-slate-600 dark:text-zinc-300">{a.correct}/{a.totalQuestions}</TableCell>
-                                                    <TableCell>
-                                                        <span className={`flex items-center gap-1 text-sm ${a.violationCount > 0 ? "text-amber-600 dark:text-amber-400" : "text-slate-400 dark:text-zinc-600"}`}>
-                                                            {a.violationCount > 0 && <AlertTriangle className="h-3.5 w-3.5" />}
-                                                            {a.violationCount}
-                                                            {openV[a.id] ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
-                                                        </span>
-                                                    </TableCell>
-                                                    <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
-                                                        <Button 
-                                                            variant="ghost" 
-                                                            size="sm" 
-                                                            className="text-red-500 font-semibold cursor-pointer hover:bg-red-50"
-                                                            onClick={() => handleResetAttempt(a.id)}
-                                                        >
-                                                            Reset Attempt
-                                                        </Button>
-                                                    </TableCell>
-                                                </TableRow>
-                                                {openV[a.id] && (
-                                                    <TableRow className="bg-slate-50/50 dark:bg-zinc-950/40">
-                                                        <TableCell colSpan={6} className="bg-slate-50/50 dark:bg-zinc-950/40">
-                                                            <div className="space-y-2 py-1">
-                                                                {(a.violations || []).length === 0 && <p className="text-xs text-slate-500 dark:text-zinc-500">No proctoring violations.</p>}
-                                                                {(a.violations || []).map((v) => (
-                                                                    <div key={v.id} className="flex items-start justify-between gap-3 rounded-lg border border-slate-200 dark:border-zinc-800 bg-slate-50 dark:bg-zinc-950/60 p-2.5">
-                                                                        <div className="min-w-0">
-                                                                            <p className="text-xs font-medium capitalize text-slate-800 dark:text-zinc-200">{v.type.replace(/_/g, " ")}</p>
-                                                                            <p className="mt-0.5 text-xs text-slate-500 dark:text-zinc-400">{v.description}</p>
-                                                                        </div>
-                                                                        <div className="flex shrink-0 items-center gap-3">
-                                                                            <span className="text-xs text-slate-500 dark:text-zinc-500">{new Date(v.timestamp).toLocaleString()}</span>
-                                                                            {v.cameraFrameUrl && (
-                                                                                <img src={v.cameraFrameUrl} alt="frame" className="h-16 rounded border border-slate-200 dark:border-zinc-800" />
-                                                                            )}
-                                                                        </div>
-                                                                    </div>
-                                                                ))}
-                                                            </div>
-                                                        </TableCell>
-                                                    </TableRow>
-                                                )}
-                                            </Fragment>
-                                        ))}
-                                    </TableBody>
-                                </Table>
+                                <Button onClick={() => setTestAnalyticsOpen(true)}>
+                                    <TrendingUp className="h-4 w-4" /> View performance analytics
+                                </Button>
                             </div>
                         ) : (
                             <EmptyState icon={BrainCircuit} title="No data" description="No completed attempts for this test yet." />
@@ -384,6 +305,163 @@ export default function StaffReports() {
                     </CardContent>
                 </Card>
             )}
+
+            <Dialog open={testAnalyticsOpen} onOpenChange={setTestAnalyticsOpen}>
+                <DialogContent className="max-h-[90vh] max-w-5xl overflow-y-auto">
+                    <DialogHeader>
+                        <DialogTitle>Test Performance Analytics</DialogTitle>
+                        <DialogDescription>
+                            Overall metrics and student completions for: <span className="font-semibold">{testReport?.test?.title || "Selected test"}</span>
+                        </DialogDescription>
+                    </DialogHeader>
+                    {testReport && (
+                        <div className="space-y-5">
+                            <Button variant="outline" className="w-full" onClick={() => setAttemptsOpen(true)} disabled={!testReport.attempts?.length}>
+                                <ClipboardList className="h-4 w-4" /> Student Attempts ({testReport.attempts?.length || 0})
+                            </Button>
+                            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                                <Stat label="Average score" value={`${testReport.stats?.averageScore}%`} />
+                                <Stat label="Best score" value={`${testReport.stats?.bestScore}%`} />
+                                <Stat label="Total completed" value={testReport._count?.attempts} />
+                                <Stat label="Pass rate" value={`${Math.round(((testReport.results?.passed || 0) + (testReport.results?.selected || 0)) / (testReport._count?.attempts || 1) * 100)}%`} />
+                            </div>
+                            {testReport.attempts?.length ? (
+                                <div className="rounded-lg border border-slate-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900/40">
+                                    <p className="mb-3 flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-zinc-400">
+                                        <TrendingUp className="h-4 w-4 text-violet-500" /> Score distribution chart
+                                    </p>
+                                    <div className="h-56 pr-4">
+                                        <ResponsiveContainer width="100%" height="100%">
+                                            <BarChart data={testReport.attempts.slice(0, 15).map((attempt) => ({
+                                                name: attempt.studentName || attempt.studentRegNo,
+                                                score: attempt.score,
+                                            }))}>
+                                                <CartesianGrid strokeDasharray="3 3" className="stroke-slate-200 dark:stroke-zinc-800/40" />
+                                                <XAxis dataKey="name" tick={{ fill: "currentColor", opacity: 0.6 }} className="text-[10px] text-slate-500 dark:text-zinc-500" />
+                                                <YAxis tick={{ fill: "currentColor", opacity: 0.6 }} className="text-[10px] text-slate-500" />
+                                                <RechartsTooltip />
+                                                <Bar dataKey="score" fill="#8b5cf6" name="Score" radius={[4, 4, 0, 0]} />
+                                            </BarChart>
+                                        </ResponsiveContainer>
+                                    </div>
+                                </div>
+                            ) : (
+                                <EmptyState icon={BrainCircuit} title="No completed attempts" description="There are no student attempts to analyze yet." />
+                            )}
+                        </div>
+                    )}
+                </DialogContent>
+            </Dialog>
+
+            <Dialog open={attemptsOpen} onOpenChange={setAttemptsOpen}>
+                <DialogContent className="max-h-[90vh] max-w-6xl overflow-y-auto">
+                    <DialogHeader>
+                        <DialogTitle>Student Attempts</DialogTitle>
+                        <DialogDescription>{testReport?.test?.title || "Selected test"} · {testReport?.attempts?.length || 0} attempts</DialogDescription>
+                    </DialogHeader>
+                    <div className="overflow-x-auto rounded-lg border border-slate-200 dark:border-zinc-800">
+                        <Table>
+                            <TableHeader>
+                                <TableRow>
+                                    <TableHead>Student</TableHead>
+                                    <TableHead>Score</TableHead>
+                                    <TableHead>Completed Date / Time</TableHead>
+                                    <TableHead>Outcome</TableHead>
+                                    <TableHead className="text-right">Actions</TableHead>
+                                </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                                {(testReport?.attempts || []).map((attempt) => (
+                                    <TableRow key={attempt.id}>
+                                        <TableCell>
+                                            <p className="font-medium text-slate-800 dark:text-zinc-100">{attempt.studentName || "Student"}</p>
+                                            <p className="text-xs text-slate-500 dark:text-zinc-500">{attempt.studentRegNo}</p>
+                                        </TableCell>
+                                        <TableCell>{attempt.score ?? 0} / {attempt.totalScore ?? "—"}</TableCell>
+                                        <TableCell>{attempt.completedAt ? new Date(attempt.completedAt).toLocaleString() : "—"}</TableCell>
+                                        <TableCell className={`capitalize ${resultColor(attempt.result)}`}>{attempt.result || "—"}</TableCell>
+                                        <TableCell>
+                                            <div className="flex justify-end gap-2">
+                                                <Button variant="outline" size="sm" onClick={() => setSelectedAttempt(attempt)}>
+                                                    <Eye className="h-4 w-4" /> View violations ({attempt.violationCount ?? attempt.violations?.length ?? 0})
+                                                </Button>
+                                                <Button variant="ghost" size="sm" className="text-red-600 hover:text-red-500 dark:text-red-400" onClick={() => handleResetAttempt(attempt.id)}>
+                                                    Reset attempt
+                                                </Button>
+                                            </div>
+                                        </TableCell>
+                                    </TableRow>
+                                ))}
+                                {!testReport?.attempts?.length && (
+                                    <TableRow><TableCell colSpan={5} className="py-8 text-center text-slate-500">No student attempts found.</TableCell></TableRow>
+                                )}
+                            </TableBody>
+                        </Table>
+                    </div>
+                </DialogContent>
+            </Dialog>
+
+            <Dialog open={selectedAttempt !== null} onOpenChange={(open) => { if (!open) setSelectedAttempt(null); }}>
+                <DialogContent className="max-h-[90vh] max-w-4xl overflow-y-auto">
+                    <DialogHeader>
+                        <DialogTitle>Attempt violations</DialogTitle>
+                        <DialogDescription>
+                            {selectedAttempt?.studentName || "Student"} · {selectedAttempt?.studentRegNo} · {selectedAttempt?.completedAt ? new Date(selectedAttempt.completedAt).toLocaleString() : "Completion time unavailable"}
+                        </DialogDescription>
+                    </DialogHeader>
+                    {selectedAttempt && (() => {
+                        const violations = selectedAttempt.violations || [];
+                        const violationTypes = [...new Set(violations.map((violation) => (violation.type || "unknown").replace(/_/g, " ")))];
+                        return (
+                            <div className="space-y-5">
+                                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                                    <Stat label="Score" value={`${selectedAttempt.score ?? 0} / ${selectedAttempt.totalScore ?? "—"}`} />
+                                    <Stat label="Outcome" value={selectedAttempt.result || "—"} />
+                                    <Stat label="Total violations" value={violations.length} />
+                                    <Stat label="Violation types" value={violationTypes.length} />
+                                </div>
+                                {violationTypes.length > 0 && (
+                                    <div className="flex flex-wrap gap-2">
+                                        {violationTypes.map((type) => (
+                                            <span key={type} className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-medium capitalize text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-300">
+                                                {type} ·                                                 {violations.filter((violation) => (violation.type || "unknown").replace(/_/g, " ") === type).length}
+                                            </span>
+                                        ))}
+                                    </div>
+                                )}
+                                {violations.length === 0 ? (
+                                    <EmptyState icon={AlertTriangle} title="No violations recorded" description="No proctoring events were recorded for this attempt." />
+                                ) : (
+                                    <div className="space-y-3">
+                                        {violations.map((violation) => (
+                                            <article key={violation.id} className="grid gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-zinc-800 dark:bg-zinc-950/40 sm:grid-cols-[minmax(0,1fr)_220px]">
+                                                <div className="min-w-0">
+                                                    <div className="flex flex-wrap items-center justify-between gap-2">
+                                                        <h3 className="font-semibold capitalize text-slate-900 dark:text-zinc-100">{(violation.type || "unknown").replace(/_/g, " ")}</h3>
+                                                        <span className="text-xs text-slate-500 dark:text-zinc-400">{violation.timestamp ? new Date(violation.timestamp).toLocaleString() : "Time unavailable"}</span>
+                                                    </div>
+                                                    <p className="mt-1 text-sm text-slate-600 dark:text-zinc-300">{violation.description || "No additional details."}</p>
+                                                    {violation.severity && <p className="mt-2 text-xs capitalize text-amber-700 dark:text-amber-300">Severity: {violation.severity}</p>}
+                                                </div>
+                                                {violation.cameraFrameUrl ? (
+                                                    <a href={violation.cameraFrameUrl} target="_blank" rel="noreferrer" className="block">
+                                                        <img src={violation.cameraFrameUrl} alt={`Camera evidence for ${(violation.type || "unknown").replace(/_/g, " ")}`} className="max-h-44 w-full rounded-md border border-slate-200 object-cover dark:border-zinc-700" />
+                                                        <span className="mt-1 block text-xs text-violet-700 dark:text-violet-300">Open evidence image</span>
+                                                    </a>
+                                                ) : (
+                                                    <div className="flex min-h-24 items-center justify-center rounded-md border border-dashed border-slate-300 text-xs text-slate-500 dark:border-zinc-700 dark:text-zinc-500">
+                                                        No image evidence
+                                                    </div>
+                                                )}
+                                            </article>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        );
+                    })()}
+                </DialogContent>
+            </Dialog>
         </div>
     );
 }
