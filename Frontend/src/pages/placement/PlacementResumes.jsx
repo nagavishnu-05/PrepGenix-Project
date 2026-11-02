@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { InlineSelect } from "@/components/ui/inline-select";
 import { PageHeader, EmptyState } from "@/components/portal/primitives";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/lib/api";
@@ -204,20 +205,20 @@ export default function PlacementResumes() {
             />
 
             <div className="mb-4 flex flex-wrap gap-3">
-                <Select value={batch} onValueChange={changeBatch}>
-                    <SelectTrigger className="w-48"><SelectValue placeholder="Select batch" /></SelectTrigger>
-                    <SelectContent>
-                        <SelectItem value="all">All batches</SelectItem>
-                        {batches.map((item) => <SelectItem key={item} value={item}>{item}</SelectItem>)}
-                    </SelectContent>
-                </Select>
-                <Select value={section} onValueChange={setSection}>
-                    <SelectTrigger className="w-48"><SelectValue placeholder="Select section" /></SelectTrigger>
-                    <SelectContent>
-                        <SelectItem value="all">All sections</SelectItem>
-                        {sections.map((item) => <SelectItem key={item} value={item}>Section {item}</SelectItem>)}
-                    </SelectContent>
-                </Select>
+                <InlineSelect
+                    ariaLabel="Filter by batch"
+                    value={batch}
+                    onValueChange={changeBatch}
+                    className="w-48"
+                    options={[{ value: "all", label: "All batches" }, ...batches.map((item) => ({ value: item, label: item }))]}
+                />
+                <InlineSelect
+                    ariaLabel="Filter by section"
+                    value={section}
+                    onValueChange={setSection}
+                    className="w-48"
+                    options={[{ value: "all", label: "All sections" }, ...sections.map((item) => ({ value: item, label: `Section ${item}` }))]}
+                />
             </div>
 
             <Card className="border-slate-200/80 dark:border-zinc-800/80 bg-white/70 dark:bg-zinc-900/40">
@@ -260,11 +261,15 @@ export default function PlacementResumes() {
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
-                                {visibleResumes.map((r) => (
+                                {visibleResumes.map((r) => {
+                                    const categories = (r.categories || [])
+                                        .map((category) => (typeof category === "string" ? category : category?.name))
+                                        .filter(Boolean);
+                                    return (
                                     <TableRow key={r.id}>
-                                        <TableCell>
-                                            <p className="font-medium text-slate-800 dark:text-zinc-100">{r.studentName}</p>
-                                            <p className="text-xs text-slate-500 dark:text-zinc-500">{r.regNo}</p>
+                                        <TableCell className="max-w-52">
+                                            <p className="truncate font-medium text-slate-800 dark:text-zinc-100" title={r.studentName}>{r.studentName}</p>
+                                            <p className="mt-0.5 text-xs text-slate-500 dark:text-zinc-500">{r.regNo}</p>
                                         </TableCell>
                                         <TableCell>
                                             <div className="flex items-center gap-1">
@@ -304,8 +309,25 @@ export default function PlacementResumes() {
                                                 {(r.skills || []).length > 4 && <span className="text-xs text-slate-500 dark:text-zinc-500">+{(r.skills || []).length - 4}</span>}
                                             </div>
                                         </TableCell>
-                                        <TableCell className="text-sm text-slate-600 dark:text-zinc-300">{(r.categories || []).map((c) => (typeof c === "string" ? c : c.name)).join(", ") || "—"}</TableCell>
-                                        <TableCell className="text-sm text-violet-600 dark:text-violet-400">{r.topCategory || "—"}</TableCell>
+                                        <TableCell className="max-w-sm">
+                                            {categories.length ? (
+                                                <div className="flex flex-wrap items-center gap-1.5" title={categories.join(", ")}>
+                                                    {categories.slice(0, 2).map((category) => (
+                                                        <span key={category} className="max-w-40 truncate rounded-md bg-violet-50 px-2 py-1 text-xs font-medium text-violet-700 dark:bg-violet-500/10 dark:text-violet-300">
+                                                            {category}
+                                                        </span>
+                                                    ))}
+                                                    {categories.length > 2 && (
+                                                        <span className="text-xs font-medium text-slate-500 dark:text-zinc-400">
+                                                            +{categories.length - 2} more
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            ) : (
+                                                <span className="text-sm text-slate-400 dark:text-zinc-500">—</span>
+                                            )}
+                                        </TableCell>
+                                        <TableCell className="max-w-40 truncate text-sm text-violet-600 dark:text-violet-400" title={r.topCategory || ""}>{r.topCategory || "—"}</TableCell>
                                         <TableCell className="text-right">
                                             <div className="flex items-center justify-end gap-1">
                                                 <Button variant="ghost" size="sm" onClick={() => openCats(r)}><Tag className="h-4 w-4" /> Categories</Button>
@@ -314,7 +336,8 @@ export default function PlacementResumes() {
                                             </div>
                                         </TableCell>
                                     </TableRow>
-                                ))}
+                                    );
+                                })}
                             </TableBody>
                         </Table>
                         </div>

@@ -27,6 +27,7 @@ import { useAuthStore } from "@/store/auth-store";
 import { useUIStore } from "@/store/ui-store";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { api } from "@/lib/api";
 import { getAvatarImage } from "@/lib/avatar-options";
 import { Button } from "@/components/ui/button";
@@ -78,7 +79,6 @@ export function Header({ breadcrumbs = [] }) {
     const suppressNavClick = useRef(false);
     const [notifications, setNotifications] = useState([]);
     const [notificationsOpen, setNotificationsOpen] = useState(false);
-    const [profileOpen, setProfileOpen] = useState(false);
     const [notificationError, setNotificationError] = useState("");
     const [notificationLoading, setNotificationLoading] = useState(true);
     const [dismissedIds, setDismissedIds] = useState([]);
@@ -356,20 +356,36 @@ export function Header({ breadcrumbs = [] }) {
                     )}
                 </button>
 
-                <button
-                    type="button"
-                    aria-label="Open profile menu"
-                    title="Profile"
-                    onClick={() => setProfileOpen(true)}
-                    className="flex h-10 w-10 items-center justify-center rounded-full transition-colors hover:bg-slate-100 dark:hover:bg-zinc-800/60"
-                >
-                    <Avatar className="h-9 w-9">
-                        {getAvatarImage(user?.avatar) && <AvatarImage src={getAvatarImage(user?.avatar)} alt="" />}
-                        <AvatarFallback className={cn("bg-gradient-to-br text-[10px] font-bold text-white", ROLE_COLORS[user?.role || "admin"])}>
-                            {userInitials}
-                        </AvatarFallback>
-                    </Avatar>
-                </button>
+                <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                        <button
+                            type="button"
+                            aria-label="Open profile menu"
+                            title="Profile"
+                            className="flex h-10 w-10 items-center justify-center rounded-full transition-colors hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 dark:hover:bg-zinc-800/60"
+                        >
+                            <Avatar className="h-9 w-9">
+                                {getAvatarImage(user?.avatar) && <AvatarImage src={getAvatarImage(user?.avatar)} alt="" />}
+                                <AvatarFallback className={cn("bg-gradient-to-br text-[10px] font-bold text-white", ROLE_COLORS[user?.role || "admin"])}>
+                                    {userInitials}
+                                </AvatarFallback>
+                            </Avatar>
+                        </button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" sideOffset={8} className="w-64">
+                        <DropdownMenuLabel className="px-3 py-2">
+                            <span className="block truncate text-sm font-semibold text-slate-900 dark:text-zinc-100">{user?.name}</span>
+                            <span className="mt-0.5 block truncate text-xs font-normal text-slate-500 dark:text-zinc-400">{user?.username}</span>
+                        </DropdownMenuLabel>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem onSelect={() => navigate(settingsHref)} className="min-h-10 px-3">
+                            <Settings className="h-4 w-4" /> Account Settings
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onSelect={logout} className="min-h-10 px-3 text-red-600 focus:bg-red-50 focus:text-red-700 dark:text-red-400 dark:focus:bg-red-950/40 dark:focus:text-red-300">
+                            <LogOut className="h-4 w-4" /> Sign out
+                        </DropdownMenuItem>
+                    </DropdownMenuContent>
+                </DropdownMenu>
             </div>
             </div>
 
@@ -424,29 +440,6 @@ export function Header({ breadcrumbs = [] }) {
                             ))}
                         </div>
                     )}
-                </DialogContent>
-            </Dialog>
-
-            <Dialog open={profileOpen} onOpenChange={setProfileOpen}>
-                <DialogContent className="max-w-sm">
-                    <DialogHeader>
-                        <DialogTitle>{user?.name}</DialogTitle>
-                        <DialogDescription>{user?.username}</DialogDescription>
-                    </DialogHeader>
-                    <div className="space-y-2">
-                        <Button variant="outline" className="w-full justify-start" onClick={() => {
-                            setProfileOpen(false);
-                            navigate(settingsHref);
-                        }}>
-                            <Settings className="h-4 w-4" /> Account Settings
-                        </Button>
-                        <Button variant="outline" className="w-full justify-start text-red-500 hover:text-red-500 dark:text-red-400" onClick={() => {
-                            setProfileOpen(false);
-                            logout();
-                        }}>
-                            <LogOut className="h-4 w-4" /> Sign out
-                        </Button>
-                    </div>
                 </DialogContent>
             </Dialog>
 

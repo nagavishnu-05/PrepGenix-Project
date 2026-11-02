@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { InlineSelect } from "@/components/ui/inline-select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { PageHeader, EmptyState, LoadingState } from "@/components/portal/primitives";
@@ -553,23 +554,21 @@ export default function PlacementInterviews() {
                             <div className="grid gap-3 sm:grid-cols-2">
                             <div className="space-y-1.5">
                                 <Label className="text-xs font-medium text-slate-600 dark:text-zinc-300">Batch</Label>
-                                <Select value={studentFilters.batch} onValueChange={(value) => setStudentFilters((current) => ({ ...current, batch: value, section: "all" }))}>
-                                    <SelectTrigger className="bg-white dark:bg-zinc-900"><SelectValue /></SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="all">All batches</SelectItem>
-                                        {batches.map((batch) => <SelectItem key={batch} value={batch}>{batch}</SelectItem>)}
-                                    </SelectContent>
-                                </Select>
+                                <InlineSelect
+                                    ariaLabel="Filter students by batch"
+                                    value={studentFilters.batch}
+                                    onValueChange={(value) => setStudentFilters((current) => ({ ...current, batch: value, section: "all" }))}
+                                    options={[{ value: "all", label: "All batches" }, ...batches.map((batch) => ({ value: batch, label: batch }))]}
+                                />
                             </div>
                             <div className="space-y-1.5">
                                 <Label className="text-xs font-medium text-slate-600 dark:text-zinc-300">Section</Label>
-                                <Select value={studentFilters.section} onValueChange={(value) => setStudentFilters((current) => ({ ...current, section: value }))}>
-                                    <SelectTrigger className="bg-white dark:bg-zinc-900"><SelectValue /></SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="all">All sections</SelectItem>
-                                        {availableSections.map((section) => <SelectItem key={section} value={section}>Section {section}</SelectItem>)}
-                                    </SelectContent>
-                                </Select>
+                                <InlineSelect
+                                    ariaLabel="Filter students by section"
+                                    value={studentFilters.section}
+                                    onValueChange={(value) => setStudentFilters((current) => ({ ...current, section: value }))}
+                                    options={[{ value: "all", label: "All sections" }, ...availableSections.map((section) => ({ value: section, label: `Section ${section}` }))]}
+                                />
                             </div>
                             </div>
                             <div className="min-w-0 space-y-1.5">

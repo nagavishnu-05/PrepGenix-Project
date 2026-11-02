@@ -3,6 +3,7 @@ import { Download, FileSpreadsheet, Users } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { InlineSelect } from "@/components/ui/inline-select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { PageHeader, EmptyState, LoadingState } from "@/components/portal/primitives";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -231,20 +232,20 @@ export default function PlacementReports() {
             </div>
 
             <div className="mb-4 flex flex-wrap items-center gap-3">
-                <Select value={batch} onValueChange={changeBatch}>
-                    <SelectTrigger className="w-48"><SelectValue placeholder="Select batch" /></SelectTrigger>
-                    <SelectContent>
-                        <SelectItem value="all">All batches</SelectItem>
-                        {batches.map((b) => <SelectItem key={b} value={b}>{b}</SelectItem>)}
-                    </SelectContent>
-                </Select>
-                <Select value={section} onValueChange={setSection}>
-                    <SelectTrigger className="w-48"><SelectValue placeholder="Select section" /></SelectTrigger>
-                    <SelectContent>
-                        <SelectItem value="all">All sections</SelectItem>
-                        {sections.map((item) => <SelectItem key={item} value={item}>Section {item}</SelectItem>)}
-                    </SelectContent>
-                </Select>
+                <InlineSelect
+                    ariaLabel="Filter by batch"
+                    value={batch}
+                    onValueChange={changeBatch}
+                    className="w-48"
+                    options={[{ value: "all", label: "All batches" }, ...batches.map((item) => ({ value: item, label: item }))]}
+                />
+                <InlineSelect
+                    ariaLabel="Filter by section"
+                    value={section}
+                    onValueChange={setSection}
+                    className="w-48"
+                    options={[{ value: "all", label: "All sections" }, ...sections.map((item) => ({ value: item, label: `Section ${item}` }))]}
+                />
                 <Button
                     type="button"
                     variant="outline"
