@@ -42,6 +42,22 @@ class HealthEndpointTests(unittest.TestCase):
         self.assertFalse(payload["gaze_enabled"])
         self.assertTrue(payload["blink_enabled"])
 
+    def test_oversized_request_returns_json_error(self):
+        original_max_content_length = app.config["MAX_CONTENT_LENGTH"]
+        app.config["MAX_CONTENT_LENGTH"] = 16
+        try:
+            response = app.test_client().post(
+                "/monitor",
+                data=b"x" * 17,
+                content_type="application/json",
+            )
+        finally:
+            app.config["MAX_CONTENT_LENGTH"] = original_max_content_length
+
+        self.assertEqual(response.status_code, 413)
+        self.assertEqual(response.get_json()["error"], "Request body is too large")
+        self.assertEqual(response.get_json()["max_bytes"], 16)
+
 
 if __name__ == "__main__":
     unittest.main()

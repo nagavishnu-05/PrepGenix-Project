@@ -109,6 +109,7 @@ unresponsive worker.
 | `FACE_CONFIDENCE` | `0.60` | Face detection confidence threshold |
 | `YOLO_FACE_ALLOW_DOWNLOAD` | `false` | Allow downloading missing optional YOLO face-fallback weights at runtime |
 | `INSIGHTFACE_MODEL_ROOT` | `AIML/models/insightface` | InsightFace model/cache root; point to a mounted persistent disk on hosts that support one |
+| `PROCTORING_MAX_REQUEST_BYTES` | `2097152` | Maximum JSON request size accepted by the proctoring API (2 MiB) |
 
 ### Hosted performance defaults
 
@@ -119,7 +120,8 @@ three cycles in a quiet scene. Face and identity checks still run on each frame.
 The frontend sends monitor frames every two seconds by default;
 `VITE_FACE_CHECK_INTERVAL_MS` can tune this at build time from 1500 to 5000 ms.
 These settings reduce CPU and network load while retaining temporal confirmation
-for person and device detections.
+for person and device detections. Face enrollment retains only the compact
+identity embeddings; full camera frames are discarded after each request.
 
 InsightFace detection and recognition share one prepared ONNX model pack per
 worker, instead of loading duplicate sessions for every interview. The optional
@@ -137,6 +139,15 @@ process per instance; the current enrollment and temporal-monitor state is
 process-local. For a hosted frontend, set `VITE_PROCTORING_API` to the public
 URL of this service and rebuild the frontend. If scaling to multiple instances,
 add shared session state or session-affine routing first.
+
+For Render, use one instance for the proctoring service, set its health-check
+path to `/health`, and use the `$PORT` start command below. Multiple instances
+do not share enrollment or violation state, and each instance loads its own
+inference models; adding instances can therefore increase total memory use
+without fixing an individual instance that exceeds its memory limit. A health
+check timeout alone cannot identify whether the cause was model inference,
+memory pressure, or startup/restart time, so compare Render memory and CPU
+metrics with the service logs before changing the instance count or plan.
 
 For a standalone hosted proctoring service, use this start command (replace
 `$PORT` with the port variable required by the hosting provider):

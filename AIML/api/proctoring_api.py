@@ -34,6 +34,8 @@ from flask import Flask, jsonify, request
 from flask_cors import CORS
 
 app = Flask(__name__)
+_max_request_bytes = int(os.environ.get("PROCTORING_MAX_REQUEST_BYTES", str(2 * 1024 * 1024)))
+app.config["MAX_CONTENT_LENGTH"] = _max_request_bytes
 _default_allowed_origins = (
     "https://prep-genix-project.vercel.app,"
     "http://localhost:5173,http://127.0.0.1:5173"
@@ -120,6 +122,14 @@ def health():
         "gaze_enabled": enabled("GAZE_ENABLED"),
         "blink_enabled": enabled("BLINK_ENABLED"),
     })
+
+
+@app.errorhandler(413)
+def request_too_large(_error):
+    return jsonify({
+        "error": "Request body is too large",
+        "max_bytes": app.config["MAX_CONTENT_LENGTH"],
+    }), 413
 
 
 @app.route("/capabilities", methods=["GET"])

@@ -92,7 +92,6 @@ class FaceMonitor:
 
         self._reference_embedding: np.ndarray | None = None
         self._reference_captured = False
-        self._enrollment_frames: list[np.ndarray] = []
         self._enrollment_embeddings: list[np.ndarray] = []
         self._scene_cycle = 0
         self._last_scene: dict = {}
@@ -118,7 +117,6 @@ class FaceMonitor:
 
     def enroll_start(self) -> dict:
         """Reset enrollment state for a new capture session."""
-        self._enrollment_frames.clear()
         self._enrollment_embeddings.clear()
         return {
             "status": "capturing",
@@ -142,7 +140,7 @@ class FaceMonitor:
         }
         """
         if frame is None or frame.size == 0:
-            return {"status": "error", "message": "Invalid frame", "captured": len(self._enrollment_frames)}
+            return {"status": "error", "message": "Invalid frame", "captured": len(self._enrollment_embeddings)}
 
         det = self.detector.detect(frame)
         face_count = det["face_count"]
@@ -150,7 +148,7 @@ class FaceMonitor:
         if face_count == 0:
             return {
                 "status": "capturing",
-                "captured": len(self._enrollment_frames),
+                "captured": len(self._enrollment_embeddings),
                 "required_frames": REFERENCE_CAPTURE_FRAMES,
                 "face_detected": False,
                 "face_count": 0,
@@ -161,7 +159,7 @@ class FaceMonitor:
         if face_count > 1:
             return {
                 "status": "capturing",
-                "captured": len(self._enrollment_frames),
+                "captured": len(self._enrollment_embeddings),
                 "required_frames": REFERENCE_CAPTURE_FRAMES,
                 "face_detected": True,
                 "face_count": face_count,
@@ -178,7 +176,7 @@ class FaceMonitor:
         if face_crop is None:
             return {
                 "status": "capturing",
-                "captured": len(self._enrollment_frames),
+                "captured": len(self._enrollment_embeddings),
                 "required_frames": REFERENCE_CAPTURE_FRAMES,
                 "face_detected": True,
                 "face_count": 1,
@@ -193,7 +191,7 @@ class FaceMonitor:
         if not self._quality_meets_enrollment(quality_info["quality"]):
             return {
                 "status": "capturing",
-                "captured": len(self._enrollment_frames),
+                "captured": len(self._enrollment_embeddings),
                 "required_frames": REFERENCE_CAPTURE_FRAMES,
                 "face_detected": True,
                 "face_count": 1,
@@ -209,7 +207,7 @@ class FaceMonitor:
         if emb is None:
             return {
                 "status": "capturing",
-                "captured": len(self._enrollment_frames),
+                "captured": len(self._enrollment_embeddings),
                 "required_frames": REFERENCE_CAPTURE_FRAMES,
                 "face_detected": True,
                 "face_count": 1,
@@ -218,7 +216,6 @@ class FaceMonitor:
                 "message": "Could not generate face embedding.",
             }
 
-        self._enrollment_frames.append(frame)
         self._enrollment_embeddings.append(emb)
 
         captured = len(self._enrollment_embeddings)
@@ -758,7 +755,6 @@ class FaceMonitor:
         self._reference_captured = False
         self._reference_face_bbox = None
         self._face_detection_enabled = True
-        self._enrollment_frames.clear()
         self._enrollment_embeddings.clear()
         self.blink.reset()
         self.analyzer.reset()
