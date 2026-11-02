@@ -26,7 +26,6 @@ import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/store/auth-store";
 import { useUIStore } from "@/store/ui-store";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { api } from "@/lib/api";
 import { getAvatarImage } from "@/lib/avatar-options";
@@ -342,19 +341,79 @@ export function Header({ breadcrumbs = [] }) {
                     {theme === "dark" ? <Sun className="h-4.5 w-4.5 text-amber-400" /> : <Moon className="h-4.5 w-4.5 text-indigo-400" />}
                 </button>
 
-                <button
-                    type="button"
-                    aria-label={`Notifications${unreadCount ? `, ${unreadCount} unread` : ""}`}
-                    onClick={() => setNotificationsOpen(true)}
-                    className="relative flex h-9 w-9 items-center justify-center rounded-lg text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
-                >
-                    {unreadCount ? <BellRing className="h-4.5 w-4.5" /> : <Bell className="h-4.5 w-4.5" />}
-                    {unreadCount > 0 && (
-                        <motion.span initial={{ scale: 0 }} animate={{ scale: 1 }} className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold text-white">
-                            {unreadCount}
-                        </motion.span>
-                    )}
-                </button>
+                <DropdownMenu open={notificationsOpen} onOpenChange={setNotificationsOpen}>
+                    <DropdownMenuTrigger asChild>
+                        <button
+                            type="button"
+                            aria-label={`Notifications${unreadCount ? `, ${unreadCount} unread` : ""}`}
+                            className="relative flex h-9 w-9 items-center justify-center rounded-lg text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+                        >
+                            {unreadCount ? <BellRing className="h-4.5 w-4.5" /> : <Bell className="h-4.5 w-4.5" />}
+                            {unreadCount > 0 && (
+                                <motion.span initial={{ scale: 0 }} animate={{ scale: 1 }} className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold text-white">
+                                    {unreadCount}
+                                </motion.span>
+                            )}
+                        </button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" sideOffset={8} className="max-h-[min(80vh,36rem)] w-[min(24rem,calc(100vw-2rem))] overflow-y-auto p-2">
+                        <DropdownMenuLabel className="px-2 py-1.5">
+                            <span className="block text-sm font-semibold text-slate-900 dark:text-zinc-100">Notifications</span>
+                            <span className="mt-0.5 block text-xs font-normal text-slate-500 dark:text-zinc-400">Recent assessments and interview updates.</span>
+                        </DropdownMenuLabel>
+                        {visibleNotifications.length > 0 && (
+                            <>
+                                <DropdownMenuSeparator />
+                                <div className="flex justify-end gap-1">
+                                    {unreadCount > 0 && (
+                                        <Button variant="ghost" size="sm" onClick={markAllRead}>
+                                            <CheckCheck className="h-3.5 w-3.5" /> Mark all read
+                                        </Button>
+                                    )}
+                                    <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        className="text-red-600 hover:text-red-700 dark:text-red-400"
+                                        onClick={clearNotifications}
+                                    >
+                                        Clear all
+                                    </Button>
+                                </div>
+                            </>
+                        )}
+                        {notificationLoading ? (
+                            <LoadingState label="Loading notifications" className="px-3 py-5 text-xs" />
+                        ) : notificationError ? (
+                            <p role="alert" className="px-3 py-4 text-xs text-red-500">{notificationError}</p>
+                        ) : visibleNotifications.length === 0 ? (
+                            <p className="px-3 py-5 text-center text-sm text-slate-500 dark:text-zinc-400">You’re all caught up.</p>
+                        ) : (
+                            <div className="space-y-1">
+                                {visibleNotifications.map((notification) => (
+                                    <DropdownMenuItem
+                                        key={notification.id}
+                                        onSelect={() => {
+                                            markRead(notification.id);
+                                            navigate(notification.href);
+                                        }}
+                                        className="h-auto cursor-pointer items-start whitespace-normal rounded-lg border border-slate-200 p-3 dark:border-zinc-800"
+                                    >
+                                        <span className="w-full min-w-0">
+                                            <span className="flex items-center justify-between gap-2">
+                                                <span className="flex min-w-0 items-center gap-2 text-sm font-medium text-slate-800 dark:text-zinc-200">
+                                                    {!readIds.includes(notification.id) && <span className="h-2 w-2 shrink-0 rounded-full bg-violet-500" />}
+                                                    <span className="truncate">{notification.title}</span>
+                                                </span>
+                                                <span className="shrink-0 text-[10px] text-slate-400 dark:text-zinc-500">{notification.time ? new Date(notification.time).toLocaleDateString() : ""}</span>
+                                            </span>
+                                            <span className="mt-1 block line-clamp-2 text-xs text-slate-500 dark:text-zinc-400">{notification.message}</span>
+                                        </span>
+                                    </DropdownMenuItem>
+                                ))}
+                            </div>
+                        )}
+                    </DropdownMenuContent>
+                </DropdownMenu>
 
                 <DropdownMenu>
                     <DropdownMenuTrigger asChild>
@@ -388,60 +447,6 @@ export function Header({ breadcrumbs = [] }) {
                 </DropdownMenu>
             </div>
             </div>
-
-            <Dialog open={notificationsOpen} onOpenChange={setNotificationsOpen}>
-                <DialogContent className="max-h-[85vh] max-w-xl overflow-y-auto">
-                    <DialogHeader>
-                        <DialogTitle>Notifications</DialogTitle>
-                        <DialogDescription>Recent assessments and interview updates.</DialogDescription>
-                    </DialogHeader>
-                    <div className="flex flex-wrap justify-end gap-2">
-                        {visibleNotifications.length > 0 && (
-                            <>
-                                {unreadCount > 0 && (
-                                    <Button variant="ghost" size="sm" onClick={markAllRead}>
-                                        <CheckCheck className="h-3.5 w-3.5" /> Mark all read
-                                    </Button>
-                                )}
-                                <Button variant="ghost" size="sm" className="text-red-600 hover:text-red-700 dark:text-red-400" onClick={clearNotifications}>
-                                    Clear all
-                                </Button>
-                            </>
-                        )}
-                    </div>
-                    {notificationLoading ? (
-                        <LoadingState label="Loading notifications" className="px-3 py-5 text-xs" />
-                    ) : notificationError ? (
-                        <p role="alert" className="px-3 py-4 text-xs text-red-500">{notificationError}</p>
-                    ) : visibleNotifications.length === 0 ? (
-                        <p className="px-3 py-5 text-center text-sm text-slate-500 dark:text-zinc-400">You’re all caught up.</p>
-                    ) : (
-                        <div className="space-y-2">
-                            {visibleNotifications.map((notification) => (
-                                <button
-                                    key={notification.id}
-                                    type="button"
-                                    onClick={() => {
-                                        markRead(notification.id);
-                                        setNotificationsOpen(false);
-                                        navigate(notification.href);
-                                    }}
-                                    className="w-full rounded-lg border border-slate-200 p-3 text-left transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 dark:border-zinc-800 dark:hover:bg-zinc-800/60"
-                                >
-                                    <span className="flex items-center justify-between gap-2">
-                                        <span className="flex min-w-0 items-center gap-2 text-sm font-medium text-slate-800 dark:text-zinc-200">
-                                            {!readIds.includes(notification.id) && <span className="h-2 w-2 shrink-0 rounded-full bg-violet-500" />}
-                                            <span className="truncate">{notification.title}</span>
-                                        </span>
-                                        <span className="shrink-0 text-[10px] text-slate-400 dark:text-zinc-500">{notification.time ? new Date(notification.time).toLocaleDateString() : ""}</span>
-                                    </span>
-                                    <span className="mt-1 block line-clamp-2 text-xs text-slate-500 dark:text-zinc-400">{notification.message}</span>
-                                </button>
-                            ))}
-                        </div>
-                    )}
-                </DialogContent>
-            </Dialog>
 
             {breadcrumbs.length > 0 && (
                 <div className="flex items-center gap-1 border-t border-slate-200/70 px-5 py-2 text-xs text-slate-500 dark:border-zinc-800/60 dark:text-zinc-400">
