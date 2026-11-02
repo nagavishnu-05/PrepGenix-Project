@@ -1,8 +1,9 @@
 import { useState, useEffect } from "react";
-import { Search, Users, FileCode, BrainCircuit, AlertTriangle, TrendingUp, RefreshCw, Download, Eye, ClipboardList } from "lucide-react";
+import { Search, Users, FileCode, BrainCircuit, AlertTriangle, TrendingUp, RefreshCw, Download, Eye, ClipboardList, Check, ChevronDown } from "lucide-react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { PageHeader, EmptyState, LoadingState } from "@/components/portal/primitives";
@@ -140,7 +141,6 @@ export default function StaffReports() {
     const sectionOptions = [...new Set(rows
         .map((student) => getStudentSection(student.regNo, student.rollNo))
         .filter(Boolean))].sort();
-    const filterSelectClassName = "h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-violet-400 focus:ring-2 focus:ring-violet-500/20 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100";
 
     const resultColor = (r) => {
         if (r === "selected") return "text-emerald-400";
@@ -191,27 +191,21 @@ export default function StaffReports() {
                                     className="pl-9"
                                 />
                             </div>
-                            <select
-                                aria-label="Filter by batch"
-                                className={filterSelectClassName}
+                            <FilterDropdown
+                                label="Batch"
                                 value={batch}
-                                onChange={(event) => {
-                                    setBatch(event.target.value);
+                                options={[{ value: "", label: "All batches" }, ...batches.map((item) => ({ value: item, label: item }))]}
+                                onChange={(value) => {
+                                    setBatch(value);
                                     setSection("");
                                 }}
-                            >
-                                <option value="">All batches</option>
-                                {batches.map((item) => <option key={item} value={item}>{item}</option>)}
-                            </select>
-                            <select
-                                aria-label="Filter by section"
-                                className={filterSelectClassName}
+                            />
+                            <FilterDropdown
+                                label="Section"
                                 value={section}
-                                onChange={(event) => setSection(event.target.value)}
-                            >
-                                <option value="">All sections</option>
-                                {sectionOptions.map((item) => <option key={item} value={item}>Section {item}</option>)}
-                            </select>
+                                options={[{ value: "", label: "All sections" }, ...sectionOptions.map((item) => ({ value: item, label: `Section ${item}` }))]}
+                                onChange={setSection}
+                            />
                             <Button variant="outline" onClick={exportStudentReport} disabled={loading || studentRows.length === 0}>
                                 <Download className="h-4 w-4" /> Export Excel
                             </Button>
@@ -274,19 +268,17 @@ export default function StaffReports() {
                 <Card className="border-slate-200/80 dark:border-zinc-800/80 bg-white/70 dark:bg-zinc-900/40">
                     <CardHeader>
                         <div className="flex flex-wrap items-center gap-2">
-                            <select
-                                aria-label="Select a test"
-                                className={`${filterSelectClassName} sm:w-80`}
+                            <FilterDropdown
+                                label="Test"
                                 value={selectedTest}
-                                onChange={(event) => {
-                                    setSelectedTest(event.target.value);
+                                options={[{ value: "", label: "Select a test" }, ...tests.map((test) => ({ value: test.id, label: test.title }))]}
+                                className="w-full sm:w-80"
+                                onChange={(value) => {
+                                    setSelectedTest(value);
                                     setTestPopup(null);
                                     setSelectedAttempt(null);
                                 }}
-                            >
-                                <option value="">Select a test</option>
-                                {tests.map((t) => <option key={t.id} value={t.id}>{t.title}</option>)}
-                            </select>
+                            />
                             <Button type="button" variant="outline" size="sm" onClick={() => setReloadKey((key) => key + 1)}>
                                 <RefreshCw className="mr-2 h-3.5 w-3.5" />
                                 Refresh test list
@@ -504,5 +496,37 @@ function Stat({ label, value }) {
             <p className="text-xs text-slate-500 dark:text-zinc-500">{label}</p>
             <p className="mt-1 text-xl font-semibold text-slate-900 dark:text-zinc-100">{value ?? "—"}</p>
         </div>
+    );
+}
+
+function FilterDropdown({ label, value, options, onChange, className = "" }) {
+    const selectedOption = options.find((option) => option.value === value) || options[0];
+
+    return (
+        <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+                <Button
+                    type="button"
+                    variant="outline"
+                    aria-label={`Filter by ${label.toLowerCase()}`}
+                    className={`h-10 w-full justify-between border-slate-200 bg-white px-3 text-left font-normal text-slate-700 shadow-sm hover:bg-slate-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800 ${className}`}
+                >
+                    <span className="truncate">{selectedOption?.label || `Select ${label.toLowerCase()}`}</span>
+                    <ChevronDown className="h-4 w-4 shrink-0 text-slate-400" />
+                </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className={`max-h-72 w-[var(--radix-dropdown-menu-trigger-width)] overflow-y-auto ${className}`}>
+                {options.map((option) => (
+                    <DropdownMenuItem
+                        key={option.value || "__all__"}
+                        onSelect={() => onChange(option.value)}
+                        className="min-h-10 justify-between"
+                    >
+                        <span className="truncate">{option.label}</span>
+                        {option.value === value && <Check className="h-4 w-4 text-violet-600 dark:text-violet-400" />}
+                    </DropdownMenuItem>
+                ))}
+            </DropdownMenuContent>
+        </DropdownMenu>
     );
 }
