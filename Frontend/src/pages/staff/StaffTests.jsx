@@ -7,7 +7,7 @@ import { FileInput } from "@/components/ui/file-input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { InlineSelect } from "@/components/ui/inline-select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { PageHeader, EmptyState, LoadingState } from "@/components/portal/primitives";
@@ -392,8 +392,8 @@ export default function StaffTests() {
                         <DialogTitle>Create Test</DialogTitle>
                         <DialogDescription>Configure the test and import questions.</DialogDescription>
                     </DialogHeader>
-                    <div className="space-y-4">
-                        <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-3">
+                        <div className="grid grid-cols-2 gap-3">
                             <div className="space-y-1.5 col-span-2">
                                 <Label className="text-xs text-zinc-400">Test title</Label>
                                 <Input value={f.title} onChange={(e) => set({ title: e.target.value })} placeholder="e.g. Aptitude Round 1" />
@@ -405,25 +405,30 @@ export default function StaffTests() {
                             
                             <div className="space-y-1.5">
                                 <Label className="text-xs text-zinc-400">What test is it?</Label>
-                                <Select value={f.testTypeSelection} onValueChange={(v) => set({ testTypeSelection: v, mode: "fixed", manualType: v === "coding_programming" ? "programming" : "mcq" })}>
-                                    <SelectTrigger><SelectValue /></SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="aptitude_mcq">Aptitude MCQ</SelectItem>
-                                        <SelectItem value="coding_mcq">Coding MCQ</SelectItem>
-                                        <SelectItem value="coding_programming">Coding Programming</SelectItem>
-                                    </SelectContent>
-                                </Select>
+                                <InlineSelect
+                                    ariaLabel="Test type"
+                                    value={f.testTypeSelection}
+                                    onValueChange={(v) => set({ testTypeSelection: v, mode: "fixed", manualType: v === "coding_programming" ? "programming" : "mcq" })}
+                                    options={[
+                                        { value: "aptitude_mcq", label: "Aptitude MCQ" },
+                                        { value: "coding_mcq", label: "Coding MCQ" },
+                                        { value: "coding_programming", label: "Coding Programming" },
+                                    ]}
+                                />
                             </div>
 
                             <div className="space-y-1.5">
                                 <Label className="text-xs text-zinc-400">Mode</Label>
-                                <Select value={f.mode} onValueChange={(v) => set({ mode: v })} disabled={f.testTypeSelection === "coding_mcq"}>
-                                    <SelectTrigger><SelectValue /></SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="fixed">Manual (Upload Excel)</SelectItem>
-                                        <SelectItem value="adaptive">Adaptive</SelectItem>
-                                    </SelectContent>
-                                </Select>
+                                <InlineSelect
+                                    ariaLabel="Test mode"
+                                    value={f.mode}
+                                    onValueChange={(v) => set({ mode: v })}
+                                    disabled={f.testTypeSelection === "coding_mcq"}
+                                    options={[
+                                        { value: "fixed", label: "Manual (Upload Excel)" },
+                                        { value: "adaptive", label: "Adaptive" },
+                                    ]}
+                                />
                             </div>
 
                             <div className="space-y-1.5">
@@ -441,18 +446,17 @@ export default function StaffTests() {
                                     onChange={(e) => set({ topicsText: e.target.value })}
                                     placeholder="e.g. Percentages, Averages or Mixed"
                                 />
-                                <p className="text-[11px] text-slate-500 dark:text-zinc-500">Enter one or more topics separated by commas.</p>
                             </div>
                             <div className="space-y-1.5">
                                 <Label className="text-xs text-zinc-400">Test available from</Label>
-                                <Input type="datetime-local" value={f.startsAt} onChange={(e) => set({ startsAt: e.target.value })} />
+                                <Input className="h-9 text-sm" type="datetime-local" value={f.startsAt} onChange={(e) => set({ startsAt: e.target.value })} />
                             </div>
                             <div className="space-y-1.5">
                                 <Label className="text-xs text-zinc-400">Test available until</Label>
-                                <Input type="datetime-local" value={f.endsAt} onChange={(e) => set({ endsAt: e.target.value })} />
+                                <Input className="h-9 text-sm" type="datetime-local" value={f.endsAt} onChange={(e) => set({ endsAt: e.target.value })} />
                             </div>
-                            <p className="col-span-2 text-[11px] text-slate-500 dark:text-zinc-500">
-                                Times use your local timezone. Students can start only during this window; unfinished attempts are automatically submitted at the end time.
+                            <p className="col-span-2 text-[11px] leading-4 text-slate-500 dark:text-zinc-500">
+                                Local time; unfinished attempts are submitted at the end time.
                             </p>
                         </div>
 
@@ -526,13 +530,15 @@ export default function StaffTests() {
                                     <div className="grid grid-cols-2 gap-3">
                                         <div className="space-y-1">
                                             <Label className="text-xs text-slate-500 dark:text-zinc-500">Batch</Label>
-                                            <Select value={f.assignedBatch || "__all__"} onValueChange={(v) => set({ assignedBatch: v === "__all__" ? "" : v })}>
-                                                <SelectTrigger><SelectValue placeholder="Any batch" /></SelectTrigger>
-                                                <SelectContent>
-                                                    <SelectItem value="__all__">Any batch</SelectItem>
-                                                    {batches.map((b) => <SelectItem key={b} value={b}>{b}</SelectItem>)}
-                                                </SelectContent>
-                                            </Select>
+                                            <InlineSelect
+                                                ariaLabel="Assign to batch"
+                                                value={f.assignedBatch || "__all__"}
+                                                onValueChange={(v) => set({ assignedBatch: v === "__all__" ? "" : v })}
+                                                options={[
+                                                    { value: "__all__", label: "Any batch" },
+                                                    ...batches.map((b) => ({ value: b, label: b })),
+                                                ]}
+                                            />
                                         </div>
                                         <div className="space-y-1">
                                             <Label className="text-xs text-slate-500 dark:text-zinc-500">Or specific reg numbers (comma separated)</Label>
@@ -600,13 +606,15 @@ export default function StaffTests() {
                             <>
                                 <div className="space-y-1.5">
                                     <Label className="text-xs text-zinc-400">Batch</Label>
-                                    <Select value={assignF.batch || "__all__"} onValueChange={(v) => setAssignF({ ...assignF, batch: v === "__all__" ? "" : v })}>
-                                        <SelectTrigger><SelectValue placeholder="Any batch" /></SelectTrigger>
-                                        <SelectContent>
-                                            <SelectItem value="__all__">Any batch</SelectItem>
-                                            {batches.map((b) => <SelectItem key={b} value={b}>{b}</SelectItem>)}
-                                        </SelectContent>
-                                    </Select>
+                                    <InlineSelect
+                                        ariaLabel="Assign to batch"
+                                        value={assignF.batch || "__all__"}
+                                        onValueChange={(v) => setAssignF({ ...assignF, batch: v === "__all__" ? "" : v })}
+                                        options={[
+                                            { value: "__all__", label: "Any batch" },
+                                            ...batches.map((b) => ({ value: b, label: b })),
+                                        ]}
+                                    />
                                 </div>
                                 <div className="space-y-1.5">
                                     <Label className="text-xs text-zinc-400">Reg no. or roll no. (comma separated)</Label>

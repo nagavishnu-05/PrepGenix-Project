@@ -128,18 +128,13 @@ export default function StudentTests() {
                                                     ? "Start Test"
                                                     : "Start Test"
                                             : t.attempt.status === "in_progress"
-                                                ? availability === "ended" ? "View Result" : "Resume Test"
+                                                ? availability === "ended" ? "View Results" : "Resume Test"
                                                 : t.attempt.status === "flagged"
                                                     ? "Locked — Awaiting Staff Reset"
                                                     : t.attempt.status === "disqualified" && availability !== "ended"
-                                                        ? "Terminated — View Details"
-                                                        : "View Results"}
+                                                            ? "Terminated — View Details"
+                                                            : "View Results"}
                                     </Button>
-                                    {!t.attempt && availability === "ended" && (
-                                        <p className="mt-2 text-center text-xs text-slate-500 dark:text-zinc-400">
-                                            The scheduled test window has ended.
-                                        </p>
-                                    )}
                                 </div>
                             </CardContent>
                         </Card>

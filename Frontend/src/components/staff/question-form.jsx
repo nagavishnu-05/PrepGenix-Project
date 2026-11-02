@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { InlineSelect } from "@/components/ui/inline-select";
 
 const EMPTY = {
     title: "",
@@ -119,45 +119,53 @@ export default function QuestionForm({ initial, onSave, onCancel, saving }) {
         <div className="max-h-[70vh] space-y-4 overflow-y-auto pr-2">
             <div className="grid grid-cols-2 gap-4">
                 <Field label="Type">
-                    <Select value={f.type} onValueChange={(v) => set({ type: v })}>
-                        <SelectTrigger><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                            <SelectItem value="aptitude">Aptitude</SelectItem>
-                            <SelectItem value="coding">Coding</SelectItem>
-                        </SelectContent>
-                    </Select>
+                    <InlineSelect
+                        ariaLabel="Question type"
+                        value={f.type}
+                        onValueChange={(v) => set({ type: v })}
+                        options={[
+                            { value: "aptitude", label: "Aptitude" },
+                            { value: "coding", label: "Coding" },
+                        ]}
+                    />
                 </Field>
                 <Field label="Difficulty">
-                    <Select value={f.difficulty} onValueChange={(v) => set({ difficulty: v })}>
-                        <SelectTrigger><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                            <SelectItem value="easy">Easy</SelectItem>
-                            <SelectItem value="medium">Medium</SelectItem>
-                            <SelectItem value="hard">Hard</SelectItem>
-                        </SelectContent>
-                    </Select>
+                    <InlineSelect
+                        ariaLabel="Question difficulty"
+                        value={f.difficulty}
+                        onValueChange={(v) => set({ difficulty: v })}
+                        options={[
+                            { value: "easy", label: "Easy" },
+                            { value: "medium", label: "Medium" },
+                            { value: "hard", label: "Hard" },
+                        ]}
+                    />
                 </Field>
                 {f.type === "aptitude" && (
                     <Field label="Format">
-                        <Select value={f.format} onValueChange={(v) => set({ format: v })}>
-                            <SelectTrigger><SelectValue /></SelectTrigger>
-                            <SelectContent>
-                                <SelectItem value="mcq">MCQ</SelectItem>
-                                <SelectItem value="fillup">Fill in the blank</SelectItem>
-                                <SelectItem value="code_snippet">Code Snippet</SelectItem>
-                            </SelectContent>
-                        </Select>
+                        <InlineSelect
+                            ariaLabel="Question format"
+                            value={f.format}
+                            onValueChange={(v) => set({ format: v })}
+                            options={[
+                                { value: "mcq", label: "MCQ" },
+                                { value: "fillup", label: "Fill in the blank" },
+                                { value: "code_snippet", label: "Code Snippet" },
+                            ]}
+                        />
                     </Field>
                 )}
                 {f.type === "coding" && (
                     <Field label="Language">
-                        <Select value={f.language} onValueChange={(v) => set({ language: v })}>
-                            <SelectTrigger><SelectValue /></SelectTrigger>
-                            <SelectContent>
-                                <SelectItem value="python">Python</SelectItem>
-                                <SelectItem value="javascript">JavaScript</SelectItem>
-                            </SelectContent>
-                        </Select>
+                        <InlineSelect
+                            ariaLabel="Programming language"
+                            value={f.language}
+                            onValueChange={(v) => set({ language: v })}
+                            options={[
+                                { value: "python", label: "Python" },
+                                { value: "javascript", label: "JavaScript" },
+                            ]}
+                        />
                     </Field>
                 )}
                 <Field label="Subject / Tag group">
