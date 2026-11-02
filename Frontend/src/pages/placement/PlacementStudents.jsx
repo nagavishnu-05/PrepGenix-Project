@@ -3,7 +3,7 @@ import { Search, Users, FileText, BrainCircuit, Download, Pencil } from "lucide-
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { PageHeader, EmptyState, LoadingState } from "@/components/portal/primitives";
 import { api } from "@/lib/api";
@@ -17,6 +17,8 @@ export default function PlacementStudents() {
     const [batch, setBatch] = useState("");
     const [search, setSearch] = useState("");
     const [cat, setCat] = useState("");
+    const [filterOpen, setFilterOpen] = useState(false);
+    const [batches, setBatches] = useState([]);
     const [studentToEdit, setStudentToEdit] = useState(null);
 
     const load = useCallback(() => {
@@ -31,6 +33,12 @@ export default function PlacementStudents() {
         const t = setTimeout(load, search ? 400 : 0);
         return () => clearTimeout(t);
     }, [load]);
+
+    useEffect(() => {
+        api.students.batches()
+            .then(setBatches)
+            .catch((error) => alert(`Failed to load batches: ${error.message}`));
+    }, []);
 
     const exportStudents = async () => {
         try {
@@ -63,20 +71,9 @@ export default function PlacementStudents() {
                             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400 dark:text-zinc-500" />
                             <Input placeholder="Search by name or reg number..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" />
                         </div>
-                        <Select value={batch} onValueChange={setBatch}>
-                            <SelectTrigger className="w-40"><SelectValue placeholder="All batches" /></SelectTrigger>
-                            <SelectContent>
-                                <SelectItem value="">All batches</SelectItem>
-                                {[...new Set(rows.map((r) => r.batch).filter(Boolean))].map((b) => <SelectItem key={b} value={b}>{b}</SelectItem>)}
-                            </SelectContent>
-                        </Select>
-                        <Select value={cat} onValueChange={setCat}>
-                            <SelectTrigger className="w-48"><SelectValue placeholder="All students" /></SelectTrigger>
-                            <SelectContent>
-                                <SelectItem value="">All students</SelectItem>
-                                <SelectItem value="categorized">Categorized (have resume)</SelectItem>
-                            </SelectContent>
-                        </Select>
+                        <Button variant="outline" onClick={() => setFilterOpen(true)}>
+                            Filters{batch || cat ? " (active)" : ""}
+                        </Button>
                         <Button variant="outline" onClick={exportStudents} disabled={loading || rows.length === 0}>
                             <Download className="h-4 w-4" /> Export Excel
                         </Button>
@@ -136,6 +133,40 @@ export default function PlacementStudents() {
                     )}
                 </CardContent>
             </Card>
+
+            <Dialog open={filterOpen} onOpenChange={setFilterOpen}>
+                <DialogContent>
+                    <DialogHeader>
+                        <DialogTitle>Filter students</DialogTitle>
+                        <DialogDescription>Choose which student records to show.</DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-5">
+                        <section className="space-y-2">
+                            <h3 className="text-sm font-medium">Batch</h3>
+                            <div className="grid max-h-48 gap-2 overflow-y-auto sm:grid-cols-2">
+                                <Button type="button" variant={batch === "" ? "default" : "outline"} onClick={() => setBatch("")}>All batches</Button>
+                                {batches.map((item) => (
+                                    <Button key={item} type="button" variant={batch === item ? "default" : "outline"} onClick={() => setBatch(item)}>
+                                        {item}
+                                    </Button>
+                                ))}
+                            </div>
+                        </section>
+                        <section className="space-y-2">
+                            <h3 className="text-sm font-medium">Resume category</h3>
+                            <div className="flex flex-wrap gap-2">
+                                <Button type="button" variant={cat === "" ? "default" : "outline"} onClick={() => setCat("")}>All students</Button>
+                                <Button type="button" variant={cat === "categorized" ? "default" : "outline"} onClick={() => setCat("categorized")}>
+                                    Categorized (have resume)
+                                </Button>
+                            </div>
+                        </section>
+                        <div className="flex justify-end">
+                            <Button onClick={() => setFilterOpen(false)}>Done</Button>
+                        </div>
+                    </div>
+                </DialogContent>
+            </Dialog>
 
             <StudentEditDialog
                 student={studentToEdit}

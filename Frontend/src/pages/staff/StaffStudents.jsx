@@ -30,6 +30,7 @@ export default function StaffStudents() {
 
     // Grouping & individual detail popup state
     const [selectedBatch, setSelectedBatch] = useState(null);
+    const [batchStudentSearch, setBatchStudentSearch] = useState("");
     const [selectedStudentReport, setSelectedStudentReport] = useState(null);
     const [reportLoading, setReportLoading] = useState(false);
     const [studentToEdit, setStudentToEdit] = useState(null);
@@ -152,6 +153,11 @@ export default function StaffStudents() {
         if (!grouped[b]) grouped[b] = [];
         grouped[b].push(s);
     });
+    const selectedBatchStudents = (grouped[selectedBatch] || []).filter((student) => {
+        const query = batchStudentSearch.trim().toLowerCase();
+        return !query || [student.name, student.regNo, student.rollNo]
+            .some((value) => String(value || "").toLowerCase().includes(query));
+    });
 
     return (
         <div>
@@ -197,7 +203,7 @@ export default function StaffStudents() {
                                 <button
                                     key={batchKey}
                                     type="button"
-                                    onClick={() => setSelectedBatch(batchKey)}
+                                    onClick={() => { setBatchStudentSearch(""); setSelectedBatch(batchKey); }}
                                     className="group flex min-h-24 items-center justify-between gap-4 rounded-xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-violet-300 hover:bg-violet-50/50 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 dark:border-zinc-800 dark:bg-zinc-900/60 dark:hover:border-violet-800 dark:hover:bg-violet-950/20"
                                 >
                                     <span className="flex min-w-0 items-center gap-3">
@@ -221,14 +227,28 @@ export default function StaffStudents() {
                 </CardContent>
             </Card>
 
-            <Dialog open={selectedBatch !== null} onOpenChange={(open) => { if (!open) setSelectedBatch(null); }}>
+            <Dialog open={selectedBatch !== null} onOpenChange={(open) => {
+                if (!open) {
+                    setSelectedBatch(null);
+                    setBatchStudentSearch("");
+                }
+            }}>
                 <DialogContent className="max-h-[90vh] max-w-6xl overflow-y-auto">
                     <DialogHeader>
                         <DialogTitle>{selectedBatch === "No Batch" ? "Unassigned Batch" : `Batch ${selectedBatch}`}</DialogTitle>
                         <DialogDescription>
-                            {selectedBatch ? `${grouped[selectedBatch]?.length || 0} student${grouped[selectedBatch]?.length === 1 ? "" : "s"} in this batch` : "Students in this batch"}
+                            {selectedBatchStudents.length} student{selectedBatchStudents.length === 1 ? "" : "s"}{batchStudentSearch ? " match your search" : " in this batch"}
                         </DialogDescription>
                     </DialogHeader>
+                    <div className="relative">
+                        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400 dark:text-zinc-500" />
+                        <Input
+                            placeholder="Search by name, registration number, or roll number..."
+                            value={batchStudentSearch}
+                            onChange={(event) => setBatchStudentSearch(event.target.value)}
+                            className="pl-9"
+                        />
+                    </div>
                     <div className="overflow-x-auto">
                         <Table>
                             <TableHeader>
@@ -243,7 +263,7 @@ export default function StaffStudents() {
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
-                                {(grouped[selectedBatch] || []).map((s) => (
+                                {selectedBatchStudents.map((s) => (
                                     <TableRow key={s.regNo}>
                                         <TableCell>
                                             <p className="font-semibold text-slate-800 dark:text-zinc-100">{s.name}</p>
@@ -263,6 +283,13 @@ export default function StaffStudents() {
                                         </TableCell>
                                     </TableRow>
                                 ))}
+                                {selectedBatchStudents.length === 0 && (
+                                    <TableRow>
+                                        <TableCell colSpan={7} className="py-8 text-center text-sm text-slate-500 dark:text-zinc-400">
+                                            No students match your search.
+                                        </TableCell>
+                                    </TableRow>
+                                )}
                             </TableBody>
                         </Table>
                     </div>

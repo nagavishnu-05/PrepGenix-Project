@@ -202,6 +202,10 @@ export default function InterviewRoom() {
     const recognitionRef = useRef(null);
     const speechBaseRef = useRef("");
     const speechFinalRef = useRef("");
+    const speechQuestionRef = useRef(null);
+    const speechSessionRef = useRef(0);
+    const speechStopResolverRef = useRef(null);
+    const answerRef = useRef("");
     const recorderRef = useRef(null);
     const chunksRef = useRef([]);
     const audioCtxRef = useRef(null);
@@ -325,6 +329,8 @@ export default function InterviewRoom() {
     useEffect(() => () => {
         if (rafRef.current) cancelAnimationFrame(rafRef.current);
         audioCtxRef.current?.close?.().catch(() => {});
+        speechQuestionRef.current = null;
+        speechSessionRef.current += 1;
         recognitionRef.current?.stop?.();
         if (recorderRef.current && recorderRef.current.state === "recording") recorderRef.current.stop();
         stream?.getTracks?.().forEach((track) => track.stop());
@@ -371,8 +377,11 @@ export default function InterviewRoom() {
         setMonitorState(MONITOR_STATE.TERMINATING);
         setPausedReason("");
         // Stop input immediately; keep camera for a final evidence frame.
+        speechQuestionRef.current = null;
+        speechSessionRef.current += 1;
         recognitionRef.current?.stop?.();
         setListening(false);
+        answerRef.current = "";
         setAnswer("");
         const evidence = (Array.isArray(devices) ? devices : [])
             .filter((d) => d && String(d.label || d.class || "").toLowerCase().includes("phone"))
@@ -414,6 +423,8 @@ export default function InterviewRoom() {
     const stopAllMedia = useCallback(() => {
         if (rafRef.current) cancelAnimationFrame(rafRef.current);
         audioCtxRef.current?.close?.().catch(() => {});
+        speechQuestionRef.current = null;
+        speechSessionRef.current += 1;
         recognitionRef.current?.stop?.();
         if (recorderRef.current && recorderRef.current.state === "recording") {
             try { recorderRef.current.stop(); } catch { /* ignore */ }
@@ -970,9 +981,13 @@ export default function InterviewRoom() {
         recognition.continuous = true;
         recognition.interimResults = true;
         recognition.lang = speechLang;
-        speechBaseRef.current = answer.trimEnd();
+        speechBaseRef.current = answerRef.current.trimEnd();
         speechFinalRef.current = "";
+        const speechSession = speechSessionRef.current + 1;
+        speechSessionRef.current = speechSession;
+        speechQuestionRef.current = question.id;
         recognition.onresult = (event) => {
+            if (speechSessionRef.current !== speechSession || speechQuestionRef.current !== question.id) return;
             let interim = "";
             for (let i = event.resultIndex; i < event.results.length; i += 1) {
                 const result = event.results[i];
@@ -980,14 +995,27 @@ export default function InterviewRoom() {
                 else interim += result[0].transcript;
             }
             const spoken = `${speechFinalRef.current}${interim}`.trim();
-            setAnswer([speechBaseRef.current, spoken].filter(Boolean).join(speechBaseRef.current && spoken ? " " : ""));
+            const nextAnswer = [speechBaseRef.current, spoken].filter(Boolean).join(speechBaseRef.current && spoken ? " " : "");
+            answerRef.current = nextAnswer;
+            setAnswer(nextAnswer);
         };
         recognition.onend = () => {
-            const spoken = speechFinalRef.current.trim();
-            setAnswer([speechBaseRef.current, spoken].filter(Boolean).join(speechBaseRef.current && spoken ? " " : ""));
+            if (speechSessionRef.current === speechSession && speechQuestionRef.current === question.id) {
+                const spoken = speechFinalRef.current.trim();
+                const nextAnswer = [speechBaseRef.current, spoken].filter(Boolean).join(speechBaseRef.current && spoken ? " " : "");
+                answerRef.current = nextAnswer;
+                setAnswer(nextAnswer);
+                speechQuestionRef.current = null;
+            }
+            if (recognitionRef.current === recognition) recognitionRef.current = null;
             setListening(false);
+            if (speechStopResolverRef.current?.session === speechSession) {
+                speechStopResolverRef.current.resolve();
+                speechStopResolverRef.current = null;
+            }
         };
         recognition.onerror = (event) => {
+            if (speechSessionRef.current !== speechSession || speechQuestionRef.current !== question.id) return;
             setListening(false);
             const reason = event.error === "network"
                 ? "Voice transcription could not reach your browser's speech service."
@@ -1000,25 +1028,57 @@ export default function InterviewRoom() {
             setListening(true);
         } catch (startError) {
             recognitionRef.current = null;
+            if (speechSessionRef.current === speechSession) speechQuestionRef.current = null;
             setSpeechError(`Could not start voice transcription: ${startError.message}. Type your answer below.`);
         }
     };
 
     const submitAnswer = async () => {
-        if (!question || !answer.trim()) return;
+        if (!question || !answerRef.current.trim()) return;
         setBusy(true);
         setError("");
         try {
-            if (listening) {
-                recognitionRef.current?.stop?.();
+            const activeRecognition = recognitionRef.current;
+            const activeSpeechSession = speechSessionRef.current;
+            if (activeRecognition && speechQuestionRef.current === question.id) {
+                await new Promise((resolve) => {
+                    let timeoutId;
+                    const finish = () => {
+                        window.clearTimeout(timeoutId);
+                        if (speechStopResolverRef.current?.session === activeSpeechSession) {
+                            speechStopResolverRef.current = null;
+                        }
+                        resolve();
+                    };
+                    speechStopResolverRef.current = { session: activeSpeechSession, resolve: finish };
+                    timeoutId = window.setTimeout(() => {
+                        if (speechSessionRef.current === activeSpeechSession) {
+                            speechQuestionRef.current = null;
+                            if (recognitionRef.current === activeRecognition) recognitionRef.current = null;
+                        }
+                        setSpeechError("Voice transcription did not finish in time. The recognized portion will be submitted.");
+                        finish();
+                    }, 2000);
+                    try {
+                        activeRecognition.stop();
+                    } catch {
+                        finish();
+                    }
+                });
                 setListening(false);
             }
-            const res = await api.interviews.answer(id, { questionId: question.id, text: answer.trim() });
+            const submittedAnswer = answerRef.current.trim();
+            if (!submittedAnswer) {
+                setError("No answer was captured. Please try voice input again or type your answer.");
+                return;
+            }
+            const res = await api.interviews.answer(id, { questionId: question.id, text: submittedAnswer });
             setTranscript((prev) => {
-                const next = [...prev, { role: "candidate", questionId: question.id, text: answer.trim() }];
+                const next = [...prev, { role: "candidate", questionId: question.id, text: submittedAnswer }];
                 if (res.question) next.push({ role: "bot", questionId: res.question.id, text: res.question.text });
                 return next;
             });
+            answerRef.current = "";
             setAnswer("");
             setIndex(res.index);
             setTotal(res.total);
@@ -1546,7 +1606,10 @@ export default function InterviewRoom() {
                                 <Textarea
                                     className="min-h-0 flex-1 resize-none"
                                     value={answer}
-                                    onChange={(event) => setAnswer(event.target.value)}
+                                    onChange={(event) => {
+                                        answerRef.current = event.target.value;
+                                        setAnswer(event.target.value);
+                                    }}
                                     placeholder="Type your answer, or use Speak answer."
                                     disabled={busy || done || !canContinue}
                                 />
