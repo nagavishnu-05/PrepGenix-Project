@@ -467,13 +467,15 @@ export default function StaffTests() {
                                 {f.testTypeSelection === "aptitude_mcq" && (
                                     <div className="space-y-1.5">
                                         <Label className="text-xs text-slate-500 dark:text-zinc-400">Question Format</Label>
-                                        <Select value={f.manualType} onValueChange={(v) => set({ manualType: v })}>
-                                            <SelectTrigger><SelectValue /></SelectTrigger>
-                                            <SelectContent>
-                                                <SelectItem value="mcq">MCQ</SelectItem>
-                                                <SelectItem value="fillup">Fill up</SelectItem>
-                                            </SelectContent>
-                                        </Select>
+                                        <InlineSelect
+                                            ariaLabel="Question format"
+                                            value={f.manualType}
+                                            onValueChange={(v) => set({ manualType: v })}
+                                            options={[
+                                                { value: "mcq", label: "MCQ" },
+                                                { value: "fillup", label: "Fill up" },
+                                            ]}
+                                        />
                                     </div>
                                 )}
 
