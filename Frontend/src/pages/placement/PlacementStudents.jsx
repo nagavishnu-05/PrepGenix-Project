@@ -3,12 +3,12 @@ import { Search, Users, FileText, BrainCircuit, Download, Pencil } from "lucide-
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { PageHeader, EmptyState, LoadingState } from "@/components/portal/primitives";
 import { api } from "@/lib/api";
 import { downloadExcel } from "@/lib/excel-export";
-import { getStudentSection } from "@/lib/student-section";
+import { getSectionsForBatch, getStudentSection } from "@/lib/student-section";
+import { InlineSelect } from "@/components/ui/inline-select";
 import { StudentEditDialog } from "@/components/portal/StudentEditDialog";
 
 export default function PlacementStudents() {
@@ -16,18 +16,18 @@ export default function PlacementStudents() {
     const [loading, setLoading] = useState(true);
     const [batch, setBatch] = useState("");
     const [search, setSearch] = useState("");
-    const [cat, setCat] = useState("");
-    const [filterOpen, setFilterOpen] = useState(false);
+    const [resumeFilter, setResumeFilter] = useState("all");
+    const [section, setSection] = useState("all");
     const [batches, setBatches] = useState([]);
     const [studentToEdit, setStudentToEdit] = useState(null);
 
     const load = useCallback(() => {
         setLoading(true);
-        api.reports.students({ batch: batch || undefined, search: search || undefined, categorized: cat === "categorized" })
+        api.reports.students({ batch: batch || undefined, search: search || undefined })
             .then(setRows)
             .catch(() => {})
             .finally(() => setLoading(false));
-    }, [batch, search, cat]);
+    }, [batch, search]);
 
     useEffect(() => {
         const t = setTimeout(load, search ? 400 : 0);
@@ -40,9 +40,17 @@ export default function PlacementStudents() {
             .catch((error) => alert(`Failed to load batches: ${error.message}`));
     }, []);
 
+    const sections = getSectionsForBatch(batch || "all", rows);
+    const visibleRows = rows.filter((student) => {
+        if (section !== "all" && getStudentSection(student.regNo, student.rollNo) !== section) return false;
+        if (resumeFilter === "with_resume" && !student.hasResume) return false;
+        if (resumeFilter === "without_resume" && student.hasResume) return false;
+        return true;
+    });
+
     const exportStudents = async () => {
         try {
-            await downloadExcel("Placement-Students", rows.map((student) => ({
+            await downloadExcel("Placement-Students", visibleRows.map((student) => ({
                 Name: student.name || "",
                 "Registration Number": student.regNo || "",
                 "Roll Number": student.rollNo || "",
@@ -66,15 +74,46 @@ export default function PlacementStudents() {
 
             <Card className="border-slate-200/80 dark:border-zinc-800/80 bg-white/70 dark:bg-zinc-900/40">
                 <CardHeader className="space-y-3">
-                    <div className="flex flex-wrap items-center gap-3">
+                    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-[minmax(240px,1fr)_200px_180px_200px_auto]">
                         <div className="relative flex-1 min-w-48">
                             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400 dark:text-zinc-500" />
                             <Input placeholder="Search by name or reg number..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" />
                         </div>
-                        <Button variant="outline" onClick={() => setFilterOpen(true)}>
-                            Filters{batch || cat ? " (active)" : ""}
-                        </Button>
-                        <Button variant="outline" onClick={exportStudents} disabled={loading || rows.length === 0}>
+                        <div className="space-y-1">
+                            <label className="text-xs font-medium text-slate-500 dark:text-zinc-400">Batch</label>
+                            <InlineSelect
+                                ariaLabel="Filter by batch"
+                                value={batch || "all"}
+                                onValueChange={(value) => {
+                                    setBatch(value === "all" ? "" : value);
+                                    setSection("all");
+                                }}
+                                options={[{ value: "all", label: "All batches" }, ...batches.map((item) => ({ value: item, label: item }))]}
+                            />
+                        </div>
+                        <div className="space-y-1">
+                            <label className="text-xs font-medium text-slate-500 dark:text-zinc-400">Section</label>
+                            <InlineSelect
+                                ariaLabel="Filter by section"
+                                value={section}
+                                onValueChange={setSection}
+                                options={[{ value: "all", label: "All sections" }, ...sections.map((item) => ({ value: item, label: `Section ${item}` }))]}
+                            />
+                        </div>
+                        <div className="space-y-1">
+                            <label className="text-xs font-medium text-slate-500 dark:text-zinc-400">Resume</label>
+                            <InlineSelect
+                                ariaLabel="Filter by resume"
+                                value={resumeFilter}
+                                onValueChange={setResumeFilter}
+                                options={[
+                                    { value: "all", label: "All students" },
+                                    { value: "with_resume", label: "Has resume" },
+                                    { value: "without_resume", label: "No resume" },
+                                ]}
+                            />
+                        </div>
+                        <Button variant="outline" onClick={exportStudents} disabled={loading || visibleRows.length === 0} className="self-end">
                             <Download className="h-4 w-4" /> Export Excel
                         </Button>
                     </div>
@@ -82,7 +121,7 @@ export default function PlacementStudents() {
                 <CardContent>
                     {loading ? (
                         <LoadingState label="Loading students" className="py-10" />
-                    ) : rows.length === 0 ? (
+                    ) : visibleRows.length === 0 ? (
                         <EmptyState icon={Users} title="No students" description="No student records match the filters." />
                     ) : (
                         <Table>
@@ -100,11 +139,11 @@ export default function PlacementStudents() {
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
-                                {rows.map((s) => (
+                                {visibleRows.map((s) => (
                                     <TableRow key={s.regNo}>
                                         <TableCell>
                                             <p className="font-medium text-slate-800 dark:text-zinc-100">{s.name}</p>
-                                            <p className="text-xs text-slate-500 dark:text-zinc-500">{s.regNo}{s.rollNo ? ` · Roll ${s.rollNo}` : ""}</p>
+                                            <p className="text-xs text-slate-500 dark:text-zinc-500">{s.regNo}</p>
                                         </TableCell>
                                         <TableCell className="text-sm text-slate-600 dark:text-zinc-300">{s.batch || "—"}</TableCell>
                                         <TableCell className="text-sm text-slate-600 dark:text-zinc-300">{s.cgpa ?? "—"}</TableCell>
@@ -133,40 +172,6 @@ export default function PlacementStudents() {
                     )}
                 </CardContent>
             </Card>
-
-            <Dialog open={filterOpen} onOpenChange={setFilterOpen}>
-                <DialogContent>
-                    <DialogHeader>
-                        <DialogTitle>Filter students</DialogTitle>
-                        <DialogDescription>Choose which student records to show.</DialogDescription>
-                    </DialogHeader>
-                    <div className="space-y-5">
-                        <section className="space-y-2">
-                            <h3 className="text-sm font-medium">Batch</h3>
-                            <div className="grid max-h-48 gap-2 overflow-y-auto sm:grid-cols-2">
-                                <Button type="button" variant={batch === "" ? "default" : "outline"} onClick={() => setBatch("")}>All batches</Button>
-                                {batches.map((item) => (
-                                    <Button key={item} type="button" variant={batch === item ? "default" : "outline"} onClick={() => setBatch(item)}>
-                                        {item}
-                                    </Button>
-                                ))}
-                            </div>
-                        </section>
-                        <section className="space-y-2">
-                            <h3 className="text-sm font-medium">Resume category</h3>
-                            <div className="flex flex-wrap gap-2">
-                                <Button type="button" variant={cat === "" ? "default" : "outline"} onClick={() => setCat("")}>All students</Button>
-                                <Button type="button" variant={cat === "categorized" ? "default" : "outline"} onClick={() => setCat("categorized")}>
-                                    Categorized (have resume)
-                                </Button>
-                            </div>
-                        </section>
-                        <div className="flex justify-end">
-                            <Button onClick={() => setFilterOpen(false)}>Done</Button>
-                        </div>
-                    </div>
-                </DialogContent>
-            </Dialog>
 
             <StudentEditDialog
                 student={studentToEdit}
