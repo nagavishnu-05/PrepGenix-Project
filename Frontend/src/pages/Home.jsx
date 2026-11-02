@@ -22,7 +22,7 @@ import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/store/auth-store";
 
 const ROLES = [
-    { id: "student", label: "Student", hint: "Register No + Roll No", icon: GraduationCap, u: "Register Number", p: "Roll Number", placeholderU: "Enter Register Number (e.g., 2023001)", placeholderP: "Enter Roll Number (e.g., 23CS001)" },
+    { id: "student", label: "Student", hint: "Register No + Roll No", icon: GraduationCap, u: "Register Number", p: "Roll Number", placeholderU: "Enter Register Number (e.g., 913122001)", placeholderP: "Enter Roll Number (e.g., 23CSEA01)" },
     { id: "staff", label: "Staff", hint: "Test & question management", icon: UserCog, u: "Email Address", p: "Password", placeholderU: "staff@gmail.com", placeholderP: "••••••••" },
     { id: "placement", label: "Placement", hint: "Resumes & interviews", icon: Briefcase, u: "Email Address", p: "Password", placeholderU: "placement@gmail.com", placeholderP: "••••••••" },
 ];
