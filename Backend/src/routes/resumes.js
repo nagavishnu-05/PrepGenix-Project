@@ -24,7 +24,9 @@ function runPythonParse(filePath) {
     const env = Object.assign({}, process.env, { PYTHONIOENCODING: "utf-8" });
     execFile(PYTHON, [PARSE_SCRIPT, "--input", filePath], { env, timeout: 60000, maxBuffer: 8 * 1024 * 1024 }, (err, stdout, stderr) => {
       if (err) {
-        const hint = /pypdf/i.test(stderr) ? " (pypdf is required for PDF parsing — run `pip install pypdf` in the AIML folder)" : "";
+        const hint = /pypdf/i.test(stderr)
+          ? " (pypdf is missing from the backend's Python environment; add `python -m pip install -r AIML/requirements-resume.txt` to the Render backend Build Command and redeploy)"
+          : "";
         return reject(new Error(`Resume parser failed${hint}: ${stderr || err.message}`));
       }
       try {

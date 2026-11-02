@@ -74,3 +74,24 @@ deployment must include the `AIML` folder and required Python packages. If AIML
 is deployed as a separate service, redeploy that service as well. Configure
 `PYTHON_PATH` for the hosted environment; do not point a hosted service at a
 local `.venv` or a `localhost` URL.
+
+The Express backend runs the resume parser directly, so its Render service also
+needs the parser's Python dependency. With the Render **Root Directory** set to
+the repository root, keep the existing Build Command and append:
+
+```sh
+&& python -m pip install -r AIML/requirements-resume.txt
+```
+
+For example, if the existing Build Command is `npm install --prefix Backend`,
+use:
+
+```sh
+npm install --prefix Backend && python -m pip install -r AIML/requirements-resume.txt
+```
+
+This installs only the lightweight PDF parser dependency, not the full AIML
+stack. The command must use the same Python executable that the backend uses
+for `PYTHON_PATH` (which defaults to `python`). Redeploy the **Node backend**
+after changing the Build Command; installing packages on a separate AIML
+service does not make them available to the backend.
