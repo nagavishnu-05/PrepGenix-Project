@@ -195,7 +195,7 @@ export default function StaffQuestions() {
                             groups.length === 0 ? (
                                 <EmptyState icon={Layers} title="No test groups found" description="Create a test and assign questions to see question groups here." />
                             ) : (
-                            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                            <div className="grid grid-cols-1 gap-3">
                                 {groups.map((g) => {
                                     return (
                                         <div

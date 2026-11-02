@@ -24,8 +24,7 @@ export default function StaffReports() {
     const [studentSearchInput, setStudentSearchInput] = useState("");
     const [tab, setTab] = useState("students");
     const [studentAnalyticsOpen, setStudentAnalyticsOpen] = useState(false);
-    const [testAnalyticsOpen, setTestAnalyticsOpen] = useState(false);
-    const [attemptsOpen, setAttemptsOpen] = useState(false);
+    const [testPopup, setTestPopup] = useState(null);
     const [selectedAttempt, setSelectedAttempt] = useState(null);
     const [batches, setBatches] = useState([]);
     const [reloadKey, setReloadKey] = useState(0);
@@ -201,10 +200,13 @@ export default function StaffReports() {
                                 className="pl-9"
                             />
                         </div>
-                        <Select value={batch} onValueChange={setBatch}>
+                        <Select
+                            value={batch || "__all_batches__"}
+                            onValueChange={(value) => setBatch(value === "__all_batches__" ? "" : value)}
+                        >
                             <SelectTrigger className="w-48"><SelectValue placeholder="All batches" /></SelectTrigger>
                             <SelectContent>
-                                <SelectItem value="">All batches</SelectItem>
+                                <SelectItem value="__all_batches__">All batches</SelectItem>
                                 {batches.map((item) => <SelectItem key={item} value={item}>{item}</SelectItem>)}
                             </SelectContent>
                         </Select>
@@ -263,7 +265,11 @@ export default function StaffReports() {
                 <Card className="border-slate-200/80 dark:border-zinc-800/80 bg-white/70 dark:bg-zinc-900/40">
                     <CardHeader>
                         <div className="flex flex-wrap items-center gap-2">
-                            <Select value={selectedTest} onValueChange={setSelectedTest}>
+                            <Select value={selectedTest} onValueChange={(value) => {
+                                setSelectedTest(value);
+                                setTestPopup(null);
+                                setSelectedAttempt(null);
+                            }}>
                                 <SelectTrigger className="w-80"><SelectValue placeholder="Select a test" /></SelectTrigger>
                                 <SelectContent>
                                     {tests.map((t) => <SelectItem key={t.id} value={t.id}>{t.title}</SelectItem>)}
@@ -295,7 +301,7 @@ export default function StaffReports() {
                                     <Stat label="Best" value={`${testReport.stats?.bestScore}%`} />
                                     <Stat label="Total score" value={testReport.stats?.totalScore} />
                                 </div>
-                                <Button onClick={() => setTestAnalyticsOpen(true)}>
+                                <Button onClick={() => setTestPopup("analytics")}>
                                     <TrendingUp className="h-4 w-4" /> View performance analytics
                                 </Button>
                             </div>
@@ -306,7 +312,7 @@ export default function StaffReports() {
                 </Card>
             )}
 
-            <Dialog open={testAnalyticsOpen} onOpenChange={setTestAnalyticsOpen}>
+            <Dialog open={testPopup === "analytics"} onOpenChange={(open) => { if (!open) setTestPopup(null); }}>
                 <DialogContent className="max-h-[90vh] max-w-5xl overflow-y-auto">
                     <DialogHeader>
                         <DialogTitle>Test Performance Analytics</DialogTitle>
@@ -316,7 +322,7 @@ export default function StaffReports() {
                     </DialogHeader>
                     {testReport && (
                         <div className="space-y-5">
-                            <Button variant="outline" className="w-full" onClick={() => setAttemptsOpen(true)} disabled={!testReport.attempts?.length}>
+                            <Button variant="outline" className="w-full" onClick={() => setTestPopup("attempts")} disabled={!testReport.attempts?.length}>
                                 <ClipboardList className="h-4 w-4" /> Student Attempts ({testReport.attempts?.length || 0})
                             </Button>
                             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -353,12 +359,15 @@ export default function StaffReports() {
                 </DialogContent>
             </Dialog>
 
-            <Dialog open={attemptsOpen} onOpenChange={setAttemptsOpen}>
+            <Dialog open={testPopup === "attempts"} onOpenChange={(open) => { if (!open) setTestPopup(null); }}>
                 <DialogContent className="max-h-[90vh] max-w-6xl overflow-y-auto">
                     <DialogHeader>
                         <DialogTitle>Student Attempts</DialogTitle>
                         <DialogDescription>{testReport?.test?.title || "Selected test"} · {testReport?.attempts?.length || 0} attempts</DialogDescription>
                     </DialogHeader>
+                    <Button type="button" variant="outline" className="w-fit" onClick={() => setTestPopup("analytics")}>
+                        Back to performance analytics
+                    </Button>
                     <div className="overflow-x-auto rounded-lg border border-slate-200 dark:border-zinc-800">
                         <Table>
                             <TableHeader>
@@ -382,7 +391,10 @@ export default function StaffReports() {
                                         <TableCell className={`capitalize ${resultColor(attempt.result)}`}>{attempt.result || "—"}</TableCell>
                                         <TableCell>
                                             <div className="flex justify-end gap-2">
-                                                <Button variant="outline" size="sm" onClick={() => setSelectedAttempt(attempt)}>
+                                                <Button variant="outline" size="sm" onClick={() => {
+                                                    setSelectedAttempt(attempt);
+                                                    setTestPopup("violations");
+                                                }}>
                                                     <Eye className="h-4 w-4" /> View violations ({attempt.violationCount ?? attempt.violations?.length ?? 0})
                                                 </Button>
                                                 <Button variant="ghost" size="sm" className="text-red-600 hover:text-red-500 dark:text-red-400" onClick={() => handleResetAttempt(attempt.id)}>
@@ -401,7 +413,12 @@ export default function StaffReports() {
                 </DialogContent>
             </Dialog>
 
-            <Dialog open={selectedAttempt !== null} onOpenChange={(open) => { if (!open) setSelectedAttempt(null); }}>
+            <Dialog open={testPopup === "violations" && selectedAttempt !== null} onOpenChange={(open) => {
+                if (!open) {
+                    setTestPopup(null);
+                    setSelectedAttempt(null);
+                }
+            }}>
                 <DialogContent className="max-h-[90vh] max-w-4xl overflow-y-auto">
                     <DialogHeader>
                         <DialogTitle>Attempt violations</DialogTitle>
@@ -409,6 +426,9 @@ export default function StaffReports() {
                             {selectedAttempt?.studentName || "Student"} · {selectedAttempt?.studentRegNo} · {selectedAttempt?.completedAt ? new Date(selectedAttempt.completedAt).toLocaleString() : "Completion time unavailable"}
                         </DialogDescription>
                     </DialogHeader>
+                    <Button type="button" variant="outline" className="w-fit" onClick={() => setTestPopup("attempts")}>
+                        Back to student attempts
+                    </Button>
                     {selectedAttempt && (() => {
                         const violations = selectedAttempt.violations || [];
                         const violationTypes = [...new Set(violations.map((violation) => (violation.type || "unknown").replace(/_/g, " ")))];
@@ -424,7 +444,7 @@ export default function StaffReports() {
                                     <div className="flex flex-wrap gap-2">
                                         {violationTypes.map((type) => (
                                             <span key={type} className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-medium capitalize text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-300">
-                                                {type} ·                                                 {violations.filter((violation) => (violation.type || "unknown").replace(/_/g, " ") === type).length}
+                                                {type} · {violations.filter((violation) => (violation.type || "unknown").replace(/_/g, " ") === type).length}
                                             </span>
                                         ))}
                                     </div>

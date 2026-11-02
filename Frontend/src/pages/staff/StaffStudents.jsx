@@ -198,7 +198,7 @@ export default function StaffStudents() {
                     ) : rows.length === 0 ? (
                         <EmptyState icon={Users} title="No students found" description="Add students manually or import them from an Excel file." />
                     ) : (
-                        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                        <div className="grid grid-cols-1 gap-3">
                             {Object.entries(grouped).map(([batchKey, studentList]) => (
                                 <button
                                     key={batchKey}
