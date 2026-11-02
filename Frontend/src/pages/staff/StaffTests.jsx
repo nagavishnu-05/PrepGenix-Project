@@ -447,14 +447,14 @@ export default function StaffTests() {
                                     placeholder="e.g. Percentages, Averages or Mixed"
                                 />
                             </div>
-                            <div className="col-span-2 grid grid-cols-2 gap-2">
+                            <div className="col-span-2 grid max-w-2xl grid-cols-2 gap-3">
                                 <div className="min-w-0 space-y-1.5">
                                     <Label className="text-xs text-zinc-400">Test available from</Label>
-                                    <Input className="h-9 min-w-0 text-sm" type="datetime-local" value={f.startsAt} onChange={(e) => set({ startsAt: e.target.value })} />
+                                    <Input className="h-10 min-w-0 text-sm" type="datetime-local" value={f.startsAt} onChange={(e) => set({ startsAt: e.target.value })} />
                                 </div>
                                 <div className="min-w-0 space-y-1.5">
                                     <Label className="text-xs text-zinc-400">Test available until</Label>
-                                    <Input className="h-9 min-w-0 text-sm" type="datetime-local" value={f.endsAt} onChange={(e) => set({ endsAt: e.target.value })} />
+                                    <Input className="h-10 min-w-0 text-sm" type="datetime-local" value={f.endsAt} onChange={(e) => set({ endsAt: e.target.value })} />
                                 </div>
                             </div>
                             <p className="col-span-2 text-[11px] leading-4 text-slate-500 dark:text-zinc-500">
