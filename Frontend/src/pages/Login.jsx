@@ -8,9 +8,9 @@ import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/store/auth-store";
 
 const ROLES = [
-    { id: "student", label: "Student", hint: "Register No + Roll No", icon: GraduationCap, u: "Register Number", p: "Roll Number" },
-    { id: "staff", label: "Staff", hint: "Test & question management", icon: UserCog, u: "Email", p: "Password" },
-    { id: "placement", label: "Placement", hint: "Resumes & interviews", icon: Briefcase, u: "Email", p: "Password" },
+    { id: "student", label: "Student", hint: "Register No + Roll No", icon: GraduationCap, u: "Register Number", p: "Roll Number", uPlaceholder: "Eg: 913122001", pPlaceholder: "Eg: 23CSEA01" },
+    { id: "staff", label: "Staff", hint: "Test & question management", icon: UserCog, u: "Email", p: "Password", uPlaceholder: "Enter your email", pPlaceholder: "Enter your password" },
+    { id: "placement", label: "Placement", hint: "Resumes & interviews", icon: Briefcase, u: "Email", p: "Password", uPlaceholder: "Enter your email", pPlaceholder: "Enter your password" },
 ];
 
 const DEMO = {
@@ -54,6 +54,8 @@ export default function LoginPage() {
             setLoading(false);
         }
     };
+
+    const selectedRole = ROLES.find((r) => r.id === role);
 
     return (
         <div className="flex min-h-screen">
@@ -129,16 +131,16 @@ export default function LoginPage() {
                         <div className="space-y-2">
                             <label className="flex items-center gap-2 text-sm font-medium text-zinc-300">
                                 <Hash className="h-4 w-4 text-zinc-500" />
-                                {ROLES.find((r) => r.id === role).u}
+                                {selectedRole.u}
                             </label>
-                            <Input value={username} onChange={(e) => setUsername(e.target.value)} required />
+                            <Input placeholder={selectedRole.uPlaceholder} value={username} onChange={(e) => setUsername(e.target.value)} required />
                         </div>
                         <div className="space-y-2">
                             <label className="flex items-center gap-2 text-sm font-medium text-zinc-300">
                                 <KeyRound className="h-4 w-4 text-zinc-500" />
-                                {ROLES.find((r) => r.id === role).p}
+                                {selectedRole.p}
                             </label>
-                            <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+                            <Input type="password" placeholder={selectedRole.pPlaceholder} value={password} onChange={(e) => setPassword(e.target.value)} required />
                         </div>
 
                         {error && <p className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-400">{error}</p>}
