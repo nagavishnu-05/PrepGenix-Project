@@ -3,7 +3,6 @@ import { Search, Users, FileCode, BrainCircuit, AlertTriangle, TrendingUp, Refre
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { PageHeader, EmptyState, LoadingState } from "@/components/portal/primitives";
@@ -141,6 +140,7 @@ export default function StaffReports() {
     const sectionOptions = [...new Set(rows
         .map((student) => getStudentSection(student.regNo, student.rollNo))
         .filter(Boolean))].sort();
+    const filterSelectClassName = "h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-violet-400 focus:ring-2 focus:ring-violet-500/20 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100";
 
     const resultColor = (r) => {
         if (r === "selected") return "text-emerald-400";
@@ -191,26 +191,27 @@ export default function StaffReports() {
                                     className="pl-9"
                                 />
                             </div>
-                            <Select
-                                value={batch || "__all_batches__"}
-                                onValueChange={(value) => {
-                                    setBatch(value === "__all_batches__" ? "" : value);
+                            <select
+                                aria-label="Filter by batch"
+                                className={filterSelectClassName}
+                                value={batch}
+                                onChange={(event) => {
+                                    setBatch(event.target.value);
                                     setSection("");
                                 }}
                             >
-                                <SelectTrigger><SelectValue placeholder="All batches" /></SelectTrigger>
-                                <SelectContent>
-                                    <SelectItem value="__all_batches__">All batches</SelectItem>
-                                    {batches.map((item) => <SelectItem key={item} value={item}>{item}</SelectItem>)}
-                                </SelectContent>
-                            </Select>
-                            <Select value={section || "__all_sections__"} onValueChange={(value) => setSection(value === "__all_sections__" ? "" : value)}>
-                                <SelectTrigger><SelectValue placeholder="All sections" /></SelectTrigger>
-                                <SelectContent>
-                                    <SelectItem value="__all_sections__">All sections</SelectItem>
-                                    {sectionOptions.map((item) => <SelectItem key={item} value={item}>Section {item}</SelectItem>)}
-                                </SelectContent>
-                            </Select>
+                                <option value="">All batches</option>
+                                {batches.map((item) => <option key={item} value={item}>{item}</option>)}
+                            </select>
+                            <select
+                                aria-label="Filter by section"
+                                className={filterSelectClassName}
+                                value={section}
+                                onChange={(event) => setSection(event.target.value)}
+                            >
+                                <option value="">All sections</option>
+                                {sectionOptions.map((item) => <option key={item} value={item}>Section {item}</option>)}
+                            </select>
                             <Button variant="outline" onClick={exportStudentReport} disabled={loading || studentRows.length === 0}>
                                 <Download className="h-4 w-4" /> Export Excel
                             </Button>
@@ -273,16 +274,19 @@ export default function StaffReports() {
                 <Card className="border-slate-200/80 dark:border-zinc-800/80 bg-white/70 dark:bg-zinc-900/40">
                     <CardHeader>
                         <div className="flex flex-wrap items-center gap-2">
-                            <Select value={selectedTest} onValueChange={(value) => {
-                                setSelectedTest(value);
-                                setTestPopup(null);
-                                setSelectedAttempt(null);
-                            }}>
-                                <SelectTrigger className="w-80"><SelectValue placeholder="Select a test" /></SelectTrigger>
-                                <SelectContent>
-                                    {tests.map((t) => <SelectItem key={t.id} value={t.id}>{t.title}</SelectItem>)}
-                                </SelectContent>
-                            </Select>
+                            <select
+                                aria-label="Select a test"
+                                className={`${filterSelectClassName} sm:w-80`}
+                                value={selectedTest}
+                                onChange={(event) => {
+                                    setSelectedTest(event.target.value);
+                                    setTestPopup(null);
+                                    setSelectedAttempt(null);
+                                }}
+                            >
+                                <option value="">Select a test</option>
+                                {tests.map((t) => <option key={t.id} value={t.id}>{t.title}</option>)}
+                            </select>
                             <Button type="button" variant="outline" size="sm" onClick={() => setReloadKey((key) => key + 1)}>
                                 <RefreshCw className="mr-2 h-3.5 w-3.5" />
                                 Refresh test list
