@@ -77,20 +77,20 @@ export default function StudentTests() {
                         return (
                         <Card key={t.id} className="border-slate-200/80 dark:border-zinc-800/80 bg-white/70 dark:bg-zinc-900/40 transition-colors hover:border-slate-300 dark:hover:border-zinc-700">
                             <CardContent className="p-5">
-                                <div className="mb-3 flex items-start justify-between gap-2">
+                                <div className="mb-3 flex items-start justify-between gap-3">
                                     <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-slate-100 dark:bg-zinc-800">
                                         {t.type === "coding" ? <FileCode className="h-5 w-5 text-violet-600 dark:text-violet-400" /> : <BrainCircuit className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />}
                                     </div>
-                                    {t.attempt && <StatusBadge value={t.attempt.status} />}
+                                    <div className="flex flex-col items-end gap-1">
+                                        {availability === "ended" && (
+                                            <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-700 dark:text-amber-300">
+                                                Time ended
+                                            </span>
+                                        )}
+                                        {t.attempt && <StatusBadge value={t.attempt.status} />}
+                                    </div>
                                 </div>
-                                <div className="flex flex-wrap items-center gap-2">
-                                    <h3 className="text-base font-semibold text-slate-900 dark:text-white">{t.title}</h3>
-                                    {availability === "ended" && (
-                                        <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-700 dark:text-amber-300">
-                                            Time ended
-                                        </span>
-                                    )}
-                                </div>
+                                <h3 className="text-base font-semibold text-slate-900 dark:text-white">{t.title}</h3>
                                 <p className="mt-1 line-clamp-2 text-sm text-slate-500 dark:text-zinc-400">{t.description}</p>
                                 {(t.topics || []).length > 0 && (
                                     <div className="mt-2 flex flex-wrap gap-1">
@@ -110,18 +110,22 @@ export default function StudentTests() {
                                     <span className="rounded-md bg-slate-100 dark:bg-zinc-800/70 px-2 py-1">{t._count?.questions ?? 0} questions</span>
                                     <span className="flex items-center gap-1 rounded-md bg-slate-100 dark:bg-zinc-800/70 px-2 py-1"><Clock className="h-3 w-3" />{t.durationMin} min</span>
                                 </div>
-                                {(availability !== "ended" || t.attempt) && <div className="mt-5">
+                                <div className="mt-5">
                                     <Button
                                         className="w-full"
-                                        variant={(t.attempt?.status === "in_progress" && availability !== "ended") || !t.attempt ? "default" : "outline"}
-                                        disabled={attemptLoading || (!t.attempt && availability !== "available")}
+                                        variant={!t.attempt || (t.attempt.status === "in_progress" && availability !== "ended") ? "default" : "outline"}
+                                        disabled={
+                                            attemptLoading ||
+                                            (!t.attempt && availability !== "available") ||
+                                            t.attempt?.status === "flagged"
+                                        }
                                         onClick={() => act(t, availability)}
                                     >
                                         {!t.attempt
                                             ? availability === "upcoming"
                                                 ? "Not available yet"
                                                 : availability === "ended"
-                                                    ? "View Result"
+                                                    ? "Start Test"
                                                     : "Start Test"
                                             : t.attempt.status === "in_progress"
                                                 ? availability === "ended" ? "View Result" : "Resume Test"
@@ -129,9 +133,14 @@ export default function StudentTests() {
                                                     ? "Locked — Awaiting Staff Reset"
                                                     : t.attempt.status === "disqualified" && availability !== "ended"
                                                         ? "Terminated — View Details"
-                                                        : "View Result"}
+                                                        : "View Results"}
                                     </Button>
-                                </div>}
+                                    {!t.attempt && availability === "ended" && (
+                                        <p className="mt-2 text-center text-xs text-slate-500 dark:text-zinc-400">
+                                            The scheduled test window has ended.
+                                        </p>
+                                    )}
+                                </div>
                             </CardContent>
                         </Card>
                         );
