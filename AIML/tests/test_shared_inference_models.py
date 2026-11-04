@@ -1,10 +1,12 @@
 import sys
 import types
 import unittest
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 from face_detection.inference import insightface_app
 from face_detection.inference.yolo_face_detector import YOLOFaceDetector
+from proctoring import object_detector
 
 
 class SharedInferenceModelTests(unittest.TestCase):
@@ -49,6 +51,41 @@ class SharedInferenceModelTests(unittest.TestCase):
 
         self.assertFalse(detector.available)
         fake_yolo.assert_not_called()
+
+    def test_missing_scene_weights_do_not_trigger_runtime_download_by_default(self):
+        fake_yolo = Mock()
+        fake_ultralytics = types.SimpleNamespace(YOLO=fake_yolo)
+        with (
+            patch.object(object_detector, "_model", None),
+            patch.object(object_detector, "_WEIGHTS", Path(__file__).with_name("missing-yolov8n.pt")),
+            patch.object(Path, "is_file", return_value=False),
+            patch.dict(sys.modules, {"ultralytics": fake_ultralytics}),
+            patch.dict("os.environ", {
+                "PROCTORING_DEVICE_MODEL_PATH": "",
+                "PROCTORING_DEVICE_MODEL_ALLOW_DOWNLOAD": "false",
+            }),
+        ):
+            self.assertIs(object_detector.get_model(), False)
+
+        fake_yolo.assert_not_called()
+
+    def test_scene_model_runtime_download_requires_explicit_opt_in(self):
+        fake_model = Mock()
+        fake_yolo = Mock(return_value=fake_model)
+        fake_ultralytics = types.SimpleNamespace(YOLO=fake_yolo)
+        with (
+            patch.object(object_detector, "_model", None),
+            patch.object(object_detector, "_WEIGHTS", Path(__file__).with_name("missing-yolov8n.pt")),
+            patch.object(Path, "is_file", return_value=False),
+            patch.dict(sys.modules, {"ultralytics": fake_ultralytics}),
+            patch.dict("os.environ", {
+                "PROCTORING_DEVICE_MODEL_PATH": "",
+                "PROCTORING_DEVICE_MODEL_ALLOW_DOWNLOAD": "true",
+            }),
+        ):
+            self.assertIs(object_detector.get_model(), fake_model)
+
+        fake_yolo.assert_called_once_with("yolov8n.pt")
 
 
 if __name__ == "__main__":

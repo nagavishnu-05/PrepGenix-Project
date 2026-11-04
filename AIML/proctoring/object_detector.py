@@ -86,16 +86,37 @@ _IOU_MERGE = float(os.environ.get("DEVICE_NMS_IOU", "0.5"))
 
 
 def get_model():
-    """Return the shared YOLO model, or False if Ultralytics is unavailable."""
+    """Return the shared YOLO model, or False if weights are unavailable."""
     global _model
     with _model_lock:
         if _model is not None:
             return _model
         try:
+            override = os.environ.get("PROCTORING_DEVICE_MODEL_PATH", "").strip()
+            weights_path = Path(override).expanduser() if override else _WEIGHTS
+            if not override and not weights_path.is_file():
+                project_weights = Path(__file__).resolve().parents[1] / "yolov8n.pt"
+                if project_weights.is_file():
+                    weights_path = project_weights
+
+            if weights_path.is_file():
+                weights = str(weights_path)
+            elif override:
+                print(f"[object_detector] Configured YOLO weights not found at {weights_path}; device detection disabled")
+                _model = False
+                return _model
+            elif os.environ.get("PROCTORING_DEVICE_MODEL_ALLOW_DOWNLOAD", "false").lower() == "true":
+                weights = "yolov8n.pt"
+            else:
+                print(
+                    "[object_detector] YOLO weights are not installed; device detection is disabled. "
+                    "Set PROCTORING_DEVICE_MODEL_PATH or explicitly allow a runtime download."
+                )
+                _model = False
+                return _model
+
             from ultralytics import YOLO
 
-            override = os.environ.get("PROCTORING_DEVICE_MODEL_PATH")
-            weights = override or (str(_WEIGHTS) if _WEIGHTS.exists() else "yolov8n.pt")
             _model = YOLO(weights)
             print(f"[object_detector] YOLOv8 COCO loaded from {weights}")
         except Exception as exc:  # noqa: BLE001 - optional dependency

@@ -79,19 +79,21 @@ function escapeHtml(value) {
   })[character]);
 }
 
-function reminderEmailContent({ kind, title, studentName, startText, link }) {
+function reminderEmailContent({ kind, title, studentName, startText, link, minutesUntilStart = 10 }) {
   const isInterview = kind === "interview";
   const itemLabel = isInterview ? "interview" : "test";
   const destinationLabel = isInterview ? "Open your interviews" : "Open your tests";
+  const remainingMinutes = Math.max(1, Math.ceil(minutesUntilStart));
+  const timeUntilStart = `${remainingMinutes} ${remainingMinutes === 1 ? "minute" : "minutes"}`;
   const safeName = escapeHtml(studentName || "student");
   const safeTitle = escapeHtml(title);
   const safeStart = escapeHtml(startText);
   const safeLink = escapeHtml(link);
-  const subject = `Reminder: ${title} starts in 10 minutes`;
+  const subject = `Reminder: ${title} starts in ${timeUntilStart}`;
   const text = [
     `Hello ${studentName || "student"},`,
     "",
-    `Your ${itemLabel} "${title}" starts in 10 minutes.`,
+    `Your ${itemLabel} "${title}" starts in ${timeUntilStart}.`,
     `Scheduled start: ${startText}`,
     "",
     `Please sign in early and make sure you are ready to begin.`,
@@ -109,7 +111,7 @@ function reminderEmailContent({ kind, title, studentName, startText, link }) {
   </head>
   <body style="margin:0;padding:0;background-color:#f3f4f8;font-family:Arial,Helvetica,sans-serif;color:#20243a;">
     <div style="display:none;font-size:1px;color:#f3f4f8;line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;">
-      Your ${itemLabel} starts in 10 minutes. Sign in now to be ready.
+      Your ${itemLabel} starts in ${timeUntilStart}. Sign in now to be ready.
     </div>
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f3f4f8;">
       <tr>
@@ -123,7 +125,7 @@ function reminderEmailContent({ kind, title, studentName, startText, link }) {
             </tr>
             <tr>
               <td style="padding:32px 32px 12px;">
-                <span style="display:inline-block;padding:6px 10px;background-color:#fff4e8;border-radius:999px;color:#a84b08;font-size:12px;line-height:16px;font-weight:700;">STARTING IN 10 MINUTES</span>
+                <span style="display:inline-block;padding:6px 10px;background-color:#fff4e8;border-radius:999px;color:#a84b08;font-size:12px;line-height:16px;font-weight:700;">STARTING IN ${escapeHtml(timeUntilStart.toUpperCase())}</span>
                 <h1 style="margin:18px 0 10px;color:#20243a;font-size:25px;line-height:32px;font-weight:700;">It's almost time, ${safeName}.</h1>
                 <p style="margin:0;color:#5d6275;font-size:15px;line-height:24px;">Your ${itemLabel} is coming up. Sign in a few minutes early so you’re ready to begin.</p>
               </td>
@@ -224,6 +226,7 @@ async function deliverReminder({ kind, item, student, start, link, reminders, ma
     studentName: student.name || "student",
     startText,
     link,
+    minutesUntilStart: (new Date(start).getTime() - now.getTime()) / 60_000,
   });
 
   if (!await claimReminder(reminders, reminderId, {

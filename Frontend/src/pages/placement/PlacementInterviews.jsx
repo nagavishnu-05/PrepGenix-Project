@@ -114,7 +114,7 @@ export default function PlacementInterviews() {
     const [deletingInterviewId, setDeletingInterviewId] = useState(null);
     const [busy, setBusy] = useState(false);
     const [exporting, setExporting] = useState(false);
-    const [sched, setSched] = useState({ interviewName: "", groupId: "", regNos: [], existingRegNos: [], type: "Technical", startsAt: "", endsAt: "", interviewer: "", jobRole: "", jobDescription: "", emailReminderEnabled: false });
+    const [sched, setSched] = useState({ interviewName: "", groupId: "", regNos: [], existingRegNos: [], type: "Technical", startsAt: "", endsAt: "", interviewer: "", jobRole: "", jobDescription: "", emailReminderEnabled: true });
     const [studentFilters, setStudentFilters] = useState({ batch: "all", section: "all", search: "" });
     const [result, setResult] = useState({ rating: 3, notes: "", strengths: "", weaknesses: "", status: "completed" });
 
@@ -224,7 +224,9 @@ export default function PlacementInterviews() {
             interviewer: group?.interviewer || "",
             jobRole: group?.members?.[0]?.jobRole || "",
             jobDescription: group?.members?.[0]?.jobDescription || "",
-            emailReminderEnabled: group?.members?.some((member) => member.emailReminderEnabled === true) || false,
+            emailReminderEnabled: group
+                ? group.members.some((member) => member.emailReminderEnabled === true)
+                : true,
         });
         setSchedOpen(true);
     };
@@ -302,7 +304,7 @@ export default function PlacementInterviews() {
                 endsAt: endsAt.toISOString(),
             });
             setSchedOpen(false);
-            setSched({ interviewName: "", groupId: "", regNos: [], existingRegNos: [], type: "Technical", startsAt: "", endsAt: "", interviewer: "", jobRole: "", jobDescription: "", emailReminderEnabled: false });
+            setSched({ interviewName: "", groupId: "", regNos: [], existingRegNos: [], type: "Technical", startsAt: "", endsAt: "", interviewer: "", jobRole: "", jobDescription: "", emailReminderEnabled: true });
             load();
         } catch (e) {
             alert(e.message);
@@ -780,7 +782,6 @@ export default function PlacementInterviews() {
                             />
                             <span>
                                 Email selected students 10 minutes before their interview
-                                <span className="mt-1 block text-xs text-slate-500 dark:text-zinc-500">Each reminder goes only to that candidate. Requires SMTP settings and an external reminder schedule on free-tier hosting.</span>
                             </span>
                         </label>
                         <div className="flex justify-end gap-2">

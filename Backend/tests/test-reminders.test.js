@@ -59,6 +59,22 @@ test("reminder email content is branded, includes a clear action, and escapes us
   assert.match(content.text, /Scheduled start: 4 Nov 2026, 8:30 PM/);
 });
 
+test("reminder email content shows the actual remaining time with correct singular wording", () => {
+  const content = reminderEmailContent({
+    kind: "interview",
+    title: "Technical Interview",
+    studentName: "Student",
+    startText: "4 Nov 2026, 8:30 PM",
+    link: "https://example.com/student/interviews",
+    minutesUntilStart: 1,
+  });
+
+  assert.match(content.subject, /starts in 1 minute$/);
+  assert.match(content.text, /starts in 1 minute\./);
+  assert.match(content.html, /STARTING IN 1 MINUTE/);
+  assert.doesNotMatch(content.html, /10 MINUTES/);
+});
+
 test("Gmail relay sends reminder fields over HTTPS with its configured token", async () => {
   let request;
   const mailer = createGmailAppsScriptMailer({

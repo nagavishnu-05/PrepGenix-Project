@@ -108,15 +108,19 @@ unresponsive worker.
 | `PHONE_CONFIDENCE` | `0.50` | YOLOv8 confidence threshold |
 | `FACE_CONFIDENCE` | `0.60` | Face detection confidence threshold |
 | `YOLO_FACE_ALLOW_DOWNLOAD` | `false` | Allow downloading missing optional YOLO face-fallback weights at runtime |
+| `PROCTORING_DEVICE_MODEL_PATH` | unset | Path to installed YOLO scene-detection weights (the repository model locations are checked when unset) |
+| `PROCTORING_DEVICE_MODEL_ALLOW_DOWNLOAD` | `false` | Allow downloading missing scene-detection weights during a request |
 | `INSIGHTFACE_MODEL_ROOT` | `AIML/models/insightface` | InsightFace model/cache root; point to a mounted persistent disk on hosts that support one |
 | `PROCTORING_MAX_REQUEST_BYTES` | `2097152` | Maximum JSON request size accepted by the proctoring API (2 MiB) |
 
 ### Hosted performance defaults
 
 The Docker image limits numerical-library threads and uses a smaller YOLO scene
-input (`DEVICE_DETECTION_IMGSZ=416`). The service samples scene/object detection
-every two active monitor cycles (`ACTIVE_SCENE_EVERY_N_CYCLES=2`) and every
-three cycles in a quiet scene. Face and identity checks still run on each frame.
+input (`DEVICE_DETECTION_IMGSZ=416`). These image defaults do not apply when the
+service uses Render's native Python runtime; set them in the Render environment
+if you deploy without Docker. The service samples scene/object detection every
+two active monitor cycles (`ACTIVE_SCENE_EVERY_N_CYCLES=2`) and every three
+cycles in a quiet scene. Face and identity checks still run on each frame.
 The frontend sends monitor frames every two seconds by default;
 `VITE_FACE_CHECK_INTERVAL_MS` can tune this at build time from 1500 to 5000 ms.
 These settings reduce CPU and network load while retaining temporal confirmation
@@ -132,6 +136,14 @@ primary InsightFace detector remains available without the optional YOLO face
 weights. On Render, mounting a persistent disk and setting
 `INSIGHTFACE_MODEL_ROOT` to its mount path lets the downloaded InsightFace pack
 survive instance restarts and redeploys.
+
+The scene/object detector also requires an installed `yolov8n.pt` file. Missing
+weights no longer trigger an implicit download during face enrollment or
+monitoring; face and identity checks continue, but person/device detection is
+unavailable until the model is installed. Set `PROCTORING_DEVICE_MODEL_PATH` to
+the installed file. `PROCTORING_DEVICE_MODEL_ALLOW_DOWNLOAD=true` is available
+only when an on-demand download is intentional; the first request can otherwise
+spend its time downloading and initializing a large inference dependency.
 
 The Docker Compose deployment runs the stateful proctoring API separately on
 port 5050 with one Gunicorn worker and four request threads. Keep it at one
@@ -184,7 +196,7 @@ a separate one-shot CLI analysis path.
 ## Models
 
 - **Haar Cascade** — bundled with OpenCV (`haarcascade_frontalface_default.xml`)
-- **YOLOv8-nano** — downloaded automatically on first API call (~6MB)
+- **YOLOv8-nano** — optional scene/object model; runtime downloads are disabled by default
 - **Places365** — pre-trained scene classifier in `models/places365/` (~21MB Keras model)
 
 ## Violation Types

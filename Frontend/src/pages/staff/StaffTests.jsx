@@ -705,7 +705,6 @@ export default function StaffTests() {
                                 <Checkbox checked={f.emailReminderEnabled} onCheckedChange={(checked) => set({ emailReminderEnabled: !!checked })} />
                                 <span>
                                     Email students 10 minutes before the test starts
-                                    <span className="mt-1 block text-xs text-slate-500 dark:text-zinc-500">Requires SMTP settings in the backend environment.</span>
                                 </span>
                             </label>
                         </div>
@@ -1240,7 +1239,7 @@ function emptyForm() {
         assignmentMode: "batch",
         audienceBatch: "",
         assignedStudents: [],
-        emailReminderEnabled: false,
+        emailReminderEnabled: true,
         faceVerificationEnabled: true,
         proctoringMax: 5,
         proctoringAuto: true,
