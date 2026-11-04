@@ -71,11 +71,11 @@ _CONFIRMED_CONFIDENCE = float(os.environ.get("DEVICE_CONFIRMED_CONFIDENCE", "0.3
 
 # Inference size. Upscaling the (typically 320px-wide) monitor frame to the
 # detector input helps small/partial phones survive the model's own resize.
-_IMGSZ = int(os.environ.get("DEVICE_DETECTION_IMGSZ", "640"))
+_IMGSZ = int(os.environ.get("DEVICE_DETECTION_IMGSZ", "416"))
 
-# Crop inference: run the detector on a grid of overlapping tiles in addition
-# to the full frame. Off on constrained machines.
-_CROP_INFERENCE = os.environ.get("DEVICE_CROP_INFERENCE_ENABLED", "true").lower() == "true"
+# Crop inference adds up to four model passes per scene check. Keep it opt-in
+# for CPU-constrained hosts; the full-frame pass still runs when weights exist.
+_CROP_INFERENCE = os.environ.get("DEVICE_CROP_INFERENCE_ENABLED", "false").lower() == "true"
 _CROP_TILES = max(1, int(os.environ.get("DEVICE_CROP_TILES", "2")))
 _CROP_OVERLAP = float(os.environ.get("DEVICE_CROP_OVERLAP", "0.2"))
 

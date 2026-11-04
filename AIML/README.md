@@ -110,17 +110,21 @@ unresponsive worker.
 | `YOLO_FACE_ALLOW_DOWNLOAD` | `false` | Allow downloading missing optional YOLO face-fallback weights at runtime |
 | `PROCTORING_DEVICE_MODEL_PATH` | unset | Path to installed YOLO scene-detection weights (the repository model locations are checked when unset) |
 | `PROCTORING_DEVICE_MODEL_ALLOW_DOWNLOAD` | `false` | Allow downloading missing scene-detection weights during a request |
+| `DEVICE_DETECTION_IMGSZ` | `416` | YOLO scene-detection input size |
+| `DEVICE_CROP_INFERENCE_ENABLED` | `false` | Run extra overlapping crop passes for small/partial object detection; increases CPU use |
+| `ONNX_INTRA_OP_THREADS` | `1` | CPU threads per ONNX inference session |
 | `INSIGHTFACE_MODEL_ROOT` | `AIML/models/insightface` | InsightFace model/cache root; point to a mounted persistent disk on hosts that support one |
 | `PROCTORING_MAX_REQUEST_BYTES` | `2097152` | Maximum JSON request size accepted by the proctoring API (2 MiB) |
 
 ### Hosted performance defaults
 
-The Docker image limits numerical-library threads and uses a smaller YOLO scene
-input (`DEVICE_DETECTION_IMGSZ=416`). These image defaults do not apply when the
-service uses Render's native Python runtime; set them in the Render environment
-if you deploy without Docker. The service samples scene/object detection every
-two active monitor cycles (`ACTIVE_SCENE_EVERY_N_CYCLES=2`) and every three
-cycles in a quiet scene. Face and identity checks still run on each frame.
+The source defaults limit ONNX inference to one CPU thread and use a smaller
+YOLO scene input (`DEVICE_DETECTION_IMGSZ=416`). Extra overlapping crop passes
+are disabled by default to avoid several additional model inferences per
+monitor request; set `DEVICE_CROP_INFERENCE_ENABLED=true` only when the host has
+enough CPU headroom. The service samples scene/object detection every two active
+monitor cycles (`ACTIVE_SCENE_EVERY_N_CYCLES=2`) and every three cycles in a
+quiet scene. Face and identity checks still run on each frame.
 The frontend sends monitor frames every two seconds by default;
 `VITE_FACE_CHECK_INTERVAL_MS` can tune this at build time from 1500 to 5000 ms.
 These settings reduce CPU and network load while retaining temporal confirmation

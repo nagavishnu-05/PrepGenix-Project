@@ -35,6 +35,14 @@ class YOLOFaceDetector:
     def _init_backend(self):
         if not self.enabled:
             return
+        if not self.weights.is_file() and os.environ.get("YOLO_FACE_ALLOW_DOWNLOAD", "false").lower() != "true":
+            logger.info(
+                "YOLO face fallback disabled; weights are not installed at %s",
+                self.weights,
+            )
+            self.enabled = False
+            return
+
         try:
             from ultralytics import YOLO
         except ImportError:
@@ -46,13 +54,6 @@ class YOLOFaceDetector:
             if self.weights.exists():
                 self.model = YOLO(str(self.weights))
             else:
-                if os.environ.get("YOLO_FACE_ALLOW_DOWNLOAD", "false").lower() != "true":
-                    logger.info(
-                        "YOLO face fallback disabled; weights are not installed at %s",
-                        self.weights,
-                    )
-                    self.enabled = False
-                    return
                 logger.warning(
                     "YOLO face weights not found at %s; attempting configured download '%s'",
                     self.weights,

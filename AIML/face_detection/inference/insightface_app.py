@@ -61,9 +61,10 @@ def session_options():
         return None
 
     try:
-        threads = int(os.environ.get("ONNX_INTRA_OP_THREADS", "0"))
+        configured_threads = os.environ.get("ONNX_INTRA_OP_THREADS", "1").strip()
+        threads = int(configured_threads) if configured_threads else 1
     except ValueError:
-        threads = 0
+        threads = 1
     try:
         options = ort.SessionOptions()
         if threads > 0:
