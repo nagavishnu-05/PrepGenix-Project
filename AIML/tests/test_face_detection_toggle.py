@@ -133,6 +133,82 @@ class FaceDetectionToggleTests(unittest.TestCase):
         self.assertFalse(result["identity_blocked"])
         self.assertEqual(result["identity_status"], "disabled")
 
+    def test_interview_background_people_are_not_counted_as_violations(self):
+        manager = ViolationManager(max_violations=10, auto_submit=False)
+        manager._start_time -= manager._grace_seconds + 1
+
+        result = None
+        for _ in range(5):
+            result = manager.update({
+                "face_detection_enabled": True,
+                "face_present": True,
+                "face_count": 1,
+                "match": True,
+                "camera_active": True,
+                "quality": "good",
+                "person_count": 2,
+                "scene_detection_fresh": True,
+                "multiple_people_informational_only": True,
+                "devices": [],
+            })
+
+        self.assertEqual(result["violations"], [])
+        self.assertEqual(result["violation_count"], 0)
+        self.assertFalse(manager._multiple_face_signal.confirmed)
+        self.assertEqual(len(manager._multiple_person_frames), 0)
+
+    def test_interview_additional_face_is_counted_but_background_person_is_not(self):
+        manager = ViolationManager(max_violations=10, auto_submit=False)
+        manager._start_time -= manager._grace_seconds + 1
+        manager._multiple_face_signal._since = manager._start_time
+        manager._multiple_face_signal._samples = manager._multiple_face_signal.min_samples - 1
+
+        result = manager.update({
+            "face_detection_enabled": True,
+            "face_present": True,
+            "face_count": 2,
+            "match": True,
+            "camera_active": True,
+            "quality": "good",
+            "person_count": 2,
+            "scene_detection_fresh": True,
+            "multiple_people_informational_only": True,
+            "devices": [],
+        })
+
+        violation_types = {violation["type"] for violation in result["violations"]}
+        self.assertIn("MULTIPLE_FACES", violation_types)
+        self.assertNotIn("MULTIPLE_PERSONS", violation_types)
+        self.assertEqual(result["violation_count"], 1)
+
+    def test_confirmed_gaze_violation_counts_once_per_continuous_look_away(self):
+        manager = ViolationManager(max_violations=10, auto_submit=False)
+        manager._start_time -= manager._grace_seconds + 1
+        input_data = {
+            "face_detection_enabled": True,
+            "face_present": True,
+            "face_count": 1,
+            "match": True,
+            "camera_active": True,
+            "quality": "good",
+            "looking_away": True,
+            "gaze_direction": "left",
+            "head_direction": "center",
+        }
+
+        first_result = manager.update(input_data)
+        self.assertIn("LOOKING_AWAY", {v["type"] for v in first_result["violations"]})
+
+        manager._confirmed_violations[0]["timestamp"] -= 10
+        continued_result = manager.update(input_data)
+        self.assertEqual(continued_result["violations"], [])
+        self.assertEqual(continued_result["violation_count"], 1)
+
+        manager.update({**input_data, "looking_away": False})
+        next_result = manager.update(input_data)
+        self.assertEqual(len(next_result["violations"]), 1)
+        self.assertEqual(next_result["violation_count"], 2)
+
 
 if __name__ == "__main__":
     unittest.main()

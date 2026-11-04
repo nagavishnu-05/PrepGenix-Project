@@ -402,7 +402,8 @@ def verify_face():
 def monitor():
     """Continuous monitoring endpoint.
 
-    Body: { image: base64, attemptId, cameraActive: bool, faceDetectionEnabled: bool }
+    Body: { image: base64, attemptId, cameraActive: bool, faceDetectionEnabled: bool,
+            multiplePeopleInformationalOnly: bool }
     Returns face/identity checks and violations. When face detection is disabled,
     scene-based person and device monitoring remains active.
     """
@@ -411,6 +412,7 @@ def monitor():
     attempt_id = data.get("attemptId", "default")
     camera_active = data.get("cameraActive", True)
     face_detection_enabled = data.get("faceDetectionEnabled") is not False
+    multiple_people_informational_only = data.get("multiplePeopleInformationalOnly") is True
 
     if not image_b64:
         return jsonify({"error": "image (base64) is required"}), 400
@@ -424,6 +426,7 @@ def monitor():
         frame,
         camera_active=camera_active,
         face_detection_enabled=face_detection_enabled,
+        multiple_people_informational_only=multiple_people_informational_only,
     )
 
     return jsonify({

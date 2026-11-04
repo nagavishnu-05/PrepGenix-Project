@@ -766,7 +766,7 @@ const codeBuffersRef = useRef({});
         const cheatingLabel = cheatingReasonLabels[cheatingReason] || cheatingReason?.replace(/_/g, " ").toLowerCase() || "A proctoring violation was detected.";
 
         return (
-            <div className="mx-auto max-w-2xl">
+            <div className="mx-auto flex min-h-[calc(100dvh-4rem)] max-w-2xl items-center justify-center px-4 py-8">
                 <Card className={cn("border-slate-200 bg-white dark:border-zinc-800 dark:bg-zinc-900/40", isCheated && "border-red-500/30")}>
                     <CardContent className="flex flex-col items-center gap-4 py-14 text-center">
                         <div className={cn("flex h-16 w-16 items-center justify-center rounded-full", isCheated || isDisqualified ? "bg-red-500/20 text-red-400 border border-red-500/30" : isTimedOut ? "bg-amber-500/20 text-amber-500 border border-amber-500/30" : "bg-gradient-to-br from-violet-600 to-indigo-600 text-white")}>

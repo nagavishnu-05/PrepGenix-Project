@@ -17,7 +17,6 @@ from face_detection.utils.config import (
     IDENTITY_MISMATCH_MIN_SAMPLES,
     MULTIPLE_FACE_CONFIRM_SECONDS,
     MULTIPLE_FACE_MIN_SAMPLES,
-    GAZE_HOLD_SECONDS,
     NO_FACE_CONFIRM_SECONDS,
     NO_FACE_MIN_SAMPLES,
 )
@@ -52,7 +51,6 @@ MULTIPLE_PERSON_CONFIRM = int(os.environ.get("MULTIPLE_PERSON_CONFIRMATION_FRAME
 POSSIBLE_DEVICE_LOG_INTERVAL = float(os.environ.get("POSSIBLE_DEVICE_LOG_INTERVAL", "10"))
 SPOOF_LOG_INTERVAL = float(os.environ.get("SPOOF_LOG_INTERVAL", "20"))
 CAMERA_CONFIRM = int(os.environ.get("CAMERA_DISABLED_CONFIRMATION_FRAMES", "2"))
-LOOKING_AWAY_CONFIRM = int(os.environ.get("GAZE_CONFIRMATION_FRAMES", "5"))
 EYES_CLOSED_CONFIRM = int(os.environ.get("EYES_CLOSED_CONFIRMATION_FRAMES", "3"))
 
 NO_FACE_ABSENCE_GRACE_SECONDS = float(os.environ.get("NO_FACE_ABSENCE_GRACE_SECONDS", "3"))
@@ -141,9 +139,7 @@ class ViolationManager:
         self._last_possible_device_log: float = 0.0
         self._last_spoof_log: float = 0.0
         self._camera_frames: deque[bool] = deque(maxlen=CAMERA_CONFIRM)
-        self._looking_away_signal = Sustained(
-            GAZE_HOLD_SECONDS, LOOKING_AWAY_CONFIRM, name="looking_away"
-        )
+        self._looking_away_counted = False
         self._head_turned_active = False
         self._eyes_closed_frames: deque[bool] = deque(maxlen=EYES_CLOSED_CONFIRM)
 
@@ -223,6 +219,9 @@ class ViolationManager:
         new_info_logs = []
 
         self._info_logs = self._info_logs[-100:]
+        multiple_people_informational_only = (
+            detection_result.get("multiple_people_informational_only", False) is True
+        )
 
         elapsed = time.time() - self._start_time
         if elapsed < self._grace_seconds:
@@ -278,16 +277,19 @@ class ViolationManager:
         person_count = int(detection_result.get("person_count", 0) or 0)
         multiple_persons = person_count > 1
         scene_detection_fresh = detection_result.get("scene_detection_fresh", True)
-        if scene_detection_fresh:
-            self._multiple_person_frames.append(multiple_persons)
-        if len(self._multiple_person_frames) >= MULTIPLE_PERSON_CONFIRM and all(self._multiple_person_frames):
-            v = self._confirm_violation("MULTIPLE_PERSONS", {
-                "description": f"Multiple people detected in the camera frame ({person_count}).",
-                "person_count": person_count,
-                "severity": "high",
-            })
-            if v:
-                new_violations.append(v)
+        if multiple_people_informational_only:
+            self._multiple_person_frames.clear()
+        else:
+            if scene_detection_fresh:
+                self._multiple_person_frames.append(multiple_persons)
+            if len(self._multiple_person_frames) >= MULTIPLE_PERSON_CONFIRM and all(self._multiple_person_frames):
+                v = self._confirm_violation("MULTIPLE_PERSONS", {
+                    "description": f"Multiple people detected in the camera frame ({person_count}).",
+                    "person_count": person_count,
+                    "severity": "high",
+                })
+                if v:
+                    new_violations.append(v)
 
         # Prohibited electronics (phone, laptop, etc.) from YOLO scene detection.
         # A weak, partial detection only ever raises a review signal; a violation
@@ -412,7 +414,7 @@ class ViolationManager:
         self._gate_status = "disabled"
         self._face_absent_since = None
         self._absence_logged = False
-        self._looking_away_signal.reset()
+        self._looking_away_counted = False
         self._head_turned_active = False
         self._eyes_closed_frames.clear()
         self._head_away_counted = False
@@ -562,7 +564,6 @@ class ViolationManager:
         new_violations = []
 
         looking_away = bool(detection_result.get("looking_away", False))
-        looking_away_confirmed = self._looking_away_signal.update(looking_away)
         if looking_away:
             self._active_events["LOOKING_AWAY"] = {
                 "type": "LOOKING_AWAY",
@@ -571,7 +572,10 @@ class ViolationManager:
             }
         else:
             self._active_events.pop("LOOKING_AWAY", None)
-        if looking_away_confirmed:
+            self._looking_away_counted = False
+        # AttentionAnalyzer already confirms gaze-away using consecutive samples
+        # and a hold duration; count that confirmed signal without a second delay.
+        if looking_away and not self._looking_away_counted:
             v = self._confirm_violation("LOOKING_AWAY", {
                 "description": "Candidate gaze directed away from the screen.",
                 "gaze_direction": detection_result.get("gaze_direction", "unknown"),
@@ -580,6 +584,7 @@ class ViolationManager:
             }, window=LOOKING_AWAY_WINDOW_SECONDS)
             if v:
                 new_violations.append(v)
+            self._looking_away_counted = True
 
         head_turned = bool(detection_result.get("head_turned", False))
         # The attention analyzer confirms a head turn only after the hold window.
@@ -698,7 +703,7 @@ class ViolationManager:
         self._multiple_person_frames.clear()
         self._device_tracker.reset()
         self._camera_frames.clear()
-        self._looking_away_signal.reset()
+        self._looking_away_counted = False
         self._head_turned_active = False
         self._eyes_closed_frames.clear()
         self._active_events.clear()
@@ -754,7 +759,7 @@ class ViolationManager:
         self._last_possible_device_log = 0.0
         self._last_spoof_log = 0.0
         self._camera_frames.clear()
-        self._looking_away_signal.reset()
+        self._looking_away_counted = False
         self._head_turned_active = False
         self._eyes_closed_frames.clear()
         self._reset_identity_signals()

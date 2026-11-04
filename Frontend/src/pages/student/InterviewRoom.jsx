@@ -53,6 +53,7 @@ const EYES_INVALID_GRACE_TICKS = 2;       // consecutive invalid ticks before "E
 const MONITOR_STALE_MS = 8000;            // tolerate a delayed hosted response across monitor intervals
 
 function interviewAvailability(interview, now = Date.now()) {
+    if (interview.session?.status === "in_progress") return "available";
     const startsAt = interview.startsAt || interview.scheduledAt;
     if (startsAt && now < new Date(startsAt).getTime()) return "upcoming";
     if (interview.endsAt && now >= new Date(interview.endsAt).getTime()) return "ended";
@@ -172,6 +173,7 @@ export default function InterviewRoom() {
         connected: false,
         facePresent: false,
         faceCount: 0,
+        personCount: 0,
         deviceDetected: false,
         devices: [],
         attention: "unknown",
@@ -349,11 +351,15 @@ export default function InterviewRoom() {
                 if (recorderRef.current?.state === "recording") recorderRef.current.stop();
                 stream?.getTracks?.().forEach((track) => track.stop());
                 if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+                if (String(event.type).toUpperCase() === "FULLSCREEN_EXIT") {
+                    setTerminationReason("Fullscreen was exited during the interview.");
+                    setTerminatedAt(new Date());
+                }
                 setStep("terminated");
                 setInterview((prev) => prev ? {
                     ...prev,
                     status: "disqualified",
-                    session: { ...(prev.session || {}), status: "terminated" },
+                    session: { ...(prev.session || {}), status: "terminated", terminationReason: String(event.type).toLowerCase() },
                 } : prev);
             }
             return result;
@@ -435,6 +441,32 @@ export default function InterviewRoom() {
         });
     }, [id, stream]);
 
+    const terminateForFullscreenExit = useCallback(async () => {
+        if (terminatingRef.current || finalizedRef.current) return;
+        terminatingRef.current = true;
+        finalizedRef.current = true;
+        const at = new Date();
+        setTerminatedAt(at);
+        setTerminationReason("Fullscreen was exited during the interview.");
+        setMonitorState(MONITOR_STATE.TERMINATING);
+        setPausedReason("");
+        setStep("terminated");
+        recognitionRef.current?.stop?.();
+        if (recorderRef.current?.state === "recording") recorderRef.current.stop();
+        stopAllMedia();
+
+        const result = await recordProctoringEvent({
+            type: "FULLSCREEN_EXIT",
+            description: "Fullscreen was exited. The interview was terminated immediately.",
+            severity: "high",
+            metadata: { terminatedAt: at.toISOString(), reason: "fullscreen_exit" },
+        });
+        setMonitorState(MONITOR_STATE.TERMINATED);
+        if (!result?.terminated) {
+            setProctorError((current) => current || "The interview was stopped for leaving fullscreen, but the server could not confirm the termination. Contact the coordinator.");
+        }
+    }, [recordProctoringEvent, stopAllMedia]);
+
     useEffect(() => {
         if (step !== "interview") return undefined;
 
@@ -450,7 +482,9 @@ export default function InterviewRoom() {
         const onFullscreenChange = () => {
             const active = Boolean(document.fullscreenElement);
             setFullscreenActive(active);
-            if (!active) report("FULLSCREEN_EXIT", "Fullscreen mode was exited.", "high");
+            if (!active && !finalizedRef.current && !terminatingRef.current) {
+                void terminateForFullscreenExit();
+            }
         };
         const onContextMenu = (event) => {
             event.preventDefault();
@@ -478,7 +512,7 @@ export default function InterviewRoom() {
             const liveVideoTracks = stream?.getVideoTracks?.().filter((track) => track.readyState === "live") || [];
             if (!liveVideoTracks.length) {
                 proctorHealthyRef.current = false;
-                setProctorSignal((prev) => ({ ...prev, connected: false, facePresent: false, faceCount: 0 }));
+                setProctorSignal((prev) => ({ ...prev, connected: false, facePresent: false, faceCount: 0, personCount: 0 }));
                 setProctorError("Camera feed is unavailable. Re-enable the camera before continuing.");
                 return;
             }
@@ -516,7 +550,12 @@ export default function InterviewRoom() {
                 const response = await fetch(`${base}/monitor`, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ image, attemptId: `interview_${id}`, cameraActive: true }),
+                    body: JSON.stringify({
+                        image,
+                        attemptId: `interview_${id}`,
+                        cameraActive: true,
+                        multiplePeopleInformationalOnly: true,
+                    }),
                     signal: controller.signal,
                 });
                 if (!response.ok) throw new Error(`Proctoring service returned HTTP ${response.status}`);
@@ -554,6 +593,7 @@ export default function InterviewRoom() {
                     connected: true,
                     facePresent: result.face_present === true,
                     faceCount: Number(result.face_count || 0),
+                    personCount: Number(result.person_count || 0),
                     deviceDetected: result.device_detected === true || deviceStateConfirmed,
                     devices: Array.isArray(result.devices) ? result.devices : [],
                     attention: metrics.attention_state || "unknown",
@@ -593,26 +633,22 @@ export default function InterviewRoom() {
                 // turned" and "no face" are confirmed by the service only after
                 // its 30s grace window (reported through identity_status), so the
                 // client does not pause early on a passing glance or a brief
-                // frame drop. Multiple faces and a confirmed phone/mismatch stay
-                // immediate.
+                // frame drop. A confirmed phone or identity mismatch stays immediate.
                 const awayStatus = signal.identityStatus === "head_turned" || signal.identityStatus === "no_face";
                 proctorHealthyRef.current = signal.connected
                     && !signal.deviceDetected
                     && signal.identityStatus !== "mismatch"
-                    && !(signal.faceCount > 1)
                     && !awayStatus;
                 if (!proctorHealthyRef.current) {
-                    const reason = signal.faceCount > 1
-                        ? "Only the interview candidate may be visible in the camera."
-                        : signal.deviceDetected
-                            ? "Remove the detected device from the camera view."
-                            : signal.identityStatus === "mismatch"
-                                ? "Identity verification failed. Only the registered candidate may continue this interview."
-                                : signal.identityStatus === "head_turned"
-                                    ? "You have looked away from the screen for too long. Face the screen to continue."
-                                    : signal.identityStatus === "no_face"
-                                        ? "Keep your face visible to the camera."
-                                        : "Look toward the screen before continuing.";
+                    const reason = signal.deviceDetected
+                        ? "Remove the detected device from the camera view."
+                        : signal.identityStatus === "mismatch"
+                            ? "Identity verification failed. Only the registered candidate may continue this interview."
+                            : signal.identityStatus === "head_turned"
+                                ? "You have looked away from the screen for too long. Face the screen to continue."
+                                : signal.identityStatus === "no_face"
+                                    ? "Keep your face visible to the camera."
+                                    : "Look toward the screen before continuing.";
                     setPausedReason((current) => current || reason);
                 } else {
                     setPausedReason("");
@@ -663,7 +699,7 @@ export default function InterviewRoom() {
             if (monitorIntervalRef.current) window.clearInterval(monitorIntervalRef.current);
             monitorIntervalRef.current = null;
         };
-    }, [id, recordProctoringEvent, step, stream]);
+    }, [id, recordProctoringEvent, step, stream, terminateForFullscreenExit]);
 
     useEffect(() => {
         if (step !== "interview" || !stream) return undefined;
@@ -671,7 +707,7 @@ export default function InterviewRoom() {
         const audioTrack = stream.getAudioTracks()[0];
         const onCameraEnded = () => {
             proctorHealthyRef.current = false;
-            setProctorSignal((prev) => ({ ...prev, connected: false, facePresent: false, faceCount: 0 }));
+            setProctorSignal((prev) => ({ ...prev, connected: false, facePresent: false, faceCount: 0, personCount: 0 }));
             void recordProctoringEvent({ type: "CAMERA_LOST", description: "Camera feed stopped during the interview.", severity: "high" });
         };
         const onMicEnded = () => {
@@ -850,6 +886,7 @@ export default function InterviewRoom() {
             connected: true,
             facePresent: true,
             faceCount: 1,
+            personCount: 0,
             identityStatus: "verified",
             checkedAt: Date.now(),
         }));
@@ -1094,8 +1131,7 @@ export default function InterviewRoom() {
         }
     };
 
-    // Single idempotent finish path. Guarded so a double-click on End Interview
-    // (or a submit racing a completion) cannot finalize the interview twice.
+    // Guard against duplicate completion requests and a submit racing auto-completion.
     const finishInterview = async () => {
         if (finalizedRef.current || terminatingRef.current) return;
         finalizedRef.current = true;
@@ -1127,11 +1163,6 @@ export default function InterviewRoom() {
     };
 
     const windowEnded = interview && interviewAvailability(interview, now) === "ended";
-    useEffect(() => {
-        if (step === "interview" && windowEnded && interview?.session?.status === "in_progress") {
-            void finishInterview();
-        }
-    }, [step, windowEnded, interview?.session?.status]);
 
     const candidateTurns = useMemo(() => transcript.filter((t) => t.role === "candidate").length, [transcript]);
     const progress = total ? Math.min(100, Math.round((candidateTurns / total) * 100)) : 0;
@@ -1142,7 +1173,6 @@ export default function InterviewRoom() {
         && proctorSignal.identityStatus !== "mismatch"
         && proctorSignal.identityStatus !== "head_turned"
         && proctorSignal.identityStatus !== "no_face"
-        && proctorSignal.faceCount <= 1
         && !proctorSignal.deviceDetected
         && !monitorStale;
     const canResume = cameraHealthy && liveCamera && liveMicrophone;
@@ -1152,7 +1182,6 @@ export default function InterviewRoom() {
     const identityBlocked = step === "interview" && faceVerificationRequired && (
         proctorSignal.identityBlocked
         || identityStatus === "mismatch"
-        || proctorSignal.faceCount > 1
     );
     const showPauseDialog = step === "interview"
         && (pausedReason || !canContinue)
@@ -1172,34 +1201,39 @@ export default function InterviewRoom() {
         let next = MONITOR_STATE.RUNNING;
         if (!liveCamera) next = MONITOR_STATE.PAUSED_CAMERA_UNAVAILABLE;
         else if (!proctorSignal.connected || monitorStale) next = MONITOR_STATE.PAUSED_MONITORING_UNAVAILABLE;
-        else if (proctorSignal.faceCount > 1) next = MONITOR_STATE.PAUSED_FACE_NOT_DETECTED;
         else if (proctorSignal.identityStatus === "no_face" || proctorSignal.identityStatus === "head_turned") next = MONITOR_STATE.PAUSED_FACE_NOT_DETECTED;
         monitorStateRef.current = next;
         setMonitorState((prev) => (prev === next ? prev : next));
-    }, [step, liveCamera, proctorSignal.connected, proctorSignal.faceCount, proctorSignal.identityStatus, monitorStale]);
+    }, [step, liveCamera, proctorSignal.connected, proctorSignal.identityStatus, monitorStale]);
 
     // Preview status label (spec section 3): single source of truth for the PIP.
     const previewStatus = useMemo(() => {
         if (!liveCamera) return { label: "Camera unavailable", tone: "text-red-400" };
         if (phoneConfirmed) return { label: "Smartphone detected", tone: "text-red-400" };
-        if (proctorSignal.faceCount > 1) return { label: "Multiple faces detected", tone: "text-red-400" };
         if (identityStatus === "mismatch") return { label: "Identity verification failed", tone: "text-red-400" };
         if (identityStatus === "head_turned") return { label: "Looking away too long", tone: "text-red-400" };
         if (identityStatus === "no_face") return { label: "Face not detected", tone: "text-red-400" };
+        if (identityStatus === "multiple_faces") return { label: "Multiple faces detected", tone: "text-red-400" };
+        if (proctorSignal.faceCount > 1) return { label: "Multiple faces detected (confirming)", tone: "text-amber-400" };
+        if (proctorSignal.personCount > 1) return { label: "Other person detected (not counted)", tone: "text-amber-400" };
         if (phoneWarning) return { label: "Possible device in view", tone: "text-amber-400" };
         if (!proctorSignal.connected || !proctorSignal.facePresent) return { label: "Face not detected", tone: "text-amber-400" };
         if (eyeStatus === "not_visible") return { label: "Eyes not visible", tone: "text-amber-400" };
         if (eyeStatus === "unclear") return { label: "Face position unclear", tone: "text-amber-400" };
         if (eyeStatus === "visible") return { label: "Eyes visible", tone: "text-emerald-400" };
         return { label: "Face detected", tone: "text-emerald-400" };
-    }, [liveCamera, phoneConfirmed, phoneWarning, proctorSignal.connected, proctorSignal.facePresent, proctorSignal.faceCount, identityStatus, eyeStatus]);
+    }, [liveCamera, phoneConfirmed, phoneWarning, proctorSignal.connected, proctorSignal.facePresent, proctorSignal.faceCount, proctorSignal.personCount, identityStatus, eyeStatus]);
 
     // Face tracking box color: green OK, amber low-confidence/missing, red critical.
     const faceTone = !proctorSignal.connected
         ? { label: "Monitor offline", tone: "border-slate-300 bg-slate-100 text-slate-600 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300" }
-        : proctorSignal.faceCount > 1 || phoneConfirmed || identityStatus === "mismatch"
+        : phoneConfirmed || identityStatus === "mismatch"
             ? { label: "Check camera", tone: "border-red-500/30 bg-red-500/10 text-red-400" }
-            : !proctorSignal.facePresent || eyeStatus === "not_visible" || phoneWarning
+            : identityStatus === "multiple_faces" || proctorSignal.faceCount > 1
+                ? { label: "Multiple faces detected", tone: "border-red-500/30 bg-red-500/10 text-red-400" }
+                : proctorSignal.personCount > 1
+                ? { label: "Other person detected (not counted)", tone: "border-amber-500/30 bg-amber-500/10 text-amber-400" }
+                : !proctorSignal.facePresent || eyeStatus === "not_visible" || phoneWarning
                 ? { label: "Look at camera", tone: "border-amber-500/30 bg-amber-500/10 text-amber-400" }
                 : { label: "Face detected", tone: "border-emerald-500/30 bg-emerald-500/10 text-emerald-400" };
 
@@ -1231,7 +1265,7 @@ export default function InterviewRoom() {
 
     if (step === "done") {
         return (
-            <div className="mx-auto max-w-2xl">
+            <div className="mx-auto flex min-h-[calc(100dvh-4rem)] max-w-2xl items-center justify-center px-4 py-8">
                 <Card className="border-emerald-200 bg-emerald-50/60 dark:border-emerald-500/30 dark:bg-emerald-500/5">
                     <CardContent className="space-y-4 p-8 text-center">
                         <CheckCircle2 className="mx-auto h-12 w-12 text-emerald-500" />
@@ -1258,8 +1292,10 @@ export default function InterviewRoom() {
     if (step === "terminated") {
         const isPhone = terminationReason?.toLowerCase().includes("smartphone")
             || interview?.session?.terminationReason === "smartphone_detected";
+        const isFullscreenExit = terminationReason?.toLowerCase().includes("fullscreen")
+            || interview?.session?.terminationReason === "fullscreen_exit";
         return (
-            <div className="mx-auto max-w-2xl">
+            <div className="mx-auto flex min-h-[calc(100dvh-4rem)] max-w-2xl items-center justify-center px-4 py-8">
                 <Card className="border-red-300 bg-red-50/70 dark:border-red-500/40 dark:bg-red-500/10">
                     <CardContent className="space-y-4 p-8 text-center">
                         <AlertTriangle className="mx-auto h-12 w-12 text-red-500" />
@@ -1275,6 +1311,10 @@ export default function InterviewRoom() {
                                     </p>
                                 )}
                             </>
+                        ) : isFullscreenExit ? (
+                            <p className="text-sm text-slate-600 dark:text-zinc-400">
+                                Fullscreen was exited. The interview ended immediately, and your saved responses are available to the coordinator.
+                            </p>
                         ) : (
                             <p className="text-sm text-slate-600 dark:text-zinc-400">
                                 The session was terminated after three confirmed proctoring violations. Your saved answers and event log are available to the coordinator for review.
@@ -1544,7 +1584,7 @@ export default function InterviewRoom() {
                         className="shrink-0"
                         type="button"
                     >
-                        <Square className="h-4 w-4" /> End interview
+                        <Square className="h-4 w-4" /> Submit & End Interview
                     </Button>
                 )}
             </header>
@@ -1606,15 +1646,11 @@ export default function InterviewRoom() {
                                 <Textarea
                                     className="min-h-0 flex-1 resize-none"
                                     value={answer}
-                                    onChange={(event) => {
-                                        answerRef.current = event.target.value;
-                                        setAnswer(event.target.value);
-                                    }}
-                                    placeholder="Type your answer, or use Speak answer."
-                                    disabled={busy || done || !canContinue}
+                                    placeholder="Use Speak answer to record your response."
+                                    disabled
                                 />
                                 <p className="text-xs text-slate-500 dark:text-zinc-500">
-                                    Type your answer or use voice input. Answers are saved when you submit.
+                                    Answers are entered using voice input and saved when you submit.
                                 </p>
                                 {speechError && <p role="status" className="text-sm text-amber-700 dark:text-amber-300">{speechError}</p>}
                                 {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
@@ -1737,15 +1773,13 @@ export default function InterviewRoom() {
                                     : "Candidate verification required"}
                             </h2>
                             <p className="text-sm text-slate-600 dark:text-zinc-300">
-                                {proctorSignal.faceCount > 1
-                                    ? "More than one person is visible. Only the registered candidate may continue."
-                                    : identityStatus === "mismatch"
-                                        ? "The face on camera does not match the registered candidate. The registered candidate must return to the camera."
-                                        : identityStatus === "unverified"
-                                            ? "The camera sees a face but cannot verify it clearly. Improve the lighting and keep your face centered in view."
-                                            : !proctorSignal.connected
-                                                ? "The live AI monitor has not returned a camera check yet. Keep the camera on while it reconnects."
-                                                : "Waiting for the live camera check to verify the registered candidate."}
+                                {identityStatus === "mismatch"
+                                    ? "The face on camera does not match the registered candidate. The registered candidate must return to the camera."
+                                    : identityStatus === "unverified"
+                                        ? "The camera sees a face but cannot verify it clearly. Improve the lighting and keep your face centered in view."
+                                        : !proctorSignal.connected
+                                            ? "The live AI monitor has not returned a camera check yet. Keep the camera on while it reconnects."
+                                            : "Waiting for the live camera check to verify the registered candidate."}
                             </p>
                             <div className="flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
                                 <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
@@ -1782,12 +1816,12 @@ export default function InterviewRoom() {
                                 <h2 className="text-lg font-semibold text-slate-900 dark:text-white">End this interview?</h2>
                             </div>
                             <p className="text-sm text-slate-600 dark:text-zinc-400">
-                                Ending the interview will stop your camera and microphone and submit the {candidateTurns} answer{candidateTurns === 1 ? "" : "s"} you have given so far. This cannot be undone.
+                                Submitting now will end the interview, stop your camera and microphone, and save the {candidateTurns} answer{candidateTurns === 1 ? "" : "s"} you have given so far. This cannot be undone.
                             </p>
                             <div className="flex justify-end gap-2">
                                 <Button variant="outline" onClick={() => setConfirmEndOpen(false)} type="button">Keep going</Button>
                                 <Button variant="destructive" onClick={confirmEndInterview} disabled={busy} type="button">
-                                    {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Square className="h-4 w-4" />} End interview
+                                    {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Square className="h-4 w-4" />} Submit & End Interview
                                 </Button>
                             </div>
                         </CardContent>

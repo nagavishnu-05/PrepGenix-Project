@@ -136,6 +136,7 @@ export const api = {
         result: (id, data) => request(`/interviews/${id}/result`, { method: "POST", body: data }),
         reset: (id) => request(`/interviews/${id}/reset`, { method: "POST", body: {} }),
         update: (id, data) => request(`/interviews/${id}`, { method: "PUT", body: data }),
+        updateGroupSchedule: (groupId, data) => request(`/interviews/groups/${encodeURIComponent(groupId)}/schedule`, { method: "PUT", body: data }),
         remove: (id) => request(`/interviews/${id}`, { method: "DELETE" }),
         removeGroup: (groupId) => request(`/interviews/groups/${encodeURIComponent(groupId)}`, { method: "DELETE" }),
         groupAnalytics: (groupId) => request(`/interviews/groups/${encodeURIComponent(groupId)}/analytics`),

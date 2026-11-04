@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Plus, Star, CalendarClock, ListChecks, FileText, Loader2, AlertTriangle, RotateCcw, ChevronDown, UserPlus, BarChart3, Trash2, Users, Download } from "lucide-react";
+import { Plus, Star, CalendarClock, ListChecks, FileText, Loader2, AlertTriangle, RotateCcw, ChevronDown, UserPlus, BarChart3, Trash2, Users, Download, Pencil, CheckCircle2 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -94,6 +94,9 @@ export default function PlacementInterviews() {
     const [students, setStudents] = useState([]);
     const [loading, setLoading] = useState(true);
     const [schedOpen, setSchedOpen] = useState(false);
+    const [scheduleEditOpen, setScheduleEditOpen] = useState(false);
+    const [scheduleEditTarget, setScheduleEditTarget] = useState(null);
+    const [scheduleEdit, setScheduleEdit] = useState({ startsAt: "", endsAt: "" });
     const [resultOpen, setResultOpen] = useState(false);
     const [resultTarget, setResultTarget] = useState(null);
     const [planOpen, setPlanOpen] = useState(false);
@@ -110,7 +113,8 @@ export default function PlacementInterviews() {
     const [deletingGroupId, setDeletingGroupId] = useState(null);
     const [deletingInterviewId, setDeletingInterviewId] = useState(null);
     const [busy, setBusy] = useState(false);
-    const [sched, setSched] = useState({ interviewName: "", groupId: "", regNos: [], existingRegNos: [], type: "Technical", startsAt: "", endsAt: "", interviewer: "", jobRole: "", jobDescription: "" });
+    const [exporting, setExporting] = useState(false);
+    const [sched, setSched] = useState({ interviewName: "", groupId: "", regNos: [], existingRegNos: [], type: "Technical", startsAt: "", endsAt: "", interviewer: "", jobRole: "", jobDescription: "", emailReminderEnabled: false });
     const [studentFilters, setStudentFilters] = useState({ batch: "all", section: "all", search: "" });
     const [result, setResult] = useState({ rating: 3, notes: "", strengths: "", weaknesses: "", status: "completed" });
 
@@ -131,6 +135,38 @@ export default function PlacementInterviews() {
             })), "Candidates");
         } catch (error) {
             alert(`Failed to export interview candidates: ${error.message}`);
+        }
+    };
+
+    const exportAllInterviews = async () => {
+        if (!interviews.length) return;
+        setExporting(true);
+        try {
+            const batchByRegNo = new Map(students.map((student) => [student.regNo, student.batch || ""]));
+            const rows = interviews.map((interview) => ({
+                Interview: interview.interviewName || `${interview.type || "Interview"} Interview`,
+                Type: interview.type || "",
+                Batch: batchByRegNo.get(interview.regNo) || "",
+                Name: interview.studentName || "",
+                "Registration Number": interview.regNo || "",
+                Status: interview.status || "",
+                Rating: interview.rating ?? "",
+                "AI Report Score": interview.report?.overall ?? "",
+                "Questions Answered": interview.session?.answeredCount ?? 0,
+                "Questions Planned": interview.plan?.questions?.length ?? 0,
+                "Proctoring Violations": interview.proctoringViolationCount ?? 0,
+                Interviewer: interview.interviewer || "",
+                "Job Role": interview.jobRole || "",
+                "Scheduled At": interview.scheduledAt ? new Date(interview.scheduledAt).toLocaleString() : "",
+                "Starts At": interview.startsAt ? new Date(interview.startsAt).toLocaleString() : "",
+                "Ends At": interview.endsAt ? new Date(interview.endsAt).toLocaleString() : "",
+                "Completed At": interview.completedAt ? new Date(interview.completedAt).toLocaleString() : "",
+            }));
+            await downloadExcel("Overall-Interview-Results", rows, "Interview Results");
+        } catch (error) {
+            alert(`Failed to export overall interview results: ${error.message}`);
+        } finally {
+            setExporting(false);
         }
     };
 
@@ -188,8 +224,48 @@ export default function PlacementInterviews() {
             interviewer: group?.interviewer || "",
             jobRole: group?.members?.[0]?.jobRole || "",
             jobDescription: group?.members?.[0]?.jobDescription || "",
+            emailReminderEnabled: group?.members?.some((member) => member.emailReminderEnabled === true) || false,
         });
         setSchedOpen(true);
+    };
+
+    const openScheduleEdit = (group) => {
+        setScheduleEditTarget(group);
+        setScheduleEdit({
+            startsAt: toDatetimeLocal(group.startsAt || group.scheduledAt),
+            endsAt: toDatetimeLocal(group.endsAt),
+        });
+        setScheduleEditOpen(true);
+    };
+
+    const saveScheduleEdit = async () => {
+        if (!scheduleEditTarget || !scheduleEdit.startsAt || !scheduleEdit.endsAt) {
+            alert("Set both the interview start and end times.");
+            return;
+        }
+        const startsAt = new Date(scheduleEdit.startsAt);
+        const endsAt = new Date(scheduleEdit.endsAt);
+        if (Number.isNaN(startsAt.getTime()) || Number.isNaN(endsAt.getTime()) || startsAt >= endsAt) {
+            alert("The interview end time must be later than its start time.");
+            return;
+        }
+
+        setBusy(true);
+        try {
+            const groupId = scheduleEditTarget.id.startsWith("legacy:")
+                ? scheduleEditTarget.members[0]?.id
+                : scheduleEditTarget.id;
+            await api.interviews.updateGroupSchedule(groupId, {
+                startsAt: startsAt.toISOString(),
+                endsAt: endsAt.toISOString(),
+            });
+            setScheduleEditOpen(false);
+            load();
+        } catch (error) {
+            alert(`Failed to update interview schedule: ${error.message}`);
+        } finally {
+            setBusy(false);
+        }
     };
 
     const toggleScheduledStudent = (regNo, checked) => {
@@ -226,7 +302,7 @@ export default function PlacementInterviews() {
                 endsAt: endsAt.toISOString(),
             });
             setSchedOpen(false);
-            setSched({ interviewName: "", groupId: "", regNos: [], existingRegNos: [], type: "Technical", startsAt: "", endsAt: "", interviewer: "", jobRole: "", jobDescription: "" });
+            setSched({ interviewName: "", groupId: "", regNos: [], existingRegNos: [], type: "Technical", startsAt: "", endsAt: "", interviewer: "", jobRole: "", jobDescription: "", emailReminderEnabled: false });
             load();
         } catch (e) {
             alert(e.message);
@@ -348,7 +424,14 @@ export default function PlacementInterviews() {
             <PageHeader
                 title="Interviews"
                 description="Create named interview rounds, schedule multiple students, and manage each candidate's session."
-                action={<Button onClick={() => openSchedule()}><Plus className="h-4 w-4" /> Create Interview</Button>}
+                action={
+                    <div className="flex flex-wrap items-center gap-2">
+                        <Button variant="outline" onClick={exportAllInterviews} disabled={loading || exporting || interviews.length === 0}>
+                            <Download className="h-4 w-4" /> {exporting ? "Exporting..." : "Export Overall Excel"}
+                        </Button>
+                        <Button onClick={() => openSchedule()}><Plus className="h-4 w-4" /> Create Interview</Button>
+                    </div>
+                }
             />
 
             <Card className="border-slate-200/80 dark:border-zinc-800/80 bg-white/70 dark:bg-zinc-900/40">
@@ -387,6 +470,9 @@ export default function PlacementInterviews() {
                                                 <span className="rounded-full bg-blue-100 px-2.5 py-1 text-xs font-medium text-blue-700 dark:bg-blue-500/10 dark:text-blue-300">{scheduledCount} scheduled</span>
                                                 {activeCount > 0 && <span className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-700 dark:bg-amber-500/10 dark:text-amber-300">{activeCount} active</span>}
                                                 {completedCount > 0 && <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-medium text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300">{completedCount} completed</span>}
+                                                <Button variant="outline" size="sm" onClick={() => openScheduleEdit(group)} disabled={activeCount > 0}>
+                                                    <Pencil className="h-4 w-4" /> Edit schedule
+                                                </Button>
                                                 <Button variant="outline" size="sm" onClick={() => openSchedule(group)}>
                                                     <UserPlus className="h-4 w-4" /> Schedule more
                                                 </Button>
@@ -487,6 +573,34 @@ export default function PlacementInterviews() {
                     )}
                 </CardContent>
             </Card>
+
+            <Dialog open={scheduleEditOpen} onOpenChange={setScheduleEditOpen}>
+                <DialogContent>
+                    <DialogHeader>
+                        <DialogTitle>Edit interview schedule</DialogTitle>
+                        <DialogDescription>
+                            Update the availability window for all {scheduleEditTarget?.members.length || 0} candidates in {scheduleEditTarget?.name || "this interview"}.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-4">
+                        <div className="space-y-1.5">
+                            <Label className="text-xs text-slate-600 dark:text-zinc-300">Available from</Label>
+                            <Input type="datetime-local" value={scheduleEdit.startsAt} onChange={(event) => setScheduleEdit((current) => ({ ...current, startsAt: event.target.value }))} />
+                        </div>
+                        <div className="space-y-1.5">
+                            <Label className="text-xs text-slate-600 dark:text-zinc-300">Available until</Label>
+                            <Input type="datetime-local" min={scheduleEdit.startsAt || undefined} value={scheduleEdit.endsAt} onChange={(event) => setScheduleEdit((current) => ({ ...current, endsAt: event.target.value }))} />
+                        </div>
+                        <div className="flex justify-end gap-2">
+                            <Button variant="outline" onClick={() => setScheduleEditOpen(false)}>Cancel</Button>
+                            <Button onClick={saveScheduleEdit} disabled={busy || !scheduleEdit.startsAt || !scheduleEdit.endsAt}>
+                                {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                                Save schedule
+                            </Button>
+                        </div>
+                    </div>
+                </DialogContent>
+            </Dialog>
 
             <Dialog open={schedOpen} onOpenChange={setSchedOpen}>
                 <DialogContent className="flex max-h-[92vh] w-[calc(100vw-2rem)] max-w-6xl flex-col overflow-hidden">
@@ -659,6 +773,16 @@ export default function PlacementInterviews() {
                                 <Input className="min-w-0 bg-white dark:bg-zinc-900" type="datetime-local" min={sched.startsAt || undefined} value={sched.endsAt} onChange={(e) => setSched({ ...sched, endsAt: e.target.value })} />
                             </div>
                         </div>
+                        <label className="flex items-start gap-2 text-sm text-slate-700 dark:text-zinc-300">
+                            <Checkbox
+                                checked={sched.emailReminderEnabled}
+                                onCheckedChange={(checked) => setSched((current) => ({ ...current, emailReminderEnabled: checked === true }))}
+                            />
+                            <span>
+                                Email selected students 10 minutes before their interview
+                                <span className="mt-1 block text-xs text-slate-500 dark:text-zinc-500">Each reminder goes only to that candidate. Requires SMTP settings and an external reminder schedule on free-tier hosting.</span>
+                            </span>
+                        </label>
                         <div className="flex justify-end gap-2">
                             <Button variant="outline" onClick={() => setSchedOpen(false)}>Cancel</Button>
                             <Button onClick={schedule} disabled={busy || !sched.interviewName.trim() || !sched.regNos.length || !sched.startsAt || !sched.endsAt}>

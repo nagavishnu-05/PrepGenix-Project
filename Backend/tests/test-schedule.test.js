@@ -2,7 +2,7 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { testAvailability } = require("../src/routes/tests");
+const { testAvailability, assignedBatchHistory, wasBatchPreviouslyAssigned } = require("../src/routes/tests");
 
 test("tests are unavailable before their scheduled start", () => {
   assert.equal(
@@ -26,4 +26,19 @@ test("tests are available inside the scheduled window only", () => {
 
 test("legacy tests without a schedule remain available", () => {
   assert.equal(testAvailability({}, new Date("2026-10-25T10:00:00Z")), "available");
+});
+
+test("batch assignment history includes the active batch and removes duplicates", () => {
+  assert.deepEqual(
+    assignedBatchHistory({ assignedBatch: "Batch C", assignedBatches: ["Batch A", "Batch C", "Batch A"] }),
+    ["Batch A", "Batch C"]
+  );
+  assert.deepEqual(assignedBatchHistory({ assignedBatch: "Legacy Batch" }), ["Legacy Batch"]);
+});
+
+test("a previously assigned batch cannot be selected again", () => {
+  const test = { assignedBatch: "Batch B", assignedBatches: ["Batch A", "Batch B"] };
+  assert.equal(wasBatchPreviouslyAssigned(test, "Batch A"), true);
+  assert.equal(wasBatchPreviouslyAssigned(test, "Batch B"), true);
+  assert.equal(wasBatchPreviouslyAssigned(test, "Batch C"), false);
 });

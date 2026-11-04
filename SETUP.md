@@ -102,5 +102,25 @@ redeploy. Production builds do not fall back to `localhost` for proctoring.
 `VITE_FACE_CHECK_INTERVAL_MS` is optional; monitoring defaults to 2000 ms and
 accepts a configured interval from 1500 to 5000 ms.
 
+## Email reminders on free-tier hosting
+
+Test and interview reminders use the backend's SMTP settings. Set `SMTP_HOST`,
+`SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS`, and `SMTP_FROM` in the
+backend's hosted environment. Also set a long, random `REMINDER_CRON_TOKEN`.
+
+Because a sleeping free-tier backend cannot run its in-process timer, configure
+an external cron service to send a `POST` request every minute to
+`https://<backend-host>/api/cron/reminders` with this header:
+
+```text
+Authorization: Bearer <same REMINDER_CRON_TOKEN>
+```
+
+Keep the token in the cron provider's secret/header configuration, never in the
+request URL. A successful response includes the reminder counts; non-2xx
+responses indicate an authentication or delivery/configuration problem. The
+backend sends each reminder only to students currently assigned to that test
+or to the individual student scheduled for that interview.
+
 For AIML-specific commands and endpoints, see
 [AIML/GETTING_STARTED.md](./AIML/GETTING_STARTED.md).

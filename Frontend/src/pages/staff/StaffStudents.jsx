@@ -7,6 +7,7 @@ import { FileInput } from "@/components/ui/file-input";
 import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { InlineSelect } from "@/components/ui/inline-select";
 import { PageHeader, EmptyState, LoadingState } from "@/components/portal/primitives";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -22,6 +23,9 @@ export default function StaffStudents() {
     const [addOpen, setAddOpen] = useState(false);
     const [importOpen, setImportOpen] = useState(false);
     const [batchDeleteOpen, setBatchDeleteOpen] = useState(false);
+    const [exportOpen, setExportOpen] = useState(false);
+    const [exportBatch, setExportBatch] = useState("");
+    const [exporting, setExporting] = useState(false);
     const [batchToDelete, setBatchToDelete] = useState("");
     const [batchDeleteConfirmation, setBatchDeleteConfirmation] = useState("");
     const [file, setFile] = useState(null);
@@ -67,8 +71,14 @@ export default function StaffStudents() {
     };
 
     const exportStudents = async () => {
+        if (!exportBatch) {
+            alert("Select a batch to export.");
+            return;
+        }
+        setExporting(true);
         try {
-            await downloadExcel("Student-Records", rows.map((student) => ({
+            const students = await api.reports.students({ batch: exportBatch });
+            await downloadExcel(`Student-Records-${exportBatch.replace(/[^a-z0-9]+/gi, "-")}`, students.map((student) => ({
                 Name: student.name || "",
                 "Registration Number": student.regNo || "",
                 "Roll Number": student.rollNo || "",
@@ -83,8 +93,11 @@ export default function StaffStudents() {
                 "Coding Average (%)": student.codingAverage ?? "",
                 Interviews: student.interviewCount ?? 0,
             })), "Students");
+            setExportOpen(false);
         } catch (error) {
             alert(`Failed to export students: ${error.message}`);
+        } finally {
+            setExporting(false);
         }
     };
 
@@ -187,7 +200,7 @@ export default function StaffStudents() {
                             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400 dark:text-zinc-500" />
                             <Input placeholder="Search by name or reg number..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" />
                         </div>
-                        <Button variant="outline" onClick={exportStudents} disabled={loading || rows.length === 0}>
+                        <Button variant="outline" onClick={() => { setExportBatch(""); setExportOpen(true); }} disabled={!batches.length || loading}>
                             <Download className="h-4 w-4" /> Export Excel
                         </Button>
                     </div>
@@ -389,6 +402,34 @@ export default function StaffStudents() {
                         <div className="flex justify-end gap-2">
                             <Button variant="outline" onClick={() => setImportOpen(false)}>Cancel</Button>
                             <Button onClick={doImport} disabled={!file || busy}>{busy ? "Importing..." : "Import"}</Button>
+                        </div>
+                    </div>
+                </DialogContent>
+            </Dialog>
+            <Dialog open={exportOpen} onOpenChange={setExportOpen}>
+                <DialogContent>
+                    <DialogHeader>
+                        <DialogTitle>Export Student Records</DialogTitle>
+                        <DialogDescription>Select one batch to include in the Excel workbook.</DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-4">
+                        <div className="space-y-1.5">
+                            <Label>Batch</Label>
+                            <InlineSelect
+                                ariaLabel="Select batch to export"
+                                value={exportBatch || "__select_batch__"}
+                                onValueChange={(value) => setExportBatch(value === "__select_batch__" ? "" : value)}
+                                options={[
+                                    { value: "__select_batch__", label: "Select one batch" },
+                                    ...batches.map((batch) => ({ value: batch, label: batch })),
+                                ]}
+                            />
+                        </div>
+                        <div className="flex justify-end gap-2">
+                            <Button variant="outline" onClick={() => setExportOpen(false)} disabled={exporting}>Cancel</Button>
+                            <Button onClick={exportStudents} disabled={!exportBatch || exporting}>
+                                <Download className="h-4 w-4" /> {exporting ? "Exporting..." : "Download Excel"}
+                            </Button>
                         </div>
                     </div>
                 </DialogContent>

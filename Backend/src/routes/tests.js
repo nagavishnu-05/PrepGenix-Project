@@ -10,6 +10,7 @@ const storage = require("../lib/storage");
 const { initialState, advanceState, classifyResult, pickAdaptiveQuestion } = require("../adaptive");
 const { gradeSubmission } = require("../judge");
 const { pushAptitude, pushCoding } = require("../perf");
+const { isStudentAssignedToTest, assignedRegistrationNumbers } = require("../lib/assignment-scope");
 const {
   rowsFromBuffer,
   rowsFromFile,
@@ -52,13 +53,30 @@ async function getStudent(req) {
   return col("students").findOne({ regNo: req.user.username });
 }
 
-function isAssigned(test, student) {
-  if (!student) return false;
-  if (test.assignedToAll) return true;
-  if (test.assignedBatch && student.batch && test.assignedBatch === student.batch) return true;
-  if (!Array.isArray(test.assignedStudents)) return false;
-  const identifiers = [student.regNo, student.rollNo].filter(Boolean).map(String);
-  return test.assignedStudents.some((assignedStudent) => identifiers.includes(String(assignedStudent)));
+function assignedBatchHistory(test) {
+  const history = Array.isArray(test?.assignedBatches) ? test.assignedBatches : [];
+  return [...new Set([...history, test?.assignedBatch]
+    .filter((batch) => typeof batch === "string" && batch.trim())
+    .map((batch) => batch.trim()))];
+}
+
+function wasBatchPreviouslyAssigned(test, batch) {
+  return assignedBatchHistory(test).includes(String(batch || "").trim());
+}
+
+function sameStringList(left, right) {
+  const leftValues = [...new Set((Array.isArray(left) ? left : []).map(String))].sort();
+  const rightValues = [...new Set((Array.isArray(right) ? right : []).map(String))].sort();
+  return leftValues.length === rightValues.length
+    && leftValues.every((value, index) => value === rightValues[index]);
+}
+
+async function attemptIsStillAssigned(attempt) {
+  const [test, student] = await Promise.all([
+    col("tests").findOne({ _id: id(attempt.testId) }),
+    col("students").findOne({ regNo: attempt.studentRegNo }),
+  ]);
+  return isStudentAssignedToTest(test, student);
 }
 
 function sampleQuestions(list, count) {
@@ -162,7 +180,7 @@ router.get("/", authenticate, async (req, res) => {
       const student = await getStudent(req);
       if (!student) return res.status(404).json({ error: "Student profile not found" });
       const all = await col("tests").find().sort({ createdAt: -1 }).toArray();
-      const assigned = all.filter((t) => isAssigned(t, student));
+      const assigned = all.filter((t) => isStudentAssignedToTest(t, student));
       const testsWithStatus = await Promise.all(
         assigned.map(async (t) => {
           const attemptDocs = await col("attempts")
@@ -191,9 +209,13 @@ router.get("/", authenticate, async (req, res) => {
     const { type } = req.query;
     const filter = type ? { type } : {};
     const tests = await col("tests").find(filter).sort({ createdAt: -1 }).toArray();
+    const students = await col("students").find({}, { projection: { regNo: 1, rollNo: 1, batch: 1 } }).toArray();
     const withCounts = await Promise.all(
       tests.map(async (t) => {
-        const attemptCount = await col("attempts").countDocuments({ testId: t._id.toString() });
+        const assignedRegNos = [...assignedRegistrationNumbers(t, students)];
+        const attemptCount = assignedRegNos.length
+          ? await col("attempts").countDocuments({ testId: t._id.toString(), studentRegNo: { $in: assignedRegNos } })
+          : 0;
         return { ...toId(t), _count: { attempts: attemptCount } };
       })
     );
@@ -210,7 +232,7 @@ router.get("/:id", authenticate, async (req, res) => {
     if (!test) return res.status(404).json({ error: "Test not found" });
     if (req.user.role === "student") {
       const student = await getStudent(req);
-      if (!isAssigned(test, student)) return res.status(403).json({ error: "Test not assigned to you" });
+      if (!isStudentAssignedToTest(test, student)) return res.status(403).json({ error: "Test not assigned to you" });
       const out = toId(test);
       if (test.mode === "fixed") {
         const qs = await col("questions").find({ _id: { $in: test.fixedQuestionIds.map(String).map(id) } }).toArray();
@@ -359,6 +381,23 @@ router.post("/", authenticate, async (req, res) => {
     if (!Array.isArray(body.topics) || !body.topics.some((topic) => String(topic).trim())) {
       return res.status(400).json({ error: "At least one test topic is required" });
     }
+    const assignmentMode = body.assignmentMode === "students" ? "students" : "batch";
+    const assignedBatch = assignmentMode === "batch" && typeof body.assignedBatch === "string"
+      ? body.assignedBatch.trim()
+      : "";
+    const assignedStudents = assignmentMode === "students" && Array.isArray(body.assignedStudents)
+      ? [...new Set(body.assignedStudents.map((value) => String(value).trim()).filter(Boolean))]
+      : [];
+    if (body.assignedToAll) return res.status(400).json({ error: "Assign each test to one batch or selected students" });
+    if (assignmentMode === "batch") {
+      if (!assignedBatch) return res.status(400).json({ error: "Select one batch for this test" });
+      const batchExists = await col("students").findOne({ batch: assignedBatch }, { projection: { _id: 1 } });
+      if (!batchExists) return res.status(404).json({ error: `No students found in batch ${assignedBatch}` });
+    } else {
+      if (!assignedStudents.length) return res.status(400).json({ error: "Select at least one student for this test" });
+      const matchingStudents = await col("students").countDocuments({ regNo: { $in: assignedStudents } });
+      if (matchingStudents !== assignedStudents.length) return res.status(404).json({ error: "One or more selected students were not found" });
+    }
     const mode = body.mode === "adaptive" ? "adaptive" : "fixed";
     const test = {
       title: String(body.title).trim(),
@@ -373,9 +412,12 @@ router.post("/", authenticate, async (req, res) => {
       adaptive: body.adaptive || { totalQuestions: 10, questionFilter: null },
       fixedQuestionIds: Array.isArray(body.fixedQuestionIds) ? body.fixedQuestionIds.map(String) : [],
       autoPick: body.autoPick || null,
-      assignedStudents: body.assignedStudents || [],
-      assignedBatch: body.assignedBatch || null,
-      assignedToAll: !!body.assignedToAll,
+      assignmentMode,
+      assignedStudents,
+      assignedBatch: assignedBatch || null,
+      assignedBatches: assignedBatch ? [assignedBatch] : [],
+      assignedToAll: false,
+      emailReminderEnabled: body.emailReminderEnabled === true,
       durationMin: Number(body.durationMin) || 30,
       passingScore: Number(body.passingScore) || 50,
       proctoring: normalizeProctoring(body.proctoring),
@@ -403,6 +445,8 @@ router.put("/:id", authenticate, async (req, res) => {
     const set = { updatedAt: new Date() };
     if (body.title !== undefined) set.title = body.title;
     if (body.description !== undefined) set.description = body.description;
+    if (body.type !== undefined) set.type = body.type === "coding" ? "coding" : "aptitude";
+    if (body.mode !== undefined) set.mode = body.mode === "adaptive" ? "adaptive" : "fixed";
     if (body.topics !== undefined) {
       if (!Array.isArray(body.topics)) return res.status(400).json({ error: "topics must be an array" });
       set.topics = [...new Set(body.topics.map((topic) => String(topic).trim()).filter(Boolean))];
@@ -429,53 +473,131 @@ router.put("/:id", authenticate, async (req, res) => {
     if (body.autoPick !== undefined) set.autoPick = body.autoPick;
     if (body.durationMin !== undefined) set.durationMin = Number(body.durationMin);
     if (body.passingScore !== undefined) set.passingScore = Number(body.passingScore);
+    if (body.emailReminderEnabled !== undefined) set.emailReminderEnabled = body.emailReminderEnabled === true;
     if (body.proctoring !== undefined) set.proctoring = normalizeProctoring(body.proctoring);
-    const test = await col("tests").findOneAndUpdate({ _id: id(req.params.id) }, { $set: set }, { returnDocument: "after" });
-    if (!test) return res.status(404).json({ error: "Test not found" });
+    const assignmentChanged = body.assignmentMode !== undefined
+      || body.assignedBatch !== undefined
+      || body.assignedStudents !== undefined
+      || body.assignedToAll === true;
+    if (assignmentChanged) {
+      const assignmentMode = body.assignmentMode === "students"
+        ? "students"
+        : body.assignmentMode === "batch"
+          ? "batch"
+          : (body.assignedBatch === "" && Array.isArray(body.assignedStudents)
+            ? "students"
+            : currentTest.assignmentMode || (currentTest.assignedBatch ? "batch" : "students"));
+      if (body.assignedToAll === true) {
+        return res.status(400).json({ error: "Assign each test to one batch or selected students" });
+      }
+      set.assignmentMode = assignmentMode;
+      set.assignedToAll = false;
+      if (assignmentMode === "batch") {
+        const assignedBatch = typeof body.assignedBatch === "string"
+          ? body.assignedBatch.trim()
+          : String(currentTest.assignedBatch || "").trim();
+        if (!assignedBatch) return res.status(400).json({ error: "Select one batch for this test" });
+        if (assignedBatch !== currentTest.assignedBatch) {
+          if (wasBatchPreviouslyAssigned(currentTest, assignedBatch)) {
+            return res.status(409).json({ error: "This test was already assigned to that batch. Choose a different batch." });
+          }
+          const batchExists = await col("students").findOne({ batch: assignedBatch }, { projection: { _id: 1 } });
+          if (!batchExists) return res.status(404).json({ error: `No students found in batch ${assignedBatch}` });
+        }
+        set.assignedBatch = assignedBatch;
+        set.assignedBatches = [...assignedBatchHistory(currentTest), assignedBatch];
+        set.assignedStudents = [];
+      } else {
+        const assignedStudents = Array.isArray(body.assignedStudents)
+          ? [...new Set(body.assignedStudents.map((value) => String(value).trim()).filter(Boolean))]
+          : (currentTest.assignmentMode === "students" ? currentTest.assignedStudents || [] : []);
+        if (!assignedStudents.length) return res.status(400).json({ error: "Select at least one student for this test" });
+        const matchingStudents = await col("students").countDocuments({ regNo: { $in: assignedStudents } });
+        if (matchingStudents !== assignedStudents.length) return res.status(404).json({ error: "One or more selected students were not found" });
+        set.assignedBatch = null;
+        set.assignedStudents = assignedStudents;
+      }
+    }
+    const updateFilter = { _id: id(req.params.id) };
+    if (assignmentChanged) {
+      updateFilter.assignedBatch = currentTest.assignedBatch === undefined
+        ? { $exists: false }
+        : currentTest.assignedBatch;
+      updateFilter.assignmentMode = currentTest.assignmentMode === undefined
+        ? { $exists: false }
+        : currentTest.assignmentMode;
+      if (set.assignmentMode === "batch" && set.assignedBatch !== currentTest.assignedBatch) {
+        updateFilter.assignedBatches = { $ne: set.assignedBatch };
+      }
+    }
+    const test = await col("tests").findOneAndUpdate(updateFilter, { $set: set }, { returnDocument: "after" });
+    if (!test) {
+      const current = await col("tests").findOne({ _id: id(req.params.id) });
+      if (!current) return res.status(404).json({ error: "Test not found" });
+      return res.status(409).json({ error: "The test assignment changed. Refresh and try again." });
+    }
+    const scheduleChanged = set.startsAt !== undefined
+      && new Date(set.startsAt).getTime() !== new Date(currentTest.startsAt).getTime();
+    const batchChanged = (set.assignmentMode !== undefined && set.assignmentMode !== currentTest.assignmentMode)
+      || (set.assignedBatch !== undefined && set.assignedBatch !== currentTest.assignedBatch)
+      || (set.assignedStudents !== undefined && !sameStringList(set.assignedStudents, currentTest.assignedStudents));
+    const remindersReenabled = currentTest.emailReminderEnabled !== true && set.emailReminderEnabled === true;
+    if (scheduleChanged || batchChanged || remindersReenabled) {
+      await col("test_email_reminders").deleteMany({ testId: currentTest._id.toString() });
+    }
     res.json(toId(test));
   } catch {
     res.status(500).json({ error: "Failed to update test" });
   }
 });
 
-// POST /api/tests/:id/assign  (staff) { regNos, batch, all }
+// POST /api/tests/:id/assign (staff) { assignmentMode, batch?, assignedStudents? }
 router.post("/:id/assign", authenticate, async (req, res) => {
   try {
     if (req.user.role !== "staff") return res.status(403).json({ error: "Staff Coordinator only" });
-    const { regNos, batch, all } = req.body;
     const testId = req.params.id;
     const test = await col("tests").findOne({ _id: id(testId) });
     if (!test) return res.status(404).json({ error: "Test not found" });
-
-    console.log("[assign]", {
-      staffId: req.user.userId,
-      role: req.user.role,
-      testId,
-      testTitle: test.title,
-      all,
-      batch: batch || null,
-      regNos: regNos || [],
-    });
-
-    const set = { updatedAt: new Date() };
-    if (regNos !== undefined) {
-      const values = Array.isArray(regNos) ? regNos : [regNos];
-      const validRegNos = values.map(String).map((v) => v.trim()).filter(Boolean);
-      for (const regNo of validRegNos) {
-        const student = await col("students").findOne({ regNo });
-        if (!student) return res.status(404).json({ error: `Student with register number ${regNo} not found` });
+    const assignmentMode = req.body?.assignmentMode === "students" ? "students" : "batch";
+    let update;
+    const filter = { _id: id(testId) };
+    filter.assignedBatch = test.assignedBatch === undefined ? { $exists: false } : test.assignedBatch;
+    filter.assignmentMode = test.assignmentMode === undefined ? { $exists: false } : test.assignmentMode;
+    if (assignmentMode === "students") {
+      const assignedStudents = Array.isArray(req.body?.assignedStudents)
+        ? [...new Set(req.body.assignedStudents.map((value) => String(value).trim()).filter(Boolean))]
+        : [];
+      if (!assignedStudents.length) return res.status(400).json({ error: "Select at least one student for this test" });
+      const matchingStudents = await col("students").countDocuments({ regNo: { $in: assignedStudents } });
+      if (matchingStudents !== assignedStudents.length) return res.status(404).json({ error: "One or more selected students were not found" });
+      update = { assignmentMode, assignedStudents, assignedBatch: null, assignedToAll: false, updatedAt: new Date() };
+    } else {
+      const batch = typeof req.body?.batch === "string" ? req.body.batch.trim() : "";
+      if (!batch || req.body?.all === true) {
+        return res.status(400).json({ error: "Select one batch for this test" });
       }
-      set.assignedStudents = validRegNos;
+      if (wasBatchPreviouslyAssigned(test, batch)) {
+        return res.status(409).json({ error: "This test was already assigned to that batch. Choose a different batch." });
+      }
+      const batchExists = await col("students").findOne({ batch }, { projection: { _id: 1 } });
+      if (!batchExists) return res.status(404).json({ error: `No students found in batch ${batch}` });
+      filter.assignedBatches = { $ne: batch };
+      update = {
+        assignmentMode,
+        assignedStudents: [],
+        assignedBatch: batch,
+        assignedBatches: [...assignedBatchHistory(test), batch],
+        assignedToAll: false,
+        updatedAt: new Date(),
+      };
     }
-    if (batch !== undefined) set.assignedBatch = batch || null;
-    if (all !== undefined) set.assignedToAll = !!all;
-    const updated = await col("tests").updateOne({ _id: id(testId) }, { $set: set });
-    if (!updated.matchedCount) return res.status(404).json({ error: "Test not found" });
-    const fresh = await col("tests").findOne({ _id: id(testId) });
-    console.log("[assign] OK:", { testId, assignedToAll: fresh.assignedToAll, assignedBatch: fresh.assignedBatch, assignedStudents: fresh.assignedStudents });
-    res.json(toId(fresh));
+    const updated = await col("tests").findOneAndUpdate(filter, { $set: update }, { returnDocument: "after" });
+    if (!updated) {
+      return res.status(409).json({ error: "The test assignment changed. Refresh and choose a different batch." });
+    }
+    await col("test_email_reminders").deleteMany({ testId: test._id.toString() });
+    res.json(toId(updated));
   } catch (error) {
-    console.error("[assign] ERROR:", error.message, error.stack);
     res.status(500).json({ error: `Failed to assign test: ${error.message}` });
   }
 });
@@ -492,6 +614,7 @@ router.delete("/:id", authenticate, async (req, res) => {
     const attemptIds = attempts.map((attempt) => attempt._id.toString());
     await Promise.all([
       col("attempts").deleteMany({ testId }),
+      col("test_email_reminders").deleteMany({ testId }),
       attemptIds.length ? col("violations").deleteMany({ attemptId: { $in: attemptIds } }) : Promise.resolve(),
       col("performances", "perf").updateMany(
         {
@@ -556,7 +679,7 @@ router.post("/:id/start", authenticate, async (req, res) => {
     const test = await col("tests").findOne({ _id: id(req.params.id) });
     if (!test) return res.status(404).json({ error: "Test not found" });
     const student = await getStudent(req);
-    if (!isAssigned(test, student)) return res.status(403).json({ error: "Test not assigned to you" });
+    if (!isStudentAssignedToTest(test, student)) return res.status(403).json({ error: "Test not assigned to you" });
 
     // Sync AIML questions if test is adaptive coding
     if (test.type === "coding" && test.mode === "adaptive") {
@@ -797,7 +920,8 @@ router.get("/attempts/:attemptId", authenticate, async (req, res) => {
   try {
     let attempt = await col("attempts").findOne({ _id: id(req.params.attemptId) });
     if (!attempt) return res.status(404).json({ error: "Attempt not found" });
-    if (req.user.role === "student" && attempt.studentRegNo !== req.user.username) {
+    if (req.user.role === "student"
+      && (attempt.studentRegNo !== req.user.username || !await attemptIsStillAssigned(attempt))) {
       return res.status(403).json({ error: "Access denied" });
     }
     attempt = await expireIfOverdue(attempt);
@@ -812,7 +936,9 @@ router.get("/attempts/:attemptId/question", authenticate, async (req, res) => {
   try {
     let attempt = await col("attempts").findOne({ _id: id(req.params.attemptId) });
     if (!attempt) return res.status(404).json({ error: "Attempt not found" });
-    if (attempt.studentRegNo !== req.user.username) return res.status(403).json({ error: "Access denied" });
+    if (attempt.studentRegNo !== req.user.username || !await attemptIsStillAssigned(attempt)) {
+      return res.status(403).json({ error: "Access denied" });
+    }
     attempt = await expireIfOverdue(attempt);
     if (attempt.status === "completed" || attempt.status === "cheated" || attempt.status === "disqualified") {
       return res.json({ finished: true, result: attempt.result });
@@ -873,7 +999,9 @@ router.post("/attempts/:attemptId/answer", authenticate, async (req, res) => {
   try {
     let attempt = await col("attempts").findOne({ _id: id(req.params.attemptId) });
     if (!attempt) return res.status(404).json({ error: "Attempt not found" });
-    if (attempt.studentRegNo !== req.user.username) return res.status(403).json({ error: "Access denied" });
+    if (attempt.studentRegNo !== req.user.username || !await attemptIsStillAssigned(attempt)) {
+      return res.status(403).json({ error: "Access denied" });
+    }
     attempt = await expireIfOverdue(attempt);
     if (attempt.status === "completed" || attempt.status === "cheated" || attempt.status === "disqualified") return res.status(400).json({ error: "Attempt already completed" });
     if (attempt.status === "flagged" || attempt.reviewRequired) {
@@ -989,7 +1117,10 @@ router.post("/attempts/:attemptId/finish", authenticate, async (req, res) => {
   try {
     let attempt = await col("attempts").findOne({ _id: id(req.params.attemptId) });
     if (!attempt) return res.status(404).json({ error: "Attempt not found" });
-    if (req.user.role === "student" && attempt.studentRegNo !== req.user.username) return res.status(403).json({ error: "Access denied" });
+    if (req.user.role === "student"
+      && (attempt.studentRegNo !== req.user.username || !await attemptIsStillAssigned(attempt))) {
+      return res.status(403).json({ error: "Access denied" });
+    }
     if (attempt.status === "completed" || attempt.status === "cheated" || attempt.status === "disqualified") {
       return res.json({ finished: true, result: attempt.result, attempt: toId(attempt) });
     }
@@ -1012,7 +1143,8 @@ router.get("/attempts/:attemptId/result", authenticate, async (req, res) => {
   try {
     let attempt = await col("attempts").findOne({ _id: id(req.params.attemptId) });
     if (!attempt) return res.status(404).json({ error: "Attempt not found" });
-    if (req.user.role === "student" && attempt.studentRegNo !== req.user.username) {
+    if (req.user.role === "student"
+      && (attempt.studentRegNo !== req.user.username || !await attemptIsStillAssigned(attempt))) {
       return res.status(403).json({ error: "Access denied" });
     }
     attempt = await expireIfOverdue(attempt);
@@ -1054,5 +1186,7 @@ module.exports.finalizeAttempt = finalizeAttempt;
 module.exports.disqualifyAttempt = disqualifyAttempt;
 module.exports.PROCTOR_DEFAULT = PROCTOR_DEFAULT;
 module.exports.testAvailability = testAvailability;
+module.exports.assignedBatchHistory = assignedBatchHistory;
+module.exports.wasBatchPreviouslyAssigned = wasBatchPreviouslyAssigned;
 module.exports.startScheduledTestExpirySweep = startScheduledTestExpirySweep;
 module.exports.expireScheduledAttempts = expireScheduledAttempts;

@@ -8,6 +8,7 @@ const { authenticate } = require("../middleware/auth");
 const { rowsFromBuffer, parseStudents } = require("../excel-parse");
 const { getPerformance } = require("../perf");
 const { publicStudent } = require("../lib/student-accounts");
+const { isStudentAssignedToTest } = require("../lib/assignment-scope");
 
 const router = express.Router();
 const upload = multer({
@@ -159,7 +160,26 @@ router.put("/:regNo", authenticate, async (req, res) => {
 // GET /api/students/:regNo/performance
 router.get("/:regNo/performance", authenticate, async (req, res) => {
   try {
-    const doc = await getPerformance(req.params.regNo);
+    const regNo = req.params.regNo;
+    if (req.user.role === "student" && req.user.username !== regNo) {
+      return res.status(403).json({ error: "Access denied" });
+    }
+    if (!["student", ...STAFF].includes(req.user.role)) {
+      return res.status(403).json({ error: "Insufficient permissions" });
+    }
+    const [doc, student, tests] = await Promise.all([
+      getPerformance(regNo),
+      col("students").findOne({ regNo }),
+      col("tests").find({}).toArray(),
+    ]);
+    if (!student) return res.status(404).json({ error: "Student not found" });
+    const testById = new Map(tests.map((test) => [test._id.toString(), test]));
+    doc.aptitude = (doc.aptitude || []).filter((entry) => (
+      isStudentAssignedToTest(testById.get(String(entry.testId)), student)
+    ));
+    doc.coding = (doc.coding || []).filter((entry) => (
+      isStudentAssignedToTest(testById.get(String(entry.testId)), student)
+    ));
     res.json(doc);
   } catch {
     res.status(500).json({ error: "Failed to fetch performance" });

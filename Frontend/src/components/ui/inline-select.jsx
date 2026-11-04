@@ -25,6 +25,7 @@ export function InlineSelect({ value, onValueChange, options, className = "", di
                     <DropdownMenuItem
                         key={option.value}
                         onSelect={() => onValueChange(option.value)}
+                        disabled={option.disabled}
                         className="min-h-10 justify-between"
                     >
                         <span className="truncate">{option.label}</span>

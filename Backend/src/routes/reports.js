@@ -6,6 +6,7 @@ const { authenticate } = require("../middleware/auth");
 const { getPerformance } = require("../perf");
 const storage = require("../lib/storage");
 const { publicStudent } = require("../lib/student-accounts");
+const { isStudentAssignedToTest, assignedRegistrationNumbers } = require("../lib/assignment-scope");
 
 const router = express.Router();
 
@@ -33,16 +34,16 @@ router.get("/rankings/me", authenticate, async (req, res) => {
 
     const regNo = req.user.username;
     const [students, performanceDocs, activeTests] = await Promise.all([
-      col("students").find({}, { projection: { regNo: 1, name: 1 } }).toArray(),
+      col("students").find({}, { projection: { regNo: 1, rollNo: 1, batch: 1, name: 1 } }).toArray(),
       col("performances", "perf").find({}, { projection: { regNo: 1, aptitude: 1, coding: 1 } }).toArray(),
-      col("tests").find({}, { projection: { _id: 1 } }).toArray(),
+      col("tests").find({}).toArray(),
     ]);
     if (!students.some((student) => student.regNo === regNo)) {
       return res.status(404).json({ error: "Student not found" });
     }
 
     const studentRegNos = new Set(students.map((student) => student.regNo));
-    const activeTestIds = new Set(activeTests.map((test) => test._id.toString()));
+    const testById = new Map(activeTests.map((test) => [test._id.toString(), test]));
     const avatars = await storage.getStudentAvatars(students.map((student) => student.regNo));
     const performanceByStudent = new Map(
       performanceDocs
@@ -56,8 +57,12 @@ router.get("/rankings/me", authenticate, async (req, res) => {
 
     for (const student of students) {
       const performance = performanceByStudent.get(student.regNo);
-      const aptitude = (performance?.aptitude || []).filter((entry) => activeTestIds.has(String(entry.testId)));
-      const coding = (performance?.coding || []).filter((entry) => activeTestIds.has(String(entry.testId)));
+      const aptitude = (performance?.aptitude || []).filter((entry) => (
+        isStudentAssignedToTest(testById.get(String(entry.testId)), student)
+      ));
+      const coding = (performance?.coding || []).filter((entry) => (
+        isStudentAssignedToTest(testById.get(String(entry.testId)), student)
+      ));
       const scores = {
         overall: [...aptitude, ...coding],
         aptitude,
@@ -133,15 +138,21 @@ router.get("/students", authenticate, async (req, res) => {
       filter.$or = [{ name: rx }, { regNo: rx }];
     }
     const students = await col("students").find(filter).sort({ regNo: 1 }).toArray();
-    const [activeTests, perfDocs, resumeDocs, attempts] = await Promise.all([
-      col("tests").find({}, { projection: { _id: 1 } }).toArray(),
+    const [activeTests, perfDocs, resumeDocs, allAttempts] = await Promise.all([
+      col("tests").find({}).toArray(),
       col("performances", "perf").find({ regNo: { $in: students.map((s) => s.regNo) } }).toArray(),
       col("resumes", "resume").find({ regNo: { $in: students.map((s) => s.regNo) } }).toArray(),
       col("attempts").find(
         { studentRegNo: { $in: students.map((s) => s.regNo) } },
-        { projection: { _id: 1, studentRegNo: 1 } }
+        { projection: { _id: 1, studentRegNo: 1, testId: 1 } }
       ).toArray(),
     ]);
+    const studentByRegNo = new Map(students.map((student) => [student.regNo, student]));
+    const testById = new Map(activeTests.map((test) => [test._id.toString(), test]));
+    const attempts = allAttempts.filter((attempt) => (
+      studentByRegNo.has(attempt.studentRegNo)
+      && isStudentAssignedToTest(testById.get(String(attempt.testId)), studentByRegNo.get(attempt.studentRegNo))
+    ));
     const attemptRegNoById = new Map(attempts.map((attempt) => [attempt._id.toString(), attempt.studentRegNo]));
     const violationsByStudent = new Map();
     if (attempts.length) {
@@ -154,18 +165,20 @@ router.get("/students", authenticate, async (req, res) => {
         if (regNo) violationsByStudent.set(regNo, (violationsByStudent.get(regNo) || 0) + violation.count);
       }
     }
-    const activeTestIds = new Set(activeTests.map((test) => test._id.toString()));
     const perfMap = new Map(perfDocs.map((p) => [p.regNo, p]));
     const resumeMap = new Map(resumeDocs.map((r) => [r.regNo, r]));
 
     const rows = students.map((s) => {
       const perf = perfMap.get(s.regNo);
       const resume = resumeMap.get(s.regNo);
+      const eligibleTestIds = new Set(activeTests
+        .filter((test) => isStudentAssignedToTest(test, s))
+        .map((test) => test._id.toString()));
       const aptitude = (perf?.aptitude || [])
-        .filter((entry) => activeTestIds.has(String(entry.testId)))
+        .filter((entry) => eligibleTestIds.has(String(entry.testId)))
         .map((a) => ({ ...a, date: a.date }));
       const coding = (perf?.coding || [])
-        .filter((entry) => activeTestIds.has(String(entry.testId)))
+        .filter((entry) => eligibleTestIds.has(String(entry.testId)))
         .map((c) => ({ ...c, date: c.date }));
       const interview = (perf?.interview || []).map((i) => ({ ...i, date: i.date }));
       const lastAptitude = aptitude[aptitude.length - 1];
@@ -240,7 +253,18 @@ router.get("/tests/:id", authenticate, async (req, res) => {
     const includeViolations = req.user.role === "staff";
     const test = await col("tests").findOne({ _id: id(req.params.id) });
     if (!test) return res.status(404).json({ error: "Test not found" });
-    const attempts = await col("attempts").find({ testId: test._id.toString(), status: { $in: ["completed", "disqualified", "flagged"] } }).sort({ score: -1 }).toArray();
+    const students = await col("students").find({}, { projection: { regNo: 1, rollNo: 1, batch: 1, name: 1 } }).toArray();
+    const assignedRegNos = [...assignedRegistrationNumbers(test, students)];
+    const assignedStudents = students
+      .filter((student) => assignedRegNos.includes(student.regNo))
+      .map((student) => ({ regNo: student.regNo, rollNo: student.rollNo || "", name: student.name || "" }));
+    const attempts = assignedRegNos.length
+      ? await col("attempts").find({
+        testId: test._id.toString(),
+        studentRegNo: { $in: assignedRegNos },
+        status: { $in: ["completed", "disqualified", "flagged"] },
+      }).sort({ score: -1 }).toArray()
+      : [];
     const violationIds = attempts.map((a) => a._id.toString());
     const violationDocs = includeViolations && violationIds.length
       ? await col("violations").find({ attemptId: { $in: violationIds } }).sort({ timestamp: -1 }).toArray()
@@ -259,6 +283,25 @@ router.get("/tests/:id", authenticate, async (req, res) => {
     const scores = attempts.map((a) => a.score);
     const avg = scores.length ? Math.round(scores.reduce((s, x) => s + x, 0) / scores.length) : 0;
     const best = scores.length ? Math.max(...scores) : 0;
+    let totalScore = test.mode === "adaptive"
+      ? (test.adaptive?.totalQuestions || 10) * 10
+      : Number(attempts.find((attempt) => Number(attempt.totalScore) > 0)?.totalScore) || 0;
+    if (!totalScore && test.mode !== "adaptive" && Array.isArray(test.fixedQuestionIds) && test.fixedQuestionIds.length) {
+      const questionIds = test.fixedQuestionIds.map((questionId) => {
+        try {
+          return id(questionId);
+        } catch {
+          return null;
+        }
+      }).filter(Boolean);
+      const questions = await col("questions").find(
+        { _id: { $in: questionIds } },
+        { projection: { points: 1 } }
+      ).toArray();
+      totalScore = questions.reduce((sum, question) => (
+        sum + (Number(question.points) || (test.type === "coding" ? 10 : 1))
+      ), 0);
+    }
     const results = attempts.reduce((acc, a) => {
       const key = a.result || "n/a";
       acc[key] = (acc[key] || 0) + 1;
@@ -266,14 +309,16 @@ router.get("/tests/:id", authenticate, async (req, res) => {
     }, {});
     res.json({
       test: toId(test),
+      assignedStudents,
       _count: { attempts: attempts.length },
-      stats: { averageScore: avg, bestScore: best, totalScore: test.mode === "adaptive" ? (test.adaptive?.totalQuestions || 10) * 10 : attempts[0]?.totalScore || 0 },
+      stats: { averageScore: avg, bestScore: best, totalScore },
       results,
       attempts: attempts.map((a) => {
         const report = {
           id: a._id.toString(),
           studentRegNo: a.studentRegNo,
           studentName: a.studentName,
+          status: a.status,
           score: a.score,
           totalScore: a.totalScore,
           result: a.result,
@@ -306,11 +351,15 @@ router.get("/student/:regNo", authenticate, async (req, res) => {
     const [performance, resume, activeTests] = await Promise.all([
       getPerformance(regNo),
       col("resumes", "resume").findOne({ regNo }),
-      col("tests").find({}, { projection: { _id: 1 } }).toArray(),
+      col("tests").find({}).toArray(),
     ]);
-    const activeTestIds = new Set(activeTests.map((test) => test._id.toString()));
-    performance.aptitude = (performance.aptitude || []).filter((entry) => activeTestIds.has(String(entry.testId)));
-    performance.coding = (performance.coding || []).filter((entry) => activeTestIds.has(String(entry.testId)));
+    const testById = new Map(activeTests.map((test) => [test._id.toString(), test]));
+    performance.aptitude = (performance.aptitude || []).filter((entry) => (
+      isStudentAssignedToTest(testById.get(String(entry.testId)), student)
+    ));
+    performance.coding = (performance.coding || []).filter((entry) => (
+      isStudentAssignedToTest(testById.get(String(entry.testId)), student)
+    ));
     res.json({
       ...publicStudent(student),
       performance,

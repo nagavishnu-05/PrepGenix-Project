@@ -306,6 +306,7 @@ class FaceMonitor:
         frame: np.ndarray,
         camera_active: bool = True,
         face_detection_enabled: bool = True,
+        multiple_people_informational_only: bool = False,
     ) -> dict:
         """Process one monitoring cycle during the assessment.
 
@@ -460,6 +461,7 @@ class FaceMonitor:
             "head_direction": metrics.head_direction,
             "gaze_direction": metrics.gaze_direction,
             "person_count": person_count,
+            "multiple_people_informational_only": multiple_people_informational_only,
             "devices": devices,
             "device_detected": device_detected,
             "scene_detection_fresh": run_scene,

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { Plus, Trash2, Users, ClipboardList, Code2, BrainCircuit, CheckCircle2, BarChart3, Clock, TrendingUp, ShieldCheck, AlertTriangle, Camera, Eye, Download } from "lucide-react";
+import { Plus, Trash2, Users, ClipboardList, Code2, BrainCircuit, CheckCircle2, BarChart3, Clock, TrendingUp, ShieldCheck, AlertTriangle, Camera, Eye, Download, Pencil } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -57,8 +57,37 @@ function severityClass(severity) {
     return "bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-500/30";
 }
 
+function toDatetimeLocal(value) {
+    if (!value) return "";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "";
+    return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
+}
+
+function previouslyAssignedBatches(test) {
+    return new Set([
+        ...(Array.isArray(test?.assignedBatches) ? test.assignedBatches : []),
+        test?.assignedBatch,
+    ].filter(Boolean).map(String));
+}
+
+function batchOptions(batches, test, includePlaceholder = false) {
+    const assignedBatches = previouslyAssignedBatches(test);
+    return [
+        ...(includePlaceholder ? [{ value: "__select_batch__", label: "Select one batch" }] : []),
+        ...batches.map((batch) => {
+            const alreadyAssigned = assignedBatches.has(String(batch));
+            return {
+                value: batch,
+                label: alreadyAssigned ? `${batch} (Previously assigned)` : batch,
+                disabled: alreadyAssigned,
+            };
+        }),
+    ];
+}
+
 function AssignmentBadge({ t }) {
-    if (t.assignedToAll) return <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs text-emerald-400">All batches</span>;
+    if (t.assignedToAll) return <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-xs text-amber-400">Legacy all-student assignment</span>;
     if (t.assignedBatch) return <span className="rounded-full bg-blue-500/10 px-2 py-0.5 text-xs text-blue-400">Batch {t.assignedBatch}</span>;
     if (t.assignedStudents?.length) return <span className="rounded-full bg-violet-500/10 px-2 py-0.5 text-xs text-violet-400">{t.assignedStudents.length} students</span>;
     return <span className="rounded-full bg-slate-100 dark:bg-zinc-500/10 px-2 py-0.5 text-xs text-slate-500 dark:text-zinc-400">Not assigned</span>;
@@ -68,11 +97,17 @@ export default function StaffTests() {
     const [tests, setTests] = useState([]);
     const [loading, setLoading] = useState(true);
     const [createOpen, setCreateOpen] = useState(false);
+    const [editingTest, setEditingTest] = useState(null);
     const [assignOpen, setAssignOpen] = useState(false);
     const [assignTarget, setAssignTarget] = useState(null);
     const [questions, setQuestions] = useState([]);
     const [batches, setBatches] = useState([]);
+    const [audienceStudents, setAudienceStudents] = useState([]);
+    const [audienceStudentsLoading, setAudienceStudentsLoading] = useState(false);
     const [busy, setBusy] = useState(false);
+    const [exporting, setExporting] = useState(false);
+    const [exportBatchDialogOpen, setExportBatchDialogOpen] = useState(false);
+    const [exportBatch, setExportBatch] = useState("");
     const [selectedFile, setSelectedFile] = useState(null);
     const [selectedIds, setSelectedIds] = useState([]);
 
@@ -84,7 +119,7 @@ export default function StaffTests() {
     const [violationReportAttempt, setViolationReportAttempt] = useState(null);
 
     const [f, setF] = useState(() => emptyForm());
-    const [assignF, setAssignF] = useState({ batch: "", all: false, regNos: "" });
+    const [assignF, setAssignF] = useState({ assignmentMode: "batch", batch: "", audienceBatch: "", assignedStudents: [] });
 
     const load = useCallback(() => {
         setLoading(true);
@@ -103,7 +138,64 @@ export default function StaffTests() {
         api.students.batches().then(setBatches).catch(() => {});
     }, [load]);
 
+    useEffect(() => {
+        const batch = createOpen && f.assignmentMode === "students"
+            ? f.audienceBatch
+            : assignOpen && assignF.assignmentMode === "students"
+                ? assignF.audienceBatch
+                : "";
+        if (!batch) {
+            setAudienceStudents([]);
+            return undefined;
+        }
+        let cancelled = false;
+        setAudienceStudentsLoading(true);
+        api.students.list({ batch })
+            .then((students) => {
+                if (!cancelled) setAudienceStudents(students);
+            })
+            .catch((error) => {
+                if (!cancelled) {
+                    setAudienceStudents([]);
+                    alert("Failed to load students for assignment: " + error.message);
+                }
+            })
+            .finally(() => {
+                if (!cancelled) setAudienceStudentsLoading(false);
+            });
+        return () => { cancelled = true; };
+    }, [createOpen, f.assignmentMode, f.audienceBatch, assignOpen, assignF.assignmentMode, assignF.audienceBatch]);
+
     const set = (patch) => setF((x) => ({ ...x, ...patch }));
+
+    const openEdit = (test) => {
+        setEditingTest(test);
+        setF({
+            ...emptyForm(),
+            title: test.title || "",
+            description: test.description || "",
+            topicsText: (test.topics || []).join(", "),
+            startsAt: toDatetimeLocal(test.startsAt),
+            endsAt: toDatetimeLocal(test.endsAt),
+            testTypeSelection: test.type === "coding" ? "coding_mcq" : "aptitude_mcq",
+            mode: test.mode || "fixed",
+            durationMin: test.durationMin || 30,
+            passingScore: test.passingScore ?? 50,
+            assignedBatch: test.assignedBatch || "",
+            assignmentMode: test.assignmentMode || (test.assignedBatch ? "batch" : "students"),
+            audienceBatch: test.assignedBatch || batches[0] || "",
+            assignedStudents: test.assignedStudents || [],
+            emailReminderEnabled: test.emailReminderEnabled === true,
+            faceVerificationEnabled: test.proctoring?.faceVerification !== false,
+            proctoringMax: test.proctoring?.maxViolations || 1,
+            proctoringAuto: test.proctoring?.autoSubmit !== false,
+            proctoringReviewOnly: test.proctoring?.reviewOnly !== false,
+            proctoringInterval: test.proctoring?.snapshotIntervalSec || 20,
+            adaptiveCount: test.adaptive?.totalQuestions || 10,
+        });
+        setSelectedFile(null);
+        setCreateOpen(true);
+    };
 
     const openAnalytics = async (t) => {
         setAnalyticsLoading(true);
@@ -124,20 +216,102 @@ export default function StaffTests() {
         try {
             const title = testAnalytics.test?.title || "Test";
             const filename = title.trim().replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "");
-            await downloadExcel(`${filename || "Test"}-Results`, (testAnalytics.attempts || []).map((attempt) => ({
-                Test: title,
-                Name: attempt.studentName || "",
-                "Registration Number": attempt.studentRegNo || "",
-                Score: attempt.score ?? 0,
-                "Total Score": attempt.totalScore ?? "",
-                Result: attempt.result || "",
-                Correct: attempt.correct ?? 0,
-                "Total Questions": attempt.totalQuestions ?? 0,
-                Violations: attempt.violationCount ?? 0,
-                "Completed At": attempt.completedAt ? new Date(attempt.completedAt).toLocaleString() : "",
-            })), "Test Results");
+            const scoreHeader = `${title} (Overall score: ${testAnalytics.stats?.totalScore ?? 0})`;
+            const violationsHeader = `${title} - Violations`;
+            const attemptsByStudent = new Map();
+            for (const attempt of testAnalytics.attempts || []) {
+                if (!attemptsByStudent.has(attempt.studentRegNo)) {
+                    attemptsByStudent.set(attempt.studentRegNo, attempt);
+                }
+            }
+            const rows = (testAnalytics.assignedStudents || []).map((student) => {
+                const attempt = attemptsByStudent.get(student.regNo);
+                return {
+                    "Reg No": student.regNo,
+                    "Roll No": student.rollNo || "",
+                    Name: student.name || "",
+                    [scoreHeader]: attempt ? attempt.score ?? 0 : "-",
+                    [violationsHeader]: attempt ? attempt.violationCount ?? 0 : "-",
+                };
+            });
+            await downloadExcel(`${filename || "Test"}-Results`, rows, "Test Results");
         } catch (error) {
             alert(`Failed to export test results: ${error.message}`);
+        }
+    };
+
+    const testAudienceForBatch = (test, students, batch) => {
+        if (test.assignedToAll) return students;
+        const selectedIdentifiers = new Set((test.assignedStudents || []).map(String));
+        if (test.assignmentMode === "students") {
+            return students.filter((student) => (
+                selectedIdentifiers.has(String(student.regNo))
+                || selectedIdentifiers.has(String(student.rollNo))
+            ));
+        }
+        return students.filter((student) => (
+            test.assignedBatch === batch
+            || selectedIdentifiers.has(String(student.regNo))
+            || selectedIdentifiers.has(String(student.rollNo))
+        ));
+    };
+
+    const exportAllTests = async () => {
+        if (!tests.length || !exportBatch) {
+            alert("Select a batch before exporting overall test results.");
+            return;
+        }
+        setExportBatchDialogOpen(false);
+        setExporting(true);
+        try {
+            const batchStudents = await api.students.list({ batch: exportBatch });
+            const relevantTests = tests.filter((test) => (
+                testAudienceForBatch(test, batchStudents, exportBatch).length > 0
+            ));
+            const reports = await Promise.all(relevantTests.map(async (test) => ({
+                test,
+                report: await api.reports.perTest(test.id),
+            })));
+            const rows = batchStudents.map((student) => ({
+                "Reg No": student.regNo || "",
+                "Roll No": student.rollNo || "",
+                Name: student.name || "",
+            }));
+            const columnCounts = new Map();
+            for (const { test, report } of reports) {
+                const baseTitle = test.title || "Test";
+                const count = (columnCounts.get(baseTitle) || 0) + 1;
+                columnCounts.set(baseTitle, count);
+                const title = count === 1 ? baseTitle : `${baseTitle} (${count})`;
+                const scoreHeader = `${title} (Overall score: ${report.stats?.totalScore ?? 0})`;
+                const violationsHeader = `${title} - Violations`;
+                const assignedRegNos = new Set((report.assignedStudents || [])
+                    .map((assignedStudent) => String(assignedStudent.regNo)));
+                const audienceInBatch = testAudienceForBatch(test, batchStudents, exportBatch);
+                for (const student of audienceInBatch) assignedRegNos.add(String(student.regNo));
+                const attemptsByStudent = new Map();
+                for (const attempt of report.attempts || []) {
+                    const regNo = String(attempt.studentRegNo);
+                    if (!attemptsByStudent.has(regNo)) attemptsByStudent.set(regNo, attempt);
+                }
+                for (const row of rows) {
+                    const regNo = String(row["Reg No"]);
+                    if (!assignedRegNos.has(regNo)) {
+                        row[scoreHeader] = "";
+                        row[violationsHeader] = "";
+                        continue;
+                    }
+                    const attempt = attemptsByStudent.get(regNo);
+                    row[scoreHeader] = attempt ? attempt.score ?? 0 : "-";
+                    row[violationsHeader] = attempt ? attempt.violationCount ?? 0 : "-";
+                }
+            }
+            const batchFilename = exportBatch.trim().replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "");
+            await downloadExcel(`Overall-Test-Results-${batchFilename || "Batch"}`, rows, "Test Results");
+        } catch (error) {
+            alert(`Failed to export overall test results: ${error.message}`);
+        } finally {
+            setExporting(false);
         }
     };
 
@@ -159,6 +333,14 @@ export default function StaffTests() {
 
     const create = async () => {
         if (!f.title.trim()) return;
+        if (f.assignmentMode === "batch" && !f.assignedBatch) {
+            alert("Select one batch for this test.");
+            return;
+        }
+        if (f.assignmentMode === "students" && !f.assignedStudents.length) {
+            alert("Select at least one student for this test.");
+            return;
+        }
         const topics = f.topicsText.split(/[,;]/).map((topic) => topic.trim()).filter(Boolean);
         if (!topics.length) {
             alert("Add at least one test topic.");
@@ -182,19 +364,20 @@ export default function StaffTests() {
             let fixedQuestionIds = [];
             
             if (f.mode === "fixed") {
-                if (!selectedFile) {
+                if (editingTest) {
+                    fixedQuestionIds = editingTest.fixedQuestionIds || [];
+                } else if (!selectedFile) {
                     alert("Please upload the questions Excel file.");
                     setBusy(false);
                     return;
+                } else {
+                    const importRes = await api.tests.importQuestions(selectedFile, {
+                        testType,
+                        manualType,
+                        questionLimit: Number(f.questionLimit) || 0
+                    });
+                    fixedQuestionIds = importRes.questionIds;
                 }
-                
-                const importRes = await api.tests.importQuestions(selectedFile, {
-                    testType,
-                    manualType,
-                    questionLimit: Number(f.questionLimit) || 0
-                });
-                
-                fixedQuestionIds = importRes.questionIds;
             }
 
             const payload = {
@@ -218,13 +401,17 @@ export default function StaffTests() {
                 adaptive: f.mode === "adaptive" ? { totalQuestions: Number(f.adaptiveCount) || 10, questionFilter: null } : undefined,
                 fixedQuestionIds,
                 allowedLanguages: testType === "coding" ? ["c", "cpp", "java", "python"] : undefined,
-                assignedToAll: f.assignedToAll,
-                assignedBatch: f.assignedToAll ? null : f.assignedBatch || null,
-                assignedStudents: f.assignedToAll ? [] : f.assignedRegNos.split(/[,;]/).map((s) => s.trim()).filter(Boolean),
+                assignedToAll: false,
+                assignmentMode: f.assignmentMode,
+                assignedBatch: f.assignmentMode === "batch" ? f.assignedBatch : "",
+                emailReminderEnabled: f.emailReminderEnabled,
+                assignedStudents: f.assignmentMode === "students" ? f.assignedStudents : [],
             };
             
-            await api.tests.create(payload);
+            if (editingTest) await api.tests.update(editingTest.id, payload);
+            else await api.tests.create(payload);
             setCreateOpen(false);
+            setEditingTest(null);
             setF(emptyForm());
             setSelectedFile(null);
             load();
@@ -237,20 +424,34 @@ export default function StaffTests() {
 
     const openAssign = (t) => {
         setAssignTarget(t);
-        setAssignF({ batch: t.assignedBatch || "", all: t.assignedToAll, regNos: (t.assignedStudents || []).join(", ") });
+        setAssignF({
+            assignmentMode: "batch",
+            batch: "",
+            audienceBatch: batches[0] || "",
+            assignedStudents: [],
+        });
         setAssignOpen(true);
     };
 
     const doAssign = async () => {
         if (!assignTarget) return;
+        if (assignF.assignmentMode === "batch" && !assignF.batch) {
+            alert("Select one batch for this test.");
+            return;
+        }
+        if (assignF.assignmentMode === "students" && !assignF.assignedStudents.length) {
+            alert("Select at least one student for this test.");
+            return;
+        }
+        if (assignF.assignmentMode === "batch" && previouslyAssignedBatches(assignTarget).has(assignF.batch)) {
+            alert("This test was already assigned to that batch. Choose a different batch.");
+            return;
+        }
         setBusy(true);
         try {
-            const regNos = assignF.regNos.split(/[,;]/).map((s) => s.trim()).filter(Boolean);
-            await api.tests.assign(assignTarget.id, {
-                regNos: assignF.all ? undefined : regNos,
-                batch: assignF.all ? undefined : assignF.batch || undefined,
-                all: assignF.all,
-            });
+            await api.tests.assign(assignTarget.id, assignF.assignmentMode === "batch"
+                ? { assignmentMode: "batch", batch: assignF.batch }
+                : { assignmentMode: "students", assignedStudents: assignF.assignedStudents });
             setAssignOpen(false);
             load();
         } catch (e) {
@@ -292,12 +493,50 @@ export default function StaffTests() {
                 title="Tests"
                 description="Create and assign assessment tests"
                 action={
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                        <Button variant="outline" onClick={() => {
+                            setExportBatch(batches[0] || "");
+                            setExportBatchDialogOpen(true);
+                        }} disabled={loading || exporting || tests.length === 0 || batches.length === 0}>
+                            <Download className="h-4 w-4" /> {exporting ? "Exporting..." : "Export Overall Excel"}
+                        </Button>
                         {selectedIds.length > 0 && <Button variant="destructive" onClick={removeSelected} disabled={busy}><Trash2 className="h-4 w-4" /> Delete selected ({selectedIds.length})</Button>}
                         <Button onClick={() => setCreateOpen(true)}><Plus className="h-4 w-4" /> Create Test</Button>
                     </div>
                 }
             />
+
+            <Dialog open={exportBatchDialogOpen} onOpenChange={setExportBatchDialogOpen}>
+                <DialogContent>
+                    <DialogHeader>
+                        <DialogTitle>Export test results</DialogTitle>
+                        <DialogDescription>Choose one batch. The spreadsheet includes only students in that batch and tests assigned to them.</DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-4">
+                        <div className="space-y-1.5">
+                            <Label className="text-xs text-slate-600 dark:text-zinc-300">Batch</Label>
+                            <InlineSelect
+                                ariaLabel="Batch for overall test results"
+                                value={exportBatch || "__select_batch__"}
+                                onValueChange={(value) => setExportBatch(value === "__select_batch__" ? "" : value)}
+                                options={[
+                                    { value: "__select_batch__", label: "Select one batch" },
+                                    ...batches.map((batch) => ({ value: batch, label: batch })),
+                                ]}
+                            />
+                        </div>
+                        <p className="text-xs text-slate-500 dark:text-zinc-400">
+                            Each test has a score column and a violation-count column. Assigned students who did not attend are marked “-”.
+                        </p>
+                        <div className="flex justify-end gap-2">
+                            <Button variant="outline" onClick={() => setExportBatchDialogOpen(false)}>Cancel</Button>
+                            <Button onClick={exportAllTests} disabled={!exportBatch || exporting}>
+                                <Download className="h-4 w-4" /> {exporting ? "Exporting..." : "Download Excel"}
+                            </Button>
+                        </div>
+                    </div>
+                </DialogContent>
+            </Dialog>
 
             <Card className="border-slate-200/80 dark:border-zinc-800/80 bg-white/70 dark:bg-zinc-900/40">
                 <CardContent className="p-0">
@@ -365,6 +604,7 @@ export default function StaffTests() {
                                         <TableCell><AssignmentBadge t={t} /></TableCell>
                                         <TableCell className="text-right">
                                             <div className="flex items-center justify-end gap-1">
+                                                <Button variant="ghost" size="sm" className="cursor-pointer" onClick={() => openEdit(t)}><Pencil className="h-4 w-4" /> Edit</Button>
                                                 <Button variant="ghost" size="sm" className="cursor-pointer" onClick={() => openAnalytics(t)}><BarChart3 className="h-4 w-4" /> Analytics</Button>
                                                 <Button variant="ghost" size="sm" className="cursor-pointer" onClick={() => openAssign(t)}><Users className="h-4 w-4" /> Assign</Button>
                                                 <Button variant="ghost" size="icon" className="h-8 w-8 text-red-650 hover:text-red-500 dark:text-red-400 dark:hover:text-red-300 cursor-pointer" onClick={() => remove(t)}><Trash2 className="h-4 w-4" /></Button>
@@ -383,14 +623,15 @@ export default function StaffTests() {
             <Dialog open={createOpen} onOpenChange={(open) => {
                 setCreateOpen(open);
                 if (!open) {
+                    setEditingTest(null);
                     setF(emptyForm());
                     setSelectedFile(null);
                 }
             }}>
                 <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
                     <DialogHeader>
-                        <DialogTitle>Create Test</DialogTitle>
-                        <DialogDescription>Configure the test and import questions.</DialogDescription>
+                        <DialogTitle>{editingTest ? "Edit Test" : "Create Test"}</DialogTitle>
+                        <DialogDescription>{editingTest ? "Update test details, availability, batch, and proctoring settings." : "Configure the test and import questions."}</DialogDescription>
                     </DialogHeader>
                     <div className="space-y-3">
                         <div className="grid grid-cols-2 gap-3">
@@ -460,9 +701,20 @@ export default function StaffTests() {
                             <p className="col-span-2 text-[11px] leading-4 text-slate-500 dark:text-zinc-500">
                                 Local time; unfinished attempts are submitted at the end time.
                             </p>
+                            <label className="col-span-2 flex items-start gap-2 text-sm text-slate-700 dark:text-zinc-300">
+                                <Checkbox checked={f.emailReminderEnabled} onCheckedChange={(checked) => set({ emailReminderEnabled: !!checked })} />
+                                <span>
+                                    Email students 10 minutes before the test starts
+                                    <span className="mt-1 block text-xs text-slate-500 dark:text-zinc-500">Requires SMTP settings in the backend environment.</span>
+                                </span>
+                            </label>
                         </div>
 
-                        {f.mode === "fixed" ? (
+                        {f.mode === "fixed" ? (editingTest ? (
+                            <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600 dark:border-zinc-800 dark:bg-zinc-950/40 dark:text-zinc-400">
+                                The existing {editingTest.fixedQuestionIds?.length || 0} fixed questions will be retained.
+                            </div>
+                        ) : (
                             <div className="space-y-4 rounded-lg border border-slate-200 dark:border-zinc-800 bg-slate-50 dark:bg-zinc-950/40 p-4">
                                 <p className="text-sm font-medium text-slate-800 dark:text-zinc-200">Manual Setup (Excel Upload)</p>
                                 
@@ -502,7 +754,7 @@ export default function StaffTests() {
                                     <p className="text-[11px] text-slate-500 dark:text-zinc-500">If Excel has more lines, only the first N questions will be imported & evaluated.</p>
                                 </div>
                             </div>
-                        ) : (
+                        )) : (
                             <div className="space-y-4 rounded-lg border border-slate-200 dark:border-zinc-800 bg-slate-50 dark:bg-zinc-950/40 p-4">
                                 <p className="text-sm font-medium text-slate-800 dark:text-zinc-200">Adaptive Setup</p>
                                 
@@ -525,28 +777,70 @@ export default function StaffTests() {
 
                         <div className="rounded-lg border border-slate-200 dark:border-zinc-800 bg-slate-50 dark:bg-zinc-950/40 p-3">
                             <p className="mb-2 text-sm font-medium text-slate-800 dark:text-zinc-200">Assign to</p>
-                            <div className="space-y-2">
-                                <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-zinc-300">
-                                    <Checkbox checked={f.assignedToAll} onCheckedChange={(v) => set({ assignedToAll: !!v })} />
-                                    All students (all batches)
-                                </label>
-                                {!f.assignedToAll && (
-                                    <div className="grid grid-cols-2 gap-3">
+                            <div className="space-y-3">
+                                <div className="space-y-1">
+                                    <Label className="text-xs text-slate-500 dark:text-zinc-500">Assignment target</Label>
+                                    <InlineSelect
+                                        ariaLabel="Assignment target"
+                                        value={f.assignmentMode}
+                                        onValueChange={(assignmentMode) => set({
+                                            assignmentMode,
+                                            audienceBatch: f.audienceBatch || f.assignedBatch || batches[0] || "",
+                                        })}
+                                        options={[
+                                            { value: "batch", label: "One batch" },
+                                            { value: "students", label: "Selected students" },
+                                        ]}
+                                    />
+                                </div>
+                                {f.assignmentMode === "batch" ? (
+                                    <div className="space-y-1">
+                                        <Label className="text-xs text-slate-500 dark:text-zinc-500">Batch</Label>
+                                        <InlineSelect
+                                            ariaLabel="Assign to batch"
+                                            value={f.assignedBatch || "__select_batch__"}
+                                            onValueChange={(value) => set({ assignedBatch: value === "__select_batch__" ? "" : value })}
+                                            options={batchOptions(batches, editingTest, true)}
+                                        />
+                                        {editingTest && <p className="text-xs text-slate-500 dark:text-zinc-500">Previously assigned batches cannot be selected again.</p>}
+                                    </div>
+                                ) : (
+                                    <div className="space-y-2">
                                         <div className="space-y-1">
-                                            <Label className="text-xs text-slate-500 dark:text-zinc-500">Batch</Label>
+                                            <Label className="text-xs text-slate-500 dark:text-zinc-500">Show students from</Label>
                                             <InlineSelect
-                                                ariaLabel="Assign to batch"
-                                                value={f.assignedBatch || "__all__"}
-                                                onValueChange={(v) => set({ assignedBatch: v === "__all__" ? "" : v })}
+                                                ariaLabel="Filter students by batch"
+                                                value={f.audienceBatch || "__select_batch__"}
+                                                onValueChange={(value) => set({ audienceBatch: value === "__select_batch__" ? "" : value })}
                                                 options={[
-                                                    { value: "__all__", label: "Any batch" },
-                                                    ...batches.map((b) => ({ value: b, label: b })),
+                                                    { value: "__select_batch__", label: "Select a batch" },
+                                                    ...batches.map((batch) => ({ value: batch, label: batch })),
                                                 ]}
                                             />
                                         </div>
-                                        <div className="space-y-1">
-                                            <Label className="text-xs text-slate-500 dark:text-zinc-500">Or specific reg numbers (comma separated)</Label>
-                                            <Input value={f.assignedRegNos} onChange={(e) => set({ assignedRegNos: e.target.value })} placeholder="23CS001, 23CS002" />
+                                        <p className="text-xs text-slate-500 dark:text-zinc-500">{f.assignedStudents.length} selected. Only selected students can access this test.</p>
+                                        <div className="max-h-48 space-y-1 overflow-y-auto rounded-lg border border-slate-200 bg-white p-2 dark:border-zinc-800 dark:bg-zinc-900">
+                                            {audienceStudentsLoading ? (
+                                                <p className="p-3 text-center text-xs text-slate-500">Loading students...</p>
+                                            ) : audienceStudents.map((student) => (
+                                                <label key={student.regNo} className="flex items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-slate-50 dark:hover:bg-zinc-800">
+                                                    <Checkbox
+                                                        checked={f.assignedStudents.includes(student.regNo)}
+                                                        onCheckedChange={(checked) => set({
+                                                            assignedStudents: checked
+                                                                ? [...new Set([...f.assignedStudents, student.regNo])]
+                                                                : f.assignedStudents.filter((regNo) => regNo !== student.regNo),
+                                                        })}
+                                                    />
+                                                    <span className="min-w-0">
+                                                        <span className="block truncate">{student.name}</span>
+                                                        <span className="block text-xs text-slate-500">{student.regNo}</span>
+                                                    </span>
+                                                </label>
+                                            ))}
+                                            {!audienceStudentsLoading && audienceStudents.length === 0 && (
+                                                <p className="p-3 text-center text-xs text-slate-500">Select a batch to load students.</p>
+                                            )}
                                         </div>
                                     </div>
                                 )}
@@ -558,7 +852,7 @@ export default function StaffTests() {
                             <div className="space-y-2">
                                 <label className="flex items-start gap-2 text-sm text-slate-700 dark:text-zinc-300">
                                     <Checkbox checked={f.faceVerificationEnabled} onCheckedChange={(v) => set({ faceVerificationEnabled: !!v })} />
-                                    <span>Verify the same candidate's face throughout the test</span>
+                                    <span>Face identity checks only (fullscreen monitoring stays on)</span>
                                 </label>
                                 <p className="text-xs text-slate-500 dark:text-zinc-500">
                                     Camera, microphone, fullscreen, and other proctoring checks stay enabled. Only face identity verification can be turned off.
@@ -588,7 +882,7 @@ export default function StaffTests() {
 
                         <div className="flex justify-end gap-2">
                             <Button variant="outline" onClick={() => setCreateOpen(false)}>Cancel</Button>
-                            <Button onClick={create} disabled={busy || !f.title.trim()}>{busy ? "Creating..." : "Create Test"}</Button>
+                            <Button onClick={create} disabled={busy || !f.title.trim() || (f.assignmentMode === "batch" ? !f.assignedBatch : !f.assignedStudents.length)}>{busy ? "Saving..." : editingTest ? "Save Changes" : "Create Test"}</Button>
                         </div>
                     </div>
                 </DialogContent>
@@ -602,33 +896,73 @@ export default function StaffTests() {
                         <DialogDescription>{assignTarget?.title}</DialogDescription>
                     </DialogHeader>
                     <div className="space-y-4">
-                        <label className="flex items-center gap-2 text-sm text-zinc-300">
-                            <Checkbox checked={assignF.all} onCheckedChange={(v) => setAssignF({ ...assignF, all: !!v })} />
-                            Assign to all students
-                        </label>
-                        {!assignF.all && (
-                            <>
+                        <div className="space-y-3">
+                            <div className="space-y-1.5">
+                                <Label className="text-xs text-zinc-400">Assignment target</Label>
+                                <InlineSelect
+                                    ariaLabel="Assignment target"
+                                    value={assignF.assignmentMode}
+                                    onValueChange={(assignmentMode) => setAssignF((current) => ({
+                                        ...current,
+                                        assignmentMode,
+                                        audienceBatch: current.audienceBatch || batches[0] || "",
+                                    }))}
+                                    options={[
+                                        { value: "batch", label: "One batch" },
+                                        { value: "students", label: "Selected students" },
+                                    ]}
+                                />
+                            </div>
+                            {assignF.assignmentMode === "batch" ? (
                                 <div className="space-y-1.5">
                                     <Label className="text-xs text-zinc-400">Batch</Label>
                                     <InlineSelect
                                         ariaLabel="Assign to batch"
-                                        value={assignF.batch || "__all__"}
-                                        onValueChange={(v) => setAssignF({ ...assignF, batch: v === "__all__" ? "" : v })}
-                                        options={[
-                                            { value: "__all__", label: "Any batch" },
-                                            ...batches.map((b) => ({ value: b, label: b })),
-                                        ]}
+                                        value={assignF.batch || "__select_batch__"}
+                                        onValueChange={(value) => setAssignF((current) => ({ ...current, batch: value === "__select_batch__" ? "" : value }))}
+                                        options={batchOptions(batches, assignTarget, true)}
                                     />
+                                    <p className="text-xs text-slate-500 dark:text-zinc-500">Previously assigned batches stay visible but cannot be selected again.</p>
                                 </div>
-                                <div className="space-y-1.5">
-                                    <Label className="text-xs text-zinc-400">Reg no. or roll no. (comma separated)</Label>
-                                    <Input value={assignF.regNos} onChange={(e) => setAssignF({ ...assignF, regNos: e.target.value })} placeholder="2023001, 23CS002" />
+                            ) : (
+                                <div className="space-y-2">
+                                    <div className="space-y-1">
+                                        <Label className="text-xs text-zinc-400">Show students from</Label>
+                                        <InlineSelect
+                                            ariaLabel="Filter students by batch"
+                                            value={assignF.audienceBatch || "__select_batch__"}
+                                            onValueChange={(value) => setAssignF((current) => ({ ...current, audienceBatch: value === "__select_batch__" ? "" : value }))}
+                                            options={[
+                                                { value: "__select_batch__", label: "Select a batch" },
+                                                ...batches.map((batch) => ({ value: batch, label: batch })),
+                                            ]}
+                                        />
+                                    </div>
+                                    <p className="text-xs text-slate-500 dark:text-zinc-500">{assignF.assignedStudents.length} selected</p>
+                                    <div className="max-h-48 space-y-1 overflow-y-auto rounded-lg border border-slate-200 p-2 dark:border-zinc-800">
+                                        {audienceStudentsLoading ? (
+                                            <p className="p-3 text-center text-xs text-slate-500">Loading students...</p>
+                                        ) : audienceStudents.map((student) => (
+                                            <label key={student.regNo} className="flex items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-slate-50 dark:hover:bg-zinc-800">
+                                                <Checkbox
+                                                    checked={assignF.assignedStudents.includes(student.regNo)}
+                                                    onCheckedChange={(checked) => setAssignF((current) => ({
+                                                        ...current,
+                                                        assignedStudents: checked
+                                                            ? [...new Set([...current.assignedStudents, student.regNo])]
+                                                            : current.assignedStudents.filter((regNo) => regNo !== student.regNo),
+                                                    }))}
+                                                />
+                                                <span>{student.name} · {student.regNo}</span>
+                                            </label>
+                                        ))}
+                                    </div>
                                 </div>
-                            </>
-                        )}
+                            )}
+                        </div>
                         <div className="flex justify-end gap-2">
                             <Button variant="outline" onClick={() => setAssignOpen(false)}>Cancel</Button>
-                            <Button onClick={doAssign} disabled={busy}><CheckCircle2 className="h-4 w-4" /> Save Assignment</Button>
+                            <Button onClick={doAssign} disabled={busy || (assignF.assignmentMode === "batch" ? !assignF.batch : !assignF.assignedStudents.length)}><CheckCircle2 className="h-4 w-4" /> Save Assignment</Button>
                         </div>
                     </div>
                 </DialogContent>
@@ -902,9 +1236,11 @@ function emptyForm() {
         questionLimit: 50,
         durationMin: 30,
         passingScore: 50,
-        assignedToAll: true,
         assignedBatch: "",
-        assignedRegNos: "",
+        assignmentMode: "batch",
+        audienceBatch: "",
+        assignedStudents: [],
+        emailReminderEnabled: false,
         faceVerificationEnabled: true,
         proctoringMax: 5,
         proctoringAuto: true,

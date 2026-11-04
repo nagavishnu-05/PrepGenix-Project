@@ -38,6 +38,7 @@ app.use("/api/judge", require("./routes/judge"));
 app.use("/api/resumes", require("./routes/resumes"));
 app.use("/api/interviews", require("./routes/interviews"));
 app.use("/api/reports", require("./routes/reports"));
+app.use("/api/cron", require("./routes/cron"));
 app.use("/api/proctoring", require("./routes/proctoring"));
 
 const PORT = Number(process.env.PORT) || 8080;
@@ -68,6 +69,7 @@ async function main() {
     require("./lib/snapshot-retention").startSnapshotCleanup();
     require("./lib/recording-retention").startRecordingCleanup();
     require("./routes/tests").startScheduledTestExpirySweep();
+    require("./lib/scheduled-reminders").startReminderScheduler();
 
     const server = app.listen(PORT, () => {
       console.log(`Server running on port ${PORT}`);

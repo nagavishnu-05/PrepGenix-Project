@@ -79,6 +79,7 @@ function newTurn(questionId, role, text) {
 }
 
 function interviewAvailability(interview, now = new Date()) {
+  if (interview.session?.status === "in_progress") return "available";
   const startValue = interview.startsAt || interview.scheduledAt;
   const start = startValue ? new Date(startValue) : null;
   const end = interview.endsAt ? new Date(interview.endsAt) : null;
@@ -121,57 +122,12 @@ function queueInterviewReport(interview) {
   });
 }
 
-async function expireInterviewIfOverdue(interview, now = new Date()) {
-  if (
-    !interview ||
-    interview.session?.status !== "in_progress" ||
-    interviewAvailability(interview, now) !== "ended"
-  ) {
-    return interview;
-  }
-
-  const completedAt = new Date(interview.endsAt);
-  const session = {
-    ...(interview.session || {}),
-    status: "completed",
-    endedAt: completedAt,
-  };
-  const shouldGenerateReport = Boolean(interview.plan?.questions?.length);
-  const update = await col("interviews").updateOne(
-    { _id: interview._id, "session.status": "in_progress", status: { $ne: "disqualified" } },
-    {
-      $set: {
-        session,
-        status: "completed",
-        ...(shouldGenerateReport ? { reportStatus: "generating" } : {}),
-        completedAt,
-        updatedAt: now,
-      },
-    }
-  );
-  if (!update.matchedCount) {
-    return (await col("interviews").findOne({ _id: interview._id })) || interview;
-  }
-
-  const completedInterview = {
-    ...interview,
-    session,
-    status: "completed",
-    ...(shouldGenerateReport ? { reportStatus: "generating" } : {}),
-    completedAt,
-    updatedAt: now,
-  };
-  if (shouldGenerateReport) queueInterviewReport(completedInterview);
-  return completedInterview;
-}
-
 // GET /api/interviews  (placement sees all; students see their own)
 router.get("/", authenticate, async (req, res) => {
   try {
     const filter = req.user.role === "student" ? { regNo: req.user.username } : {};
     const interviews = await col("interviews").find(filter).sort({ scheduledAt: -1 }).toArray();
-    const currentInterviews = await Promise.all(interviews.map((interview) => expireInterviewIfOverdue(interview)));
-    res.json(currentInterviews.map((interview) => ({
+    res.json(interviews.map((interview) => ({
       ...toId(interview),
       availabilityStatus: interviewAvailability(interview),
     })));
@@ -283,7 +239,6 @@ router.get("/:id", authenticate, async (req, res) => {
     if (req.user.role === "student" && interview.regNo !== req.user.username) {
       return res.status(403).json({ error: "Access denied" });
     }
-    interview = await expireInterviewIfOverdue(interview);
     res.json({ ...toId(interview), availabilityStatus: interviewAvailability(interview) });
   } catch {
     res.status(500).json({ error: "Failed to fetch interview" });
@@ -308,6 +263,7 @@ router.post("/", authenticate, async (req, res) => {
       proctoring,
       jobRole,
       jobDescription,
+      emailReminderEnabled,
     } = req.body;
     const studentRegNos = [...new Set(
       (Array.isArray(regNos) ? regNos : [regNo])
@@ -387,10 +343,18 @@ router.post("/", authenticate, async (req, res) => {
 
     const now = new Date();
     if (requestedGroupId) {
+      const currentMembers = await col("interviews")
+        .find({ groupId }, { projection: { _id: 1 } })
+        .toArray();
       await col("interviews").updateMany(
         { groupId },
         { $set: { scheduledAt: parsedStart, startsAt: parsedStart, endsAt: parsedEnd, updatedAt: now } }
       );
+      if (currentMembers.length) {
+        await col("test_email_reminders").deleteMany({
+          interviewId: { $in: currentMembers.map((member) => member._id.toString()) },
+        });
+      }
     }
     const documents = studentRegNos.map((studentRegNo) => {
       const student = studentsByRegNo.get(studentRegNo);
@@ -407,6 +371,7 @@ router.post("/", authenticate, async (req, res) => {
         scheduledAt: parsedStart,
         startsAt: parsedStart,
         endsAt: parsedEnd,
+        emailReminderEnabled: emailReminderEnabled === true,
         proctoring: {
           enabled: proctoring?.enabled !== false,
           camera: proctoring?.camera !== false,
@@ -504,7 +469,6 @@ router.post("/:id/consent", authenticate, async (req, res) => {
     let interview = await loadInterview(req.params.id);
     if (!interview) return res.status(404).json({ error: "Interview not found" });
     if (interview.regNo !== req.user.username) return res.status(403).json({ error: "Access denied" });
-    interview = await expireInterviewIfOverdue(interview);
     if (interview.session?.status !== "in_progress") {
       const windowError = interviewWindowError(interview);
       if (windowError) return res.status(403).json({ error: windowError });
@@ -540,7 +504,6 @@ router.post("/:id/reference-face", authenticate, async (req, res) => {
     let interview = await loadInterview(req.params.id);
     if (!interview) return res.status(404).json({ error: "Interview not found" });
     if (interview.regNo !== req.user.username) return res.status(403).json({ error: "Access denied" });
-    interview = await expireInterviewIfOverdue(interview);
     if (interview.session?.status !== "in_progress") {
       const windowError = interviewWindowError(interview);
       if (windowError) return res.status(403).json({ error: windowError });
@@ -583,7 +546,6 @@ router.post("/:id/session/start", authenticate, async (req, res) => {
     let interview = await loadInterview(req.params.id);
     if (!interview) return res.status(404).json({ error: "Interview not found" });
     if (interview.regNo !== req.user.username) return res.status(403).json({ error: "Access denied" });
-    interview = await expireInterviewIfOverdue(interview);
     if (!interview.consent?.consentedAt) return res.status(400).json({ error: "Consent must be given before starting" });
     if (interview.consent.camera !== true || interview.consent.microphone !== true) {
       return res.status(400).json({ error: "Camera and microphone consent are required for a proctored interview" });
@@ -649,7 +611,6 @@ router.post("/:id/answer", authenticate, async (req, res) => {
     let interview = await loadInterview(req.params.id);
     if (!interview) return res.status(404).json({ error: "Interview not found" });
     if (interview.regNo !== req.user.username) return res.status(403).json({ error: "Access denied" });
-    interview = await expireInterviewIfOverdue(interview);
     if (interview.status === "disqualified" || interview.session?.status === "terminated") {
       return res.status(403).json({ error: "This interview was terminated after repeated proctoring violations" });
     }
@@ -721,7 +682,6 @@ router.post("/:id/proctoring-event", authenticate, async (req, res) => {
     let interview = await loadInterview(req.params.id);
     if (!interview) return res.status(404).json({ error: "Interview not found" });
     if (interview.regNo !== req.user.username) return res.status(403).json({ error: "Access denied" });
-    interview = await expireInterviewIfOverdue(interview);
     if (interview.session?.status !== "in_progress") {
       return res.status(409).json({ error: "Proctoring events can only be recorded during an active interview" });
     }
@@ -736,7 +696,8 @@ router.post("/:id/proctoring-event", authenticate, async (req, res) => {
     const isNewViolation = !lastSameType || !Number.isFinite(lastSameTypeTime)
       || now.getTime() - lastSameTypeTime >= PROCTORING_EVENT_COOLDOWN_MS;
     const violationCount = (interview.proctoringViolationCount || 0) + (isNewViolation ? 1 : 0);
-    const terminated = violationCount >= MAX_PROCTORING_VIOLATIONS;
+    const forcedTermination = type === "FULLSCREEN_EXIT";
+    const terminated = forcedTermination || violationCount >= MAX_PROCTORING_VIOLATIONS;
     const event = {
       type,
       description: String(req.body?.description || type.replace(/_/g, " ").toLowerCase()).slice(0, 300),
@@ -748,7 +709,12 @@ router.post("/:id/proctoring-event", authenticate, async (req, res) => {
       counted: isNewViolation,
     };
     const session = terminated
-      ? { ...(interview.session || {}), status: "terminated", endedAt: now, terminationReason: "proctoring_violation_limit" }
+      ? {
+          ...(interview.session || {}),
+          status: "terminated",
+          endedAt: now,
+          terminationReason: forcedTermination ? "fullscreen_exit" : "proctoring_violation_limit",
+        }
       : interview.session;
 
     const saved = await col("interviews").updateOne(
@@ -784,7 +750,6 @@ router.post("/:id/complete", authenticate, async (req, res) => {
     let interview = await loadInterview(req.params.id);
     if (!interview) return res.status(404).json({ error: "Interview not found" });
     if (interview.regNo !== req.user.username) return res.status(403).json({ error: "Access denied" });
-    interview = await expireInterviewIfOverdue(interview);
     if (interview.status === "completed") {
       return res.json(toId(interview));
     }
@@ -1014,6 +979,48 @@ router.post("/:id/result", authenticate, async (req, res) => {
     res.json(toId(interview));
   } catch {
     res.status(500).json({ error: "Failed to record interview result" });
+  }
+});
+
+// PUT /api/interviews/groups/:groupId/schedule (placement)
+router.put("/groups/:groupId/schedule", authenticate, async (req, res) => {
+  try {
+    if (req.user.role !== "placement") return res.status(403).json({ error: "Placement Coordinator only" });
+    const startsAt = new Date(req.body?.startsAt);
+    const endsAt = new Date(req.body?.endsAt);
+    if (Number.isNaN(startsAt.getTime()) || Number.isNaN(endsAt.getTime()) || startsAt >= endsAt) {
+      return res.status(400).json({ error: "The interview end time must be later than its start time" });
+    }
+
+    const groupInterview = await col("interviews").findOne({ groupId: req.params.groupId })
+      || await loadInterview(req.params.groupId);
+    if (!groupInterview) return res.status(404).json({ error: "Interview group not found" });
+    const groupFilter = groupInterview.groupId
+      ? { groupId: groupInterview.groupId }
+      : {
+          type: groupInterview.type,
+          scheduledAt: groupInterview.scheduledAt,
+          groupId: { $exists: false },
+        };
+    const activeInterview = await col("interviews").findOne({
+      ...groupFilter,
+      "session.status": "in_progress",
+    }, { projection: { _id: 1 } });
+    if (activeInterview) return res.status(409).json({ error: "Cannot change availability while an interview in this group is in progress" });
+
+    const now = new Date();
+    const members = await col("interviews").find(groupFilter, { projection: { _id: 1 } }).toArray();
+    const updated = await col("interviews").updateMany(groupFilter, {
+      $set: { scheduledAt: startsAt, startsAt, endsAt, updatedAt: now },
+    });
+    if (!updated.matchedCount) return res.status(404).json({ error: "Interview group not found" });
+    await col("test_email_reminders").deleteMany({
+      interviewId: { $in: members.map((member) => member._id.toString()) },
+    });
+    res.json({ updated: updated.modifiedCount });
+  } catch (error) {
+    console.error("Interview group schedule update failed:", error.message);
+    res.status(500).json({ error: "Failed to update interview group schedule" });
   }
 });
 

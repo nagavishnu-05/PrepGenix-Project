@@ -27,3 +27,12 @@ test("legacy interviews use scheduledAt as the start and remain open without an 
   assert.equal(interviewAvailability(legacy, new Date("2026-10-25T10:00:00Z")), "available");
   assert.equal(interviewWindowError(legacy, new Date("2026-10-25T10:00:00Z")), null);
 });
+
+test("an active interview remains available after its scheduled window ends", () => {
+  const active = {
+    ...window,
+    session: { status: "in_progress", answeredCount: 4 },
+  };
+  assert.equal(interviewAvailability(active, new Date("2026-10-25T11:30:00Z")), "available");
+  assert.equal(interviewWindowError(active, new Date("2026-10-25T11:30:00Z")), null);
+});
