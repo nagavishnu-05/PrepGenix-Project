@@ -120,7 +120,8 @@ custom sending domain.
    and set **Who has access** to **Anyone**. Deploy and copy the web app URL.
 5. In the backend's hosted environment, set `GMAIL_APPS_SCRIPT_URL` to that URL
    and `GMAIL_APPS_SCRIPT_TOKEN` to the same random value used for the Script
-   Property. Also set a separate long, random `REMINDER_CRON_TOKEN`.
+   Property. Set `REMINDER_TIME_ZONE` to the schedule's timezone (for example,
+   `Asia/Kolkata`). Also set a separate long, random `REMINDER_CRON_TOKEN`.
 
 Because a sleeping free-tier backend cannot run its in-process timer, configure
 an external cron service to send a `POST` request every minute to

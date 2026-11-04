@@ -16,6 +16,19 @@ function isReminderDue(item, now = new Date()) {
     && startsAt.getTime() <= now.getTime() + REMINDER_LEAD_MS);
 }
 
+function formatScheduledStart(value, timeZone = process.env.REMINDER_TIME_ZONE || "Asia/Kolkata") {
+  return new Intl.DateTimeFormat("en-IN", {
+    timeZone,
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+    timeZoneName: "short",
+  }).format(new Date(value));
+}
+
 function createGmailAppsScriptMailer({ url, token, fetchImpl = globalThis.fetch }) {
   if (!url || !token) {
     throw new Error("Email reminders are enabled, but GMAIL_APPS_SCRIPT_URL and GMAIL_APPS_SCRIPT_TOKEN are not configured.");
@@ -204,7 +217,7 @@ async function deliverReminder({ kind, item, student, start, link, reminders, ma
   const title = String(isInterview
     ? item.interviewName || `${item.type || "Interview"} interview`
     : item.title || "Test").replace(/[\r\n]+/g, " ").trim().slice(0, 200);
-  const startText = new Date(start).toLocaleString();
+  const startText = formatScheduledStart(start);
   const content = reminderEmailContent({
     kind,
     title,
@@ -332,6 +345,7 @@ function startReminderScheduler() {
 
 module.exports = {
   createGmailAppsScriptMailer,
+  formatScheduledStart,
   isReminderDue,
   reminderEmailContent,
   sendDueReminders,

@@ -7,6 +7,7 @@ const path = require("node:path");
 const vm = require("node:vm");
 const {
   createGmailAppsScriptMailer,
+  formatScheduledStart,
   isReminderDue,
   reminderEmailContent,
 } = require("../src/lib/scheduled-reminders");
@@ -14,6 +15,13 @@ const { isStudentAssignedToTest, assignedRegistrationNumbers } = require("../src
 const { isAuthorizedCronRequest } = require("../src/lib/cron-auth");
 
 const now = new Date("2026-11-04T10:00:00Z");
+
+test("reminder scheduled start is formatted in the configured local timezone", () => {
+  assert.equal(
+    formatScheduledStart("2026-11-04T12:27:00.000Z", "Asia/Kolkata"),
+    "4 Nov 2026, 5:57 pm IST",
+  );
+});
 
 test("test reminders become due within the ten minutes before the start", () => {
   assert.equal(isReminderDue({ emailReminderEnabled: true, startsAt: new Date(now.getTime() + 10 * 60 * 1000) }, now), true);
