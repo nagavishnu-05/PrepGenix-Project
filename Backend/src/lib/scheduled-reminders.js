@@ -1,14 +1,11 @@
 "use strict";
 
-const nodemailer = require("nodemailer");
 const { col } = require("../db");
 const { assignedRegistrationNumbers } = require("./assignment-scope");
 
 const REMINDER_LEAD_MS = 10 * 60 * 1000;
 const REMINDER_SWEEP_MS = 30 * 1000;
 const REMINDER_LEASE_MS = 2 * 60 * 1000;
-
-let transport;
 
 function isReminderDue(item, now = new Date()) {
   const startsAt = item?.startsAt ? new Date(item.startsAt) : null;
@@ -19,27 +16,44 @@ function isReminderDue(item, now = new Date()) {
     && startsAt.getTime() <= now.getTime() + REMINDER_LEAD_MS);
 }
 
-function getTransport() {
-  const host = process.env.SMTP_HOST;
-  const from = process.env.SMTP_FROM;
-  if (!host || !from) {
-    throw new Error("Email reminders are enabled, but SMTP_HOST and SMTP_FROM are not configured.");
+function createGmailAppsScriptMailer({ url, token, fetchImpl = globalThis.fetch }) {
+  if (!url || !token) {
+    throw new Error("Email reminders are enabled, but GMAIL_APPS_SCRIPT_URL and GMAIL_APPS_SCRIPT_TOKEN are not configured.");
   }
-  if (!transport) {
-    const port = Number(process.env.SMTP_PORT) || 587;
-    transport = nodemailer.createTransport({
-      host,
-      port,
-      secure: process.env.SMTP_SECURE === "true",
-      connectionTimeout: 15_000,
-      greetingTimeout: 15_000,
-      socketTimeout: 60_000,
-      ...(process.env.SMTP_USER && process.env.SMTP_PASS
-        ? { auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS } }
-        : {}),
-    });
+  if (!fetchImpl) throw new Error("Email reminders require a Node.js runtime with fetch support.");
+  if (new URL(url).protocol !== "https:") {
+    throw new Error("GMAIL_APPS_SCRIPT_URL must use HTTPS.");
   }
-  return { transport, from };
+
+  return {
+    transport: {
+      async sendMail({ to, subject, text, html }) {
+        const response = await fetchImpl(url, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ token, to, subject, text, html }),
+          signal: AbortSignal.timeout(20_000),
+        });
+        let result;
+        try {
+          result = await response.json();
+        } catch {
+          throw new Error(`Gmail email relay returned an invalid response (HTTP ${response.status}).`);
+        }
+        if (!response.ok || result?.ok !== true) {
+          const reason = typeof result?.error === "string" ? `: ${result.error}` : "";
+          throw new Error(`Gmail email relay failed (HTTP ${response.status})${reason}.`);
+        }
+      },
+    },
+  };
+}
+
+function getMailer() {
+  return createGmailAppsScriptMailer({
+    url: process.env.GMAIL_APPS_SCRIPT_URL,
+    token: process.env.GMAIL_APPS_SCRIPT_TOKEN,
+  });
 }
 
 function escapeHtml(value) {
@@ -50,6 +64,103 @@ function escapeHtml(value) {
     '"': "&quot;",
     "'": "&#39;",
   })[character]);
+}
+
+function reminderEmailContent({ kind, title, studentName, startText, link }) {
+  const isInterview = kind === "interview";
+  const itemLabel = isInterview ? "interview" : "test";
+  const destinationLabel = isInterview ? "Open your interviews" : "Open your tests";
+  const safeName = escapeHtml(studentName || "student");
+  const safeTitle = escapeHtml(title);
+  const safeStart = escapeHtml(startText);
+  const safeLink = escapeHtml(link);
+  const subject = `Reminder: ${title} starts in 10 minutes`;
+  const text = [
+    `Hello ${studentName || "student"},`,
+    "",
+    `Your ${itemLabel} "${title}" starts in 10 minutes.`,
+    `Scheduled start: ${startText}`,
+    "",
+    `Please sign in early and make sure you are ready to begin.`,
+    `${destinationLabel}: ${link}`,
+    "",
+    "PrepGenix",
+  ].join("\n");
+  const html = `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="x-apple-disable-message-reformatting">
+    <title>${escapeHtml(subject)}</title>
+  </head>
+  <body style="margin:0;padding:0;background-color:#f3f4f8;font-family:Arial,Helvetica,sans-serif;color:#20243a;">
+    <div style="display:none;font-size:1px;color:#f3f4f8;line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;">
+      Your ${itemLabel} starts in 10 minutes. Sign in now to be ready.
+    </div>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f3f4f8;">
+      <tr>
+        <td align="center" style="padding:32px 16px;">
+          <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;background-color:#ffffff;border:1px solid #e6e8ef;border-radius:16px;overflow:hidden;">
+            <tr>
+              <td style="padding:24px 32px;background-color:#241b48;">
+                <p style="margin:0;color:#ffffff;font-size:20px;line-height:28px;font-weight:700;letter-spacing:-0.3px;">PrepGenix</p>
+                <p style="margin:5px 0 0;color:#c9c2e8;font-size:12px;line-height:18px;letter-spacing:1.2px;text-transform:uppercase;">Assessment reminder</p>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:32px 32px 12px;">
+                <span style="display:inline-block;padding:6px 10px;background-color:#fff4e8;border-radius:999px;color:#a84b08;font-size:12px;line-height:16px;font-weight:700;">STARTING IN 10 MINUTES</span>
+                <h1 style="margin:18px 0 10px;color:#20243a;font-size:25px;line-height:32px;font-weight:700;">It's almost time, ${safeName}.</h1>
+                <p style="margin:0;color:#5d6275;font-size:15px;line-height:24px;">Your ${itemLabel} is coming up. Sign in a few minutes early so you’re ready to begin.</p>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:16px 32px 24px;">
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f7f6fc;border:1px solid #e8e4f4;border-radius:12px;">
+                  <tr>
+                    <td style="padding:18px 20px 8px;color:#77728d;font-size:11px;line-height:16px;font-weight:700;letter-spacing:1px;text-transform:uppercase;">${isInterview ? "Interview" : "Test"}</td>
+                  </tr>
+                  <tr>
+                    <td style="padding:0 20px 16px;color:#292344;font-size:18px;line-height:26px;font-weight:700;">${safeTitle}</td>
+                  </tr>
+                  <tr>
+                    <td style="padding:14px 20px;border-top:1px solid #e8e4f4;">
+                      <p style="margin:0 0 4px;color:#77728d;font-size:11px;line-height:16px;font-weight:700;letter-spacing:1px;text-transform:uppercase;">Scheduled start</p>
+                      <p style="margin:0;color:#292344;font-size:15px;line-height:22px;font-weight:600;">${safeStart}</p>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+            <tr>
+              <td align="center" style="padding:0 32px 24px;">
+                <table role="presentation" cellpadding="0" cellspacing="0" border="0">
+                  <tr>
+                    <td align="center" bgcolor="#6d4aff" style="border-radius:8px;">
+                      <a href="${safeLink}" target="_blank" style="display:inline-block;padding:14px 24px;border:1px solid #6d4aff;border-radius:8px;color:#ffffff;font-size:15px;line-height:20px;font-weight:700;text-decoration:none;">${destinationLabel}</a>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:0 32px 28px;">
+                <p style="margin:0;padding:14px 16px;background-color:#f8f9fc;border-radius:8px;color:#64697b;font-size:13px;line-height:20px;">If the button doesn’t work, sign in to PrepGenix and open your scheduled ${itemLabel} from your dashboard.</p>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:18px 32px;background-color:#f8f9fc;border-top:1px solid #eceef3;">
+                <p style="margin:0;color:#777c8c;font-size:12px;line-height:18px;">This is an automated reminder from PrepGenix. Please do not reply to this email.</p>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>`;
+  return { subject, text, html };
 }
 
 async function claimReminder(reminders, reminderId, details, now) {
@@ -94,10 +205,13 @@ async function deliverReminder({ kind, item, student, start, link, reminders, ma
     ? item.interviewName || `${item.type || "Interview"} interview`
     : item.title || "Test").replace(/[\r\n]+/g, " ").trim().slice(0, 200);
   const startText = new Date(start).toLocaleString();
-  const safeName = escapeHtml(student.name || "student");
-  const safeTitle = escapeHtml(title);
-  const safeStart = escapeHtml(startText);
-  const safeLink = escapeHtml(link);
+  const content = reminderEmailContent({
+    kind,
+    title,
+    studentName: student.name || "student",
+    startText,
+    link,
+  });
 
   if (!await claimReminder(reminders, reminderId, {
     kind,
@@ -108,11 +222,10 @@ async function deliverReminder({ kind, item, student, start, link, reminders, ma
 
   try {
     await mailer.transport.sendMail({
-      from: mailer.from,
       to: email,
-      subject: `Reminder: ${title} starts in 10 minutes`,
-      text: `Hello ${student.name || "student"},\n\nYour ${label} "${title}" starts at ${startText}. Please sign in a few minutes early and be ready to begin.\n\nOpen your ${isInterview ? "interviews" : "tests"}: ${link}`,
-      html: `<p>Hello ${safeName},</p><p>Your ${label} <strong>${safeTitle}</strong> starts at ${safeStart}.</p><p>Please sign in a few minutes early and be ready to begin.</p><p><a href="${safeLink}">Open your ${isInterview ? "interviews" : "tests"}</a></p>`,
+      subject: content.subject,
+      text: content.text,
+      html: content.html,
     });
   } catch (error) {
     const record = await reminders.findOne({ _id: reminderId });
@@ -155,7 +268,7 @@ async function sendDueReminders(now = new Date()) {
   ]);
   if (!dueTests.length && !dueInterviews.length) return { sent: 0, failed: 0 };
 
-  const mailer = getTransport();
+  const mailer = getMailer();
   const reminders = col("test_email_reminders");
   const frontendUrl = String(process.env.FRONTEND_URL || "http://localhost:5173").replace(/\/+$/, "");
   const totals = { sent: 0, failed: 0 };
@@ -217,4 +330,10 @@ function startReminderScheduler() {
   return timer;
 }
 
-module.exports = { isReminderDue, sendDueReminders, startReminderScheduler };
+module.exports = {
+  createGmailAppsScriptMailer,
+  isReminderDue,
+  reminderEmailContent,
+  sendDueReminders,
+  startReminderScheduler,
+};

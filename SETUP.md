@@ -104,9 +104,23 @@ accepts a configured interval from 1500 to 5000 ms.
 
 ## Email reminders on free-tier hosting
 
-Test and interview reminders use the backend's SMTP settings. Set `SMTP_HOST`,
-`SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS`, and `SMTP_FROM` in the
-backend's hosted environment. Also set a long, random `REMINDER_CRON_TOKEN`.
+Test and interview reminders use a Google Apps Script relay, which sends email
+from the Google account that owns the script without requiring SMTP access or a
+custom sending domain.
+
+1. Create a project at [script.google.com](https://script.google.com/) and copy
+   the code from
+   [`Backend/scripts/reminder-mailer-apps-script.js`](./Backend/scripts/reminder-mailer-apps-script.js)
+   into its editor.
+2. In **Project Settings**, add a Script Property named `REMINDER_MAIL_TOKEN`.
+   Generate a long random value locally and keep it private.
+3. Run `authorizeMailSender` in the Apps Script editor once and approve the
+   Gmail permission prompt.
+4. Choose **Deploy > New deployment > Web app**, set **Execute as** to yourself,
+   and set **Who has access** to **Anyone**. Deploy and copy the web app URL.
+5. In the backend's hosted environment, set `GMAIL_APPS_SCRIPT_URL` to that URL
+   and `GMAIL_APPS_SCRIPT_TOKEN` to the same random value used for the Script
+   Property. Also set a separate long, random `REMINDER_CRON_TOKEN`.
 
 Because a sleeping free-tier backend cannot run its in-process timer, configure
 an external cron service to send a `POST` request every minute to
@@ -120,7 +134,9 @@ Keep the token in the cron provider's secret/header configuration, never in the
 request URL. A successful response includes the reminder counts; non-2xx
 responses indicate an authentication or delivery/configuration problem. The
 backend sends each reminder only to students currently assigned to that test
-or to the individual student scheduled for that interview.
+or to the individual student scheduled for that interview. The Apps Script
+relay sends from the Google account used to deploy it and is subject to that
+account's daily sending quota.
 
 For AIML-specific commands and endpoints, see
 [AIML/GETTING_STARTED.md](./AIML/GETTING_STARTED.md).

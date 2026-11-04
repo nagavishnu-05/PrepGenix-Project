@@ -2,7 +2,14 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { isReminderDue } = require("../src/lib/scheduled-reminders");
+const fs = require("node:fs");
+const path = require("node:path");
+const vm = require("node:vm");
+const {
+  createGmailAppsScriptMailer,
+  isReminderDue,
+  reminderEmailContent,
+} = require("../src/lib/scheduled-reminders");
 const { isStudentAssignedToTest, assignedRegistrationNumbers } = require("../src/lib/assignment-scope");
 const { isAuthorizedCronRequest } = require("../src/lib/cron-auth");
 
@@ -24,6 +31,141 @@ test("interview reminders use the same ten-minute window", () => {
     emailReminderEnabled: true,
     startsAt: new Date(now.getTime() + 10 * 60 * 1000),
   }, now), true);
+});
+
+test("reminder email content is branded, includes a clear action, and escapes user input", () => {
+  const content = reminderEmailContent({
+    kind: "test",
+    title: "Aptitude <Round 1>",
+    studentName: "A & B",
+    startText: "4 Nov 2026, 8:30 PM",
+    link: "https://example.com/student/tests?a=1&b=2",
+  });
+
+  assert.match(content.subject, /Aptitude <Round 1>/);
+  assert.match(content.html, /PrepGenix/);
+  assert.match(content.html, /Aptitude &lt;Round 1&gt;/);
+  assert.match(content.html, /A &amp; B/);
+  assert.match(content.html, /Open your tests/);
+  assert.match(content.html, /https:\/\/example\.com\/student\/tests\?a=1&amp;b=2/);
+  assert.match(content.text, /Scheduled start: 4 Nov 2026, 8:30 PM/);
+});
+
+test("Gmail relay sends reminder fields over HTTPS with its configured token", async () => {
+  let request;
+  const mailer = createGmailAppsScriptMailer({
+    url: "https://script.google.com/macros/s/test/exec",
+    token: "relay-secret",
+    fetchImpl: async (url, options) => {
+      request = { url, options };
+      return { ok: true, status: 200, json: async () => ({ ok: true }) };
+    },
+  });
+
+  await mailer.transport.sendMail({
+    to: "student@example.com",
+    subject: "Reminder",
+    text: "Plain text",
+    html: "<p>Reminder</p>",
+  });
+
+  assert.equal(request.url, "https://script.google.com/macros/s/test/exec");
+  assert.equal(request.options.method, "POST");
+  assert.deepEqual(JSON.parse(request.options.body), {
+    token: "relay-secret",
+    to: "student@example.com",
+    subject: "Reminder",
+    text: "Plain text",
+    html: "<p>Reminder</p>",
+  });
+});
+
+test("Gmail relay reports rejected requests without exposing its token", async () => {
+  const mailer = createGmailAppsScriptMailer({
+    url: "https://script.google.com/macros/s/test/exec",
+    token: "relay-secret",
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ ok: false, error: "Unauthorized." }),
+    }),
+  });
+
+  await assert.rejects(
+    mailer.transport.sendMail({ to: "student@example.com", subject: "Reminder", text: "text", html: "html" }),
+    (error) => error.message.includes("Unauthorized.") && !error.message.includes("relay-secret"),
+  );
+});
+
+test("Gmail Apps Script relay accepts the configured secret and sends the email", () => {
+  const script = fs.readFileSync(
+    path.join(__dirname, "../scripts/reminder-mailer-apps-script.js"),
+    "utf8",
+  );
+  const sent = [];
+  const context = {
+    module: { exports: {} },
+    PropertiesService: {
+      getScriptProperties: () => ({ getProperty: () => "relay-secret" }),
+    },
+    MailApp: { sendEmail: (message) => sent.push(message) },
+    ContentService: {
+      MimeType: { JSON: "application/json" },
+      createTextOutput: (content) => ({
+        content,
+        setMimeType(type) {
+          this.mimeType = type;
+          return this;
+        },
+      }),
+    },
+  };
+  vm.runInNewContext(script, context);
+
+  const response = context.module.exports.doPost({
+    postData: {
+      contents: JSON.stringify({
+        token: "relay-secret",
+        to: "student@example.com",
+        subject: "Reminder",
+        text: "Plain text",
+        html: "<p>Reminder</p>",
+      }),
+    },
+  });
+
+  assert.deepEqual(JSON.parse(response.content), { ok: true });
+  assert.equal(response.mimeType, "application/json");
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].to, "student@example.com");
+  assert.equal(sent[0].name, "PrepGenix");
+});
+
+test("Gmail Apps Script relay rejects unauthorized requests without sending", () => {
+  const script = fs.readFileSync(
+    path.join(__dirname, "../scripts/reminder-mailer-apps-script.js"),
+    "utf8",
+  );
+  const sent = [];
+  const context = {
+    module: { exports: {} },
+    PropertiesService: {
+      getScriptProperties: () => ({ getProperty: () => "relay-secret" }),
+    },
+    MailApp: { sendEmail: (message) => sent.push(message) },
+    ContentService: {
+      MimeType: { JSON: "application/json" },
+      createTextOutput: (content) => ({ content, setMimeType() { return this; } }),
+    },
+  };
+  vm.runInNewContext(script, context);
+
+  const response = context.module.exports.doPost({
+    postData: { contents: JSON.stringify({ token: "wrong-secret" }) },
+  });
+
+  assert.deepEqual(JSON.parse(response.content), { ok: false, error: "Unauthorized." });
+  assert.equal(sent.length, 0);
 });
 
 test("individual test assignments limit access and report audiences to selected registrations", () => {
