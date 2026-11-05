@@ -20,10 +20,27 @@ function cellValue(v) {
 }
 
 // Read a buffer (xlsx/xls) into an array of row objects keyed by normalized header.
-function rowsFromBuffer(buffer) {
+function looksLikeAptitudeHeader(row) {
+  const headers = row.map(normalizeHeader);
+  const hasQuestion = headers.some((header) => ["question", "questiontext", "ques", "q", "title"].includes(header));
+  const hasAnswer = headers.some((header) => ["answer", "correctanswer", "correctoption", "corrans"].includes(header));
+  const optionHeaders = headers.filter((header) => /^(?:(?:option|opt)?[a-e])$/.test(header));
+  return hasQuestion && hasAnswer && optionHeaders.length >= 2;
+}
+
+function rowsFromBuffer(buffer, { headerlessAptitude = false } = {}) {
   const wb = xlsx().read(buffer, { type: "buffer", cellDates: false });
   const sheet = wb.Sheets[wb.SheetNames[0]];
   if (!sheet) return [];
+  if (headerlessAptitude) {
+    const values = xlsx().utils.sheet_to_json(sheet, { header: 1, defval: "", blankrows: false });
+    const firstRow = values.find((row) => row.some((value) => cellValue(value) !== ""));
+    if (firstRow && !looksLikeAptitudeHeader(firstRow.map(cellValue))) {
+      return values.map((row) => Object.fromEntries(
+        row.map((value, index) => [`column${index + 1}`, cellValue(value)])
+      ));
+    }
+  }
   const raw = xlsx().utils.sheet_to_json(sheet, { defval: "" });
   return raw.map((row) => {
     const out = {};
@@ -32,9 +49,9 @@ function rowsFromBuffer(buffer) {
   });
 }
 
-function rowsFromFile(filePath) {
+function rowsFromFile(filePath, options) {
   const buffer = fs.readFileSync(filePath);
-  return rowsFromBuffer(buffer);
+  return rowsFromBuffer(buffer, options);
 }
 
 // ---- Students ----
@@ -122,9 +139,43 @@ function parseLooseAptitudeRow(row, i) {
   };
 }
 
+function parseHeaderlessAptitudeRow(row, i) {
+  const questionText = cellValue(row?.column1);
+  const options = [2, 3, 4, 5].map((column) => cellValue(row?.[`column${column}`]));
+  const rawAnswer = cellValue(row?.column6).trim();
+  if (!questionText || options.some((option) => !option) || !rawAnswer) return null;
+
+  const correctOption = /^[a-d]$/i.test(rawAnswer)
+    ? rawAnswer.toLowerCase().charCodeAt(0) - 97
+    : options.findIndex((option) => option.toLowerCase() === rawAnswer.toLowerCase());
+  if (correctOption < 0 || correctOption >= options.length) return null;
+
+  return {
+    type: "aptitude",
+    format: "mcq",
+    subject: "quantitative",
+    title: questionText,
+    description: questionText,
+    codeSnippet: "",
+    options,
+    correctOption,
+    answer: null,
+    difficulty: "easy",
+    points: 1,
+    tags: [],
+    source: "excel",
+    rowIndex: i,
+  };
+}
+
 function parseAptitudeQuestions(rows) {
   const questions = [];
   rows.forEach((r, i) => {
+    if (r.column1 !== undefined) {
+      const question = parseHeaderlessAptitudeRow(r, i);
+      if (question) questions.push(question);
+      return;
+    }
     const title = r.title || r.questionname || r.question || r.ques || r.q || r.questiontext || r.questiontext1;
     if (!title) {
       const fallback = parseLooseAptitudeRow(r, i);
@@ -132,7 +183,7 @@ function parseAptitudeQuestions(rows) {
       return;
     }
     const format = mapFormat(r.format || r.type || "mcq") || "mcq";
-    const options = ["a", "b", "c", "d", "e"].map((k) => r[`option${k}`] || r[`opt${k}`] || "").filter((v) => v);
+    const options = ["a", "b", "c", "d", "e"].map((k) => r[`option${k}`] || r[`opt${k}`] || r[k] || "").filter((v) => v);
     let correctOption = null;
     let answer = null;
     if (format === "mcq") {
@@ -362,6 +413,11 @@ function parseTestCaseCellValue(value) {
 function parseAptitudeMcqManual(rows) {
   const questions = [];
   rows.forEach((r, i) => {
+    if (r.column1 !== undefined) {
+      const question = parseHeaderlessAptitudeRow(r, i);
+      if (question) questions.push(question);
+      return;
+    }
     const title = cellValuePreserveIndent(r.ques || r.question || r.q || r.title || "");
     if (!title) {
       const fallback = parseLooseAptitudeRow(r, i);
@@ -370,11 +426,11 @@ function parseAptitudeMcqManual(rows) {
     }
 
     const options = [
-      cellValuePreserveIndent(r.opta || r.optiona || ""),
-      cellValuePreserveIndent(r.optb || r.optionb || ""),
-      cellValuePreserveIndent(r.optc || r.optionc || ""),
-      cellValuePreserveIndent(r.optd || r.optiond || ""),
-      cellValuePreserveIndent(r.opte || r.optione || ""),
+      cellValuePreserveIndent(r.opta || r.optiona || r.a || ""),
+      cellValuePreserveIndent(r.optb || r.optionb || r.b || ""),
+      cellValuePreserveIndent(r.optc || r.optionc || r.c || ""),
+      cellValuePreserveIndent(r.optd || r.optiond || r.d || ""),
+      cellValuePreserveIndent(r.opte || r.optione || r.e || ""),
     ].filter(v => v !== "");
 
     let correctOption = null;

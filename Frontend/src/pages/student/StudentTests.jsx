@@ -144,7 +144,7 @@ export default function StudentTests() {
             )}
 
             <Dialog open={selectedAttempt !== null} onOpenChange={(open) => { if (!open) setSelectedAttempt(null); }}>
-                <DialogContent className="max-h-[90vh] max-w-4xl overflow-y-auto">
+                <DialogContent className="max-h-[90vh] max-w-5xl overflow-y-auto">
                     <DialogHeader>
                         <DialogTitle>{selectedAttempt?.testTitle || "Test Results"}</DialogTitle>
                         <DialogDescription>Full test report with score, timing, topics, and response breakdown.</DialogDescription>

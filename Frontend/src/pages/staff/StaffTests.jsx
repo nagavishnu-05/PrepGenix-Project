@@ -11,6 +11,7 @@ import { InlineSelect } from "@/components/ui/inline-select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { PageHeader, EmptyState, LoadingState } from "@/components/portal/primitives";
+import { TestAttemptReport } from "@/components/assessment/test-attempt-report";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { downloadExcel } from "@/lib/excel-export";
@@ -79,7 +80,7 @@ function batchOptions(batches, test, includePlaceholder = false) {
             const alreadyAssigned = assignedBatches.has(String(batch));
             return {
                 value: batch,
-                label: alreadyAssigned ? `${batch} (Previously assigned)` : batch,
+                label: alreadyAssigned ? `${batch} (Already assigned)` : batch,
                 disabled: alreadyAssigned,
             };
         }),
@@ -88,7 +89,15 @@ function batchOptions(batches, test, includePlaceholder = false) {
 
 function AssignmentBadge({ t }) {
     if (t.assignedToAll) return <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-xs text-amber-400">Legacy all-student assignment</span>;
-    if (t.assignedBatch) return <span className="rounded-full bg-blue-500/10 px-2 py-0.5 text-xs text-blue-400">Batch {t.assignedBatch}</span>;
+    const assignedBatches = previouslyAssignedBatches(t);
+    if (assignedBatches.length) {
+        return (
+            <span className="rounded-full bg-blue-500/10 px-2 py-0.5 text-xs text-blue-400">
+                {assignedBatches.length === 1 ? `Batch ${assignedBatches[0]}` : `${assignedBatches.length} batches`}
+                {t.assignedStudents?.length ? ` · ${t.assignedStudents.length} students` : ""}
+            </span>
+        );
+    }
     if (t.assignedStudents?.length) return <span className="rounded-full bg-violet-500/10 px-2 py-0.5 text-xs text-violet-400">{t.assignedStudents.length} students</span>;
     return <span className="rounded-full bg-slate-100 dark:bg-zinc-500/10 px-2 py-0.5 text-xs text-slate-500 dark:text-zinc-400">Not assigned</span>;
 }
@@ -117,6 +126,10 @@ export default function StaffTests() {
     const [testAnalyticsView, setTestAnalyticsView] = useState("overview");
     const [analyticsLoading, setAnalyticsLoading] = useState(false);
     const [violationReportAttempt, setViolationReportAttempt] = useState(null);
+    const [scoreReportAttempt, setScoreReportAttempt] = useState(null);
+    const [scoreReport, setScoreReport] = useState(null);
+    const [scoreReportLoading, setScoreReportLoading] = useState(false);
+    const [scoreReportError, setScoreReportError] = useState("");
 
     const [f, setF] = useState(() => emptyForm());
     const [assignF, setAssignF] = useState({ assignmentMode: "batch", batch: "", audienceBatch: "", assignedStudents: [] });
@@ -201,6 +214,9 @@ export default function StaffTests() {
         setAnalyticsLoading(true);
         setTestAnalyticsView("overview");
         setViolationReportAttempt(null);
+        setScoreReportAttempt(null);
+        setScoreReport(null);
+        setScoreReportError("");
         try {
             const data = await api.reports.perTest(t.id);
             setTestAnalytics(data);
@@ -208,6 +224,21 @@ export default function StaffTests() {
             alert("Failed to load test report: " + e.message);
         } finally {
             setAnalyticsLoading(false);
+        }
+    };
+
+    const openScoreBreakdown = async (attempt) => {
+        setScoreReportAttempt(attempt);
+        setScoreReport(null);
+        setScoreReportError("");
+        setScoreReportLoading(true);
+        setTestAnalyticsView("score");
+        try {
+            setScoreReport(await api.tests.result(attempt.id));
+        } catch (error) {
+            setScoreReportError(`Failed to load question breakdown: ${error.message}`);
+        } finally {
+            setScoreReportLoading(false);
         }
     };
 
@@ -243,14 +274,9 @@ export default function StaffTests() {
     const testAudienceForBatch = (test, students, batch) => {
         if (test.assignedToAll) return students;
         const selectedIdentifiers = new Set((test.assignedStudents || []).map(String));
-        if (test.assignmentMode === "students") {
-            return students.filter((student) => (
-                selectedIdentifiers.has(String(student.regNo))
-                || selectedIdentifiers.has(String(student.rollNo))
-            ));
-        }
+        const assignedBatches = previouslyAssignedBatches(test);
         return students.filter((student) => (
-            test.assignedBatch === batch
+            (assignedBatches.includes(batch) && student.batch === batch)
             || selectedIdentifiers.has(String(student.regNo))
             || selectedIdentifiers.has(String(student.rollNo))
         ));
@@ -403,9 +429,9 @@ export default function StaffTests() {
                 allowedLanguages: testType === "coding" ? ["c", "cpp", "java", "python"] : undefined,
                 assignedToAll: false,
                 assignmentMode: f.assignmentMode,
-                assignedBatch: f.assignmentMode === "batch" ? f.assignedBatch : "",
+                assignedBatch: f.assignedBatch,
                 emailReminderEnabled: f.emailReminderEnabled,
-                assignedStudents: f.assignmentMode === "students" ? f.assignedStudents : [],
+                assignedStudents: f.assignedStudents,
             };
             
             if (editingTest) await api.tests.update(editingTest.id, payload);
@@ -921,7 +947,7 @@ export default function StaffTests() {
                                         onValueChange={(value) => setAssignF((current) => ({ ...current, batch: value === "__select_batch__" ? "" : value }))}
                                         options={batchOptions(batches, assignTarget, true)}
                                     />
-                                    <p className="text-xs text-slate-500 dark:text-zinc-500">Previously assigned batches stay visible but cannot be selected again.</p>
+                                    <p className="text-xs text-slate-500 dark:text-zinc-500">Existing batch assignments stay active and cannot be selected again.</p>
                                 </div>
                             ) : (
                                 <div className="space-y-2">
@@ -937,7 +963,9 @@ export default function StaffTests() {
                                             ]}
                                         />
                                     </div>
-                                    <p className="text-xs text-slate-500 dark:text-zinc-500">{assignF.assignedStudents.length} selected</p>
+                                    <p className="text-xs text-slate-500 dark:text-zinc-500">
+                                        {assignF.assignedStudents.length} selected. Existing assignments are kept when you add students.
+                                    </p>
                                     <div className="max-h-48 space-y-1 overflow-y-auto rounded-lg border border-slate-200 p-2 dark:border-zinc-800">
                                         {audienceStudentsLoading ? (
                                             <p className="p-3 text-center text-xs text-slate-500">Loading students...</p>
@@ -968,7 +996,7 @@ export default function StaffTests() {
             </Dialog>
 
             {/* Test Analytics popup dialog */}
-            <Dialog open={testAnalytics !== null && testAnalyticsView !== "violations"} onOpenChange={(open) => {
+            <Dialog open={testAnalytics !== null && !["violations", "score"].includes(testAnalyticsView)} onOpenChange={(open) => {
                 if (!open) {
                     setTestAnalytics(null);
                     setTestAnalyticsView("overview");
@@ -1049,7 +1077,7 @@ export default function StaffTests() {
                                     <TableHeader>
                                         <TableRow>
                                             <TableHead>Student</TableHead>
-                                            <TableHead>Score</TableHead>
+                                            <TableHead>Score Breakdown</TableHead>
                                             <TableHead>Completed Date / Time</TableHead>
                                             <TableHead>Outcome</TableHead>
                                             <TableHead>View Violations</TableHead>
@@ -1063,8 +1091,17 @@ export default function StaffTests() {
                                                     <p className="font-semibold text-slate-800 dark:text-zinc-200">{attempt.studentName || "Student"}</p>
                                                     <p className="text-xs text-slate-500 dark:text-zinc-400">{attempt.studentRegNo}</p>
                                                 </TableCell>
-                                                <TableCell className="font-medium text-slate-800 dark:text-zinc-200">
-                                                    {attempt.score ?? 0} / {attempt.totalScore ?? "—"}
+                                                <TableCell>
+                                                    <Button
+                                                        type="button"
+                                                        variant="outline"
+                                                        size="sm"
+                                                        disabled={scoreReportLoading || attempt.status === "flagged"}
+                                                        onClick={() => openScoreBreakdown(attempt)}
+                                                    >
+                                                        <Eye className="h-4 w-4" />
+                                                        {attempt.score ?? 0} / {attempt.totalScore ?? "—"}
+                                                    </Button>
                                                 </TableCell>
                                                 <TableCell className="text-xs text-slate-500 dark:text-zinc-400">
                                                     {attempt.completedAt ? new Date(attempt.completedAt).toLocaleString() : "—"}
@@ -1106,6 +1143,47 @@ export default function StaffTests() {
                             </div>
                         </div>
                     )}
+                </DialogContent>
+            </Dialog>
+
+            {/* Question-by-question score report */}
+            <Dialog open={scoreReportAttempt !== null} onOpenChange={(open) => {
+                if (!open) {
+                    setScoreReportAttempt(null);
+                    setScoreReport(null);
+                    setScoreReportError("");
+                    setTestAnalyticsView("attempts");
+                }
+            }}>
+                <DialogContent className="max-h-[90vh] max-w-5xl overflow-y-auto">
+                    <DialogHeader>
+                        <DialogTitle>Score Breakdown</DialogTitle>
+                        <DialogDescription>
+                            {scoreReportAttempt?.studentName || "Student"}
+                            {scoreReportAttempt?.studentRegNo ? ` · ${scoreReportAttempt.studentRegNo}` : ""}
+                            {" · "}
+                            {testAnalytics?.test?.title || "Test"}
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-4 pt-2">
+                        <Button type="button" variant="outline" onClick={() => {
+                            setScoreReportAttempt(null);
+                            setScoreReport(null);
+                            setScoreReportError("");
+                            setTestAnalyticsView("attempts");
+                        }}>
+                            Back to student attempts
+                        </Button>
+                        {scoreReportLoading ? (
+                            <LoadingState label="Loading question breakdown" className="py-8" />
+                        ) : scoreReportError ? (
+                            <p className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-500">
+                                {scoreReportError}
+                            </p>
+                        ) : scoreReport ? (
+                            <TestAttemptReport attempt={scoreReport} />
+                        ) : null}
+                    </div>
                 </DialogContent>
             </Dialog>
 

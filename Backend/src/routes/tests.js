@@ -71,6 +71,12 @@ function sameStringList(left, right) {
     && leftValues.every((value, index) => value === rightValues[index]);
 }
 
+function mergeStringLists(...lists) {
+  return [...new Set(lists.flatMap((list) => Array.isArray(list) ? list : [])
+    .map((value) => String(value).trim())
+    .filter(Boolean))];
+}
+
 async function attemptIsStillAssigned(attempt) {
   const [test, student] = await Promise.all([
     col("tests").findOne({ _id: id(attempt.testId) }),
@@ -325,7 +331,7 @@ router.post("/import-questions", authenticate, upload.single("file"), async (req
     const manualType = req.body.manualType; // "mcq" or "fillup" or "programming"
     const questionLimit = Number(req.body.questionLimit) || 0;
 
-    const rows = rowsFromBuffer(req.file.buffer);
+    const rows = rowsFromBuffer(req.file.buffer, { headerlessAptitude: manualType === "mcq" });
     let parsed = [];
 
     if (testType === "coding" && manualType === "mcq") {
@@ -506,7 +512,9 @@ router.put("/:id", authenticate, async (req, res) => {
         }
         set.assignedBatch = assignedBatch;
         set.assignedBatches = [...assignedBatchHistory(currentTest), assignedBatch];
-        set.assignedStudents = [];
+        set.assignedStudents = Array.isArray(body.assignedStudents)
+          ? [...new Set(body.assignedStudents.map((value) => String(value).trim()).filter(Boolean))]
+          : currentTest.assignedStudents || [];
       } else {
         const assignedStudents = Array.isArray(body.assignedStudents)
           ? [...new Set(body.assignedStudents.map((value) => String(value).trim()).filter(Boolean))]
@@ -514,7 +522,8 @@ router.put("/:id", authenticate, async (req, res) => {
         if (!assignedStudents.length) return res.status(400).json({ error: "Select at least one student for this test" });
         const matchingStudents = await col("students").countDocuments({ regNo: { $in: assignedStudents } });
         if (matchingStudents !== assignedStudents.length) return res.status(404).json({ error: "One or more selected students were not found" });
-        set.assignedBatch = null;
+        set.assignedBatch = currentTest.assignedBatch || null;
+        set.assignedBatches = assignedBatchHistory(currentTest);
         set.assignedStudents = assignedStudents;
       }
     }
@@ -526,8 +535,19 @@ router.put("/:id", authenticate, async (req, res) => {
       updateFilter.assignmentMode = currentTest.assignmentMode === undefined
         ? { $exists: false }
         : currentTest.assignmentMode;
+      updateFilter.assignedStudents = currentTest.assignedStudents === undefined
+        ? { $exists: false }
+        : currentTest.assignedStudents;
+      updateFilter.assignedBatches = currentTest.assignedBatches === undefined
+        ? { $exists: false }
+        : currentTest.assignedBatches;
       if (set.assignmentMode === "batch" && set.assignedBatch !== currentTest.assignedBatch) {
         updateFilter.assignedBatches = { $ne: set.assignedBatch };
+        updateFilter.$and = [{
+          assignedBatches: currentTest.assignedBatches === undefined
+            ? { $exists: false }
+            : currentTest.assignedBatches,
+        }];
       }
     }
     const test = await col("tests").findOneAndUpdate(updateFilter, { $set: set }, { returnDocument: "after" });
@@ -563,14 +583,23 @@ router.post("/:id/assign", authenticate, async (req, res) => {
     const filter = { _id: id(testId) };
     filter.assignedBatch = test.assignedBatch === undefined ? { $exists: false } : test.assignedBatch;
     filter.assignmentMode = test.assignmentMode === undefined ? { $exists: false } : test.assignmentMode;
+    filter.assignedStudents = test.assignedStudents === undefined ? { $exists: false } : test.assignedStudents;
+    filter.assignedBatches = test.assignedBatches === undefined ? { $exists: false } : test.assignedBatches;
     if (assignmentMode === "students") {
-      const assignedStudents = Array.isArray(req.body?.assignedStudents)
+      const newAssignedStudents = Array.isArray(req.body?.assignedStudents)
         ? [...new Set(req.body.assignedStudents.map((value) => String(value).trim()).filter(Boolean))]
         : [];
-      if (!assignedStudents.length) return res.status(400).json({ error: "Select at least one student for this test" });
-      const matchingStudents = await col("students").countDocuments({ regNo: { $in: assignedStudents } });
-      if (matchingStudents !== assignedStudents.length) return res.status(404).json({ error: "One or more selected students were not found" });
-      update = { assignmentMode, assignedStudents, assignedBatch: null, assignedToAll: false, updatedAt: new Date() };
+      if (!newAssignedStudents.length) return res.status(400).json({ error: "Select at least one student for this test" });
+      const matchingStudents = await col("students").countDocuments({ regNo: { $in: newAssignedStudents } });
+      if (matchingStudents !== newAssignedStudents.length) return res.status(404).json({ error: "One or more selected students were not found" });
+      update = {
+        assignmentMode: test.assignedBatch || assignedBatchHistory(test).length ? "batch" : "students",
+        assignedStudents: mergeStringLists(test.assignedStudents, newAssignedStudents),
+        assignedBatch: test.assignedBatch || null,
+        assignedBatches: assignedBatchHistory(test),
+        assignedToAll: test.assignedToAll === true,
+        updatedAt: new Date(),
+      };
     } else {
       const batch = typeof req.body?.batch === "string" ? req.body.batch.trim() : "";
       if (!batch || req.body?.all === true) {
@@ -582,12 +611,17 @@ router.post("/:id/assign", authenticate, async (req, res) => {
       const batchExists = await col("students").findOne({ batch }, { projection: { _id: 1 } });
       if (!batchExists) return res.status(404).json({ error: `No students found in batch ${batch}` });
       filter.assignedBatches = { $ne: batch };
+      filter.$and = [{
+        assignedBatches: test.assignedBatches === undefined
+          ? { $exists: false }
+          : test.assignedBatches,
+      }];
       update = {
         assignmentMode,
-        assignedStudents: [],
+        assignedStudents: mergeStringLists(test.assignedStudents),
         assignedBatch: batch,
         assignedBatches: [...assignedBatchHistory(test), batch],
-        assignedToAll: false,
+        assignedToAll: test.assignedToAll === true,
         updatedAt: new Date(),
       };
     }
@@ -1188,5 +1222,6 @@ module.exports.PROCTOR_DEFAULT = PROCTOR_DEFAULT;
 module.exports.testAvailability = testAvailability;
 module.exports.assignedBatchHistory = assignedBatchHistory;
 module.exports.wasBatchPreviouslyAssigned = wasBatchPreviouslyAssigned;
+module.exports.mergeStringLists = mergeStringLists;
 module.exports.startScheduledTestExpirySweep = startScheduledTestExpirySweep;
 module.exports.expireScheduledAttempts = expireScheduledAttempts;

@@ -816,7 +816,7 @@ const codeBuffersRef = useRef({});
                                 <AlertTriangle className="h-4 w-4" /> {attempt.violations} proctoring violation{attempt.violations === 1 ? "" : "s"} recorded
                             </p>
                         )}
-                        <div className="mt-2 grid w-full max-w-sm grid-cols-3 gap-3">
+                        <div className="mt-2 grid w-full max-w-2xl grid-cols-1 gap-3 sm:grid-cols-3 sm:gap-4">
                             <div className="rounded-lg border border-slate-200 bg-slate-50 dark:border-zinc-800 dark:bg-zinc-950/40 p-3">
                                 <p className="text-2xl font-bold text-slate-900 dark:text-white">{isCheated || isDisqualified ? 0 : attempt?.score ?? 0}</p>
                                 <p className="text-xs text-slate-500 dark:text-zinc-500">Score</p>
@@ -837,7 +837,7 @@ const codeBuffersRef = useRef({});
                     </CardContent>
                 </Card>
                 <Dialog open={reportOpen} onOpenChange={setReportOpen}>
-                    <DialogContent className="max-h-[90vh] max-w-4xl overflow-y-auto">
+                    <DialogContent className="max-h-[90vh] max-w-5xl overflow-y-auto">
                         <DialogHeader>
                             <DialogTitle>{attempt?.testTitle || "Full Test Report"}</DialogTitle>
                             <DialogDescription>Complete report for this test attempt.</DialogDescription>

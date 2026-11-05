@@ -64,7 +64,7 @@ router.post("/aiml-import", authenticate, async (req, res) => {
     if (/\.json$/i.test(file)) {
       parsed = parseJsonQuestions(filePath);
     } else {
-      const rows = rowsFromFile(filePath);
+      const rows = rowsFromFile(filePath, { headerlessAptitude: true });
       const first = rows[0] || {};
       const keys = Object.keys(first).map(normalizeHeader);
       if (keys.some((k) => k.startsWith("testcase") || k.startsWith("hardtestcase"))) {
@@ -88,7 +88,7 @@ router.post("/import", authenticate, upload.single("file"), async (req, res) => 
     if (!staffOnly(req, res)) return;
     if (!req.file) return res.status(400).json({ error: "No file uploaded" });
     const kind = (req.body.kind || "aptitude").toLowerCase();
-    const rows = rowsFromBuffer(req.file.buffer);
+    const rows = rowsFromBuffer(req.file.buffer, { headerlessAptitude: kind !== "coding" });
     const parsed = kind === "coding" ? parseCodingQuestions(rows) : parseAptitudeQuestions(rows);
     if (!parsed.length) return res.status(400).json({ error: "No valid questions found in file" });
     const withMeta = parsed.map((q) => ({ ...q, createdBy: req.user.userId, createdAt: new Date(), updatedAt: new Date() }));
