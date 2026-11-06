@@ -1,10 +1,10 @@
 # Question and Role Dataset Formats
 
-Use one header row in every workbook. Use one question or one labeled resume per row. Topic and difficulty values are used to filter adaptive question pools; use `easy`, `medium`, or `hard` consistently. `AIML/data/skills.json` is only a role/skill taxonomy and is not an assessment question file.
+Use one question or one labeled resume per row. Headers are recommended so topic, difficulty, points, and other optional fields can be read. Manual test upload also accepts headerless MCQ rows in the exact order described below; fill-up and programming uploads need headers. Topic and difficulty values are used to filter adaptive question pools; use `easy`, `medium`, or `hard` consistently. `AIML/data/skills.json` is only a role/skill taxonomy and is not an assessment question file.
 
 ## Assessment question workbooks
 
-Create separate workbooks for each format, or keep one format per worksheet. For Excel imports, the staff test form accepts `.xlsx`, `.xls`, and `.csv`.
+Create separate workbooks for each format, or keep one format per worksheet. For Excel imports, the staff test form accepts `.xlsx`, `.xls`, and `.csv`. Headerless rows are supported only for MCQ manual uploads: question, four options, then correct-answer letter/text. Use headers when you need to include topic, difficulty, or points.
 
 ### Aptitude MCQ
 
