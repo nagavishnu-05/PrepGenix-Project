@@ -31,6 +31,14 @@ export function TestAttemptReport({ attempt }) {
     const score = attempt.disqualified || attempt.status === "disqualified" ? 0 : Number(attempt.score) || 0;
     const totalScore = Number(attempt.totalScore) || 0;
     const correctCount = answers.filter((answer) => answer.correct).length;
+    const difficultySummary = ["easy", "medium", "hard"].map((difficulty) => {
+        const matching = answers.filter((answer) => answer.difficulty === difficulty);
+        return {
+            difficulty,
+            count: matching.length,
+            correct: matching.filter((answer) => answer.correct).length,
+        };
+    });
     const percentage = totalScore ? Math.round((score / totalScore) * 100) : 0;
     const elapsedMs = attempt.startedAt && attempt.completedAt
         ? Math.max(0, new Date(attempt.completedAt) - new Date(attempt.startedAt))
@@ -61,6 +69,20 @@ export function TestAttemptReport({ attempt }) {
                     </div>
                 ))}
             </div>
+
+            {difficultySummary.some((item) => item.count > 0) && (
+                <section className="space-y-2">
+                    <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-zinc-300">Difficulty breakdown</h3>
+                    <div className="grid grid-cols-3 gap-2">
+                        {difficultySummary.map(({ difficulty, count, correct }) => (
+                            <div key={difficulty} className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-center dark:border-zinc-800 dark:bg-zinc-950/40">
+                                <p className="text-sm font-bold capitalize text-slate-900 dark:text-white">{difficulty}</p>
+                                <p className="mt-1 text-xs text-slate-600 dark:text-zinc-400">{count} question{count === 1 ? "" : "s"} · {correct} correct</p>
+                            </div>
+                        ))}
+                    </div>
+                </section>
+            )}
 
             <div className="grid gap-3 sm:grid-cols-2">
                 <div className="rounded-lg border border-slate-200 p-3 text-sm dark:border-zinc-800">
@@ -108,6 +130,7 @@ export function TestAttemptReport({ attempt }) {
                                     <div className="min-w-0">
                                         <p className="text-sm font-semibold text-slate-900 dark:text-white">Question {index + 1}{question?.title ? ` · ${question.title}` : ""}</p>
                                         {question?.description && <p className="mt-2 whitespace-pre-wrap text-sm text-slate-600 dark:text-zinc-300">{question.description}</p>}
+                                        {question?.explanation && <p className="mt-2 whitespace-pre-wrap text-xs text-violet-700 dark:text-violet-300"><strong>Explanation:</strong> {question.explanation}</p>}
                                         {question?.codeSnippet && (
                                             <pre className="mt-2 overflow-x-auto whitespace-pre rounded-md bg-slate-100 p-3 text-xs text-slate-700 dark:bg-zinc-950 dark:text-zinc-300">{question.codeSnippet}</pre>
                                         )}

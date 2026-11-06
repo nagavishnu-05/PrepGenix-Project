@@ -78,6 +78,21 @@ function newTurn(questionId, role, text) {
   return { id: crypto.randomUUID(), questionId, role, text, at: new Date() };
 }
 
+function answeredQuestionCount(transcript) {
+  return new Set((Array.isArray(transcript) ? transcript : [])
+    .filter((turn) => turn.role === "candidate" && turn.questionId)
+    .map((turn) => String(turn.questionId).split("#")[0])).size;
+}
+
+function currentQuestionIndex(plan, transcript) {
+  const questions = Array.isArray(plan?.questions) ? plan.questions : [];
+  const turns = Array.isArray(transcript) ? transcript : [];
+  const currentTurn = [...turns].reverse().find((turn) => turn.role === "bot");
+  if (!currentTurn) return 0;
+  const index = questions.findIndex((question) => question.id === String(currentTurn.questionId).split("#")[0]);
+  return Math.max(0, index);
+}
+
 function interviewAvailability(interview, now = new Date()) {
   if (interview.session?.status === "in_progress") return "available";
   const startValue = interview.startsAt || interview.scheduledAt;
@@ -263,6 +278,7 @@ router.post("/", authenticate, async (req, res) => {
       proctoring,
       jobRole,
       jobDescription,
+      technicalSkills,
       emailReminderEnabled,
     } = req.body;
     const studentRegNos = [...new Set(
@@ -287,6 +303,29 @@ router.post("/", authenticate, async (req, res) => {
     let interviewType = type || "Technical";
     let groupJobRole = typeof jobRole === "string" ? jobRole.trim().slice(0, 120) : "";
     let groupJobDescription = typeof jobDescription === "string" ? jobDescription.trim().slice(0, 2000) : "";
+    if (technicalSkills != null && !Array.isArray(technicalSkills) && typeof technicalSkills !== "string") {
+      return res.status(400).json({ error: "Technical skills must be a comma-separated string or a list of strings" });
+    }
+    const rawTechnicalSkills = Array.isArray(technicalSkills)
+      ? technicalSkills
+      : String(technicalSkills || "").split(/[,;\n]/);
+    if (rawTechnicalSkills.some((skill) => typeof skill !== "string")) {
+      return res.status(400).json({ error: "Each technical skill must be text" });
+    }
+    let groupTechnicalSkills = [];
+    const seenTechnicalSkills = new Set();
+    for (const rawSkill of rawTechnicalSkills) {
+      const skill = rawSkill.trim();
+      if (!skill) continue;
+      if (skill.length > 60) return res.status(400).json({ error: "Each technical skill must be 60 characters or fewer" });
+      const normalizedSkill = skill.toLowerCase();
+      if (seenTechnicalSkills.has(normalizedSkill)) continue;
+      seenTechnicalSkills.add(normalizedSkill);
+      groupTechnicalSkills.push(skill);
+    }
+    if (groupTechnicalSkills.length > 10) {
+      return res.status(400).json({ error: "Enter at most 10 technical skills for an interview" });
+    }
     if (groupId) {
       let groupInterview = await col("interviews").findOne({ groupId });
       if (!groupInterview) {
@@ -296,6 +335,9 @@ router.post("/", authenticate, async (req, res) => {
           interviewType = groupInterview.type || interviewType;
           groupJobRole = groupJobRole || groupInterview.jobRole || "";
           groupJobDescription = groupJobDescription || groupInterview.jobDescription || "";
+          groupTechnicalSkills = groupTechnicalSkills.length
+            ? groupTechnicalSkills
+            : groupInterview.technicalSkills || [];
           const legacyGroup = {
             type: groupInterview.type,
             scheduledAt: groupInterview.scheduledAt,
@@ -311,6 +353,9 @@ router.post("/", authenticate, async (req, res) => {
       interviewType = groupInterview.type || interviewType;
       groupJobRole = groupJobRole || groupInterview.jobRole || "";
       groupJobDescription = groupJobDescription || groupInterview.jobDescription || "";
+      groupTechnicalSkills = groupTechnicalSkills.length
+        ? groupTechnicalSkills
+        : groupInterview.technicalSkills || [];
       if (!groupName) return res.status(400).json({ error: "The selected interview group has no name" });
     } else {
       if (!groupName) return res.status(400).json({ error: "Interview name is required" });
@@ -366,6 +411,7 @@ router.post("/", authenticate, async (req, res) => {
         type: interviewType,
         jobRole: groupJobRole || null,
         jobDescription: groupJobDescription || null,
+        technicalSkills: groupTechnicalSkills,
         mode: mode || "online-proctored",
         interviewer: interviewer || req.user.username,
         scheduledAt: parsedStart,
@@ -629,7 +675,12 @@ router.post("/:id/answer", authenticate, async (req, res) => {
     if (index === -1) return res.status(400).json({ error: "Unknown question" });
 
     const question = questions[index];
-    const transcript = interview.transcript || [];
+    const transcript = Array.isArray(interview.transcript) ? interview.transcript : [];
+    const lastBotTurn = [...transcript].reverse().find((turn) => turn.role === "bot");
+    if (!lastBotTurn || lastBotTurn.questionId !== questionId
+      || transcript.some((turn) => turn.role === "candidate" && turn.questionId === questionId)) {
+      return res.status(409).json({ error: "This question was already answered or is no longer current. Refresh the interview to continue." });
+    }
     transcript.push(newTurn(questionId, "candidate", answer));
 
     const followUpId = `${question.id}#f1`;
@@ -661,13 +712,21 @@ router.post("/:id/answer", authenticate, async (req, res) => {
     const session = {
       ...(interview.session || {}),
       status: "in_progress",
-      answeredCount: (interview.session?.answeredCount || 0) + 1,
+      answeredCount: answeredQuestionCount(transcript),
     };
+    const previousAnsweredCount = interview.session && Object.prototype.hasOwnProperty.call(interview.session, "answeredCount")
+      ? interview.session.answeredCount
+      : { $exists: false };
     const saved = await col("interviews").updateOne(
-      { _id: interview._id, "session.status": "in_progress", status: { $ne: "disqualified" } },
+      {
+        _id: interview._id,
+        "session.status": "in_progress",
+        "session.answeredCount": previousAnsweredCount,
+        status: { $ne: "disqualified" },
+      },
       { $set: { transcript, session, updatedAt: new Date() } }
     );
-    if (!saved.matchedCount) return res.status(409).json({ error: "Interview was stopped before the answer could be saved" });
+    if (!saved.matchedCount) return res.status(409).json({ error: "The interview changed before your answer was saved. Refresh the interview to continue." });
     res.json({ done: !nextQuestion, question: nextQuestion, index: nextIndex, total: questions.length, session });
   } catch (error) {
     console.error("Interview answer failed:", error.message);
@@ -854,7 +913,10 @@ router.post("/:id/reset", authenticate, async (req, res) => {
           notes: "",
           strengths: "",
           weaknesses: "",
+          plan: "",
+          planGeneratedAt: "",
         },
+        $inc: { planVersion: 1 },
       },
       { returnDocument: "after" }
     );
@@ -1086,3 +1148,5 @@ router.delete("/groups/:groupId", authenticate, async (req, res) => {
 module.exports = router;
 module.exports.interviewAvailability = interviewAvailability;
 module.exports.interviewWindowError = interviewWindowError;
+module.exports.answeredQuestionCount = answeredQuestionCount;
+module.exports.currentQuestionIndex = currentQuestionIndex;

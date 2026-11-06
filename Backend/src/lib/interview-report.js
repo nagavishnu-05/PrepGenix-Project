@@ -11,7 +11,7 @@
  */
 
 const llm = require("./llm");
-const { RUBRIC } = require("./interview-plan");
+const { RUBRIC, getAnswerGuide } = require("./interview-plan");
 
 const DISCLAIMER =
   "These are interview observations from a resume-based conversation. " +
@@ -19,12 +19,29 @@ const DISCLAIMER =
 
 const ACTION_VERBS = /\b(led|designed|built|developed|implemented|created|optimized|improved|migrated|decided|chose|solved|debugged|tested|refactored|launched|shipped|managed|owned|automated|reduced|increased|researched|proposed|coordinated)\b/gi;
 const CHALLENGE_TERMS = /\b(challenge|difficult|problem|issue|bug|trade-?off|constraint|failure|failed|struggl|learned|mistake|obstacle)\b/gi;
-const NON_ANSWERS = /\b(?:i\s+)?(?:just\s+)?(?:read|repeat(?:ed|ing)?)\s+(?:the\s+)?question\b|\b(?:i\s+)?(?:don't|do not|cannot|can't)\s+know\b|\bno\s+answer\b/i;
+const NON_ANSWERS =
+  /\b(?:i\s+)?(?:just\s+)?(?:read|repeat(?:ed|ing)?)\s+(?:the\s+)?question\b|\b(?:i\s+)?(?:don't|do not|cannot|can't)\s+know\b|\bno\s+answer\b|\bno\s+thanks?\b|\bthank\s+you\s*,?\s*(?:but\s+)?no\b|\b(?:skip|pass|next\s+question)\b/i;
 const QUESTION_STOP_WORDS = new Set([
   "a", "an", "and", "are", "did", "do", "does", "for", "from", "how", "i",
   "in", "is", "it", "me", "of", "on", "or", "the", "to", "was", "what",
-  "when", "where", "which", "who", "why", "with", "you", "your",
+  "when", "where", "which", "who", "why", "with", "you", "your", "about",
+  "can", "could", "describe", "explain", "give", "would", "should", "use",
+  "used", "using", "work", "works", "worked", "one", "example", "tell",
 ]);
+const ANSWER_SYNONYM_GROUPS = [
+  ["project", "application", "app", "system", "dashboard", "website", "platform"],
+  ["difficult", "challenge", "problem", "issue", "obstacle"],
+  ["teammate", "colleague", "coworker", "team"],
+  ["deadline", "timeline", "schedule", "due"],
+  ["improve", "optimize", "increase", "reduce", "speed", "performance", "latency"],
+  ["debug", "diagnose", "investigate", "troubleshoot", "trace"],
+  ["error", "failure", "exception", "bug"],
+  ["design", "build", "develop", "implement", "create"],
+  ["test", "validate", "verify", "check", "assert"],
+];
+const ANSWER_SYNONYMS = new Map(
+  ANSWER_SYNONYM_GROUPS.flatMap((group) => group.map((term) => [term, group[0]]))
+);
 
 function words(text) {
   return String(text || "").trim().split(/\s+/).filter(Boolean);
@@ -42,35 +59,123 @@ function baseQuestionId(questionId) {
   return String(questionId || "").split("#")[0];
 }
 
-function isSubstantiveAnswer(question, answer) {
+function normalizeText(value) {
+  return String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function isUsableAnswer(question, answer) {
   const response = String(answer || "").trim();
   if (!response || NON_ANSWERS.test(response)) return false;
 
-  const normalize = (value) => value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-  const normalizedAnswer = normalize(response);
-  const normalizedQuestion = normalize(question?.text);
+  const normalizedAnswer = normalizeText(response);
+  const answerTerms = normalizedAnswer.split(/\s+/).filter((term) => (
+    term.length > 2 && !QUESTION_STOP_WORDS.has(term)
+  ));
+  if (answerTerms.length < 3) return false;
+
+  const normalizedQuestion = normalizeText(question?.text);
   if (!normalizedQuestion) return true;
   if (normalizedAnswer === normalizedQuestion) return false;
 
-  const answerTerms = normalizedAnswer.split(/\s+/).filter((term) => term && !QUESTION_STOP_WORDS.has(term));
   const questionTerms = new Set(normalizedQuestion.split(/\s+/).filter((term) => term && !QUESTION_STOP_WORDS.has(term)));
   const overlap = answerTerms.filter((term) => questionTerms.has(term)).length;
-  return answerTerms.length < 3 || overlap / answerTerms.length < 0.95;
+  if (overlap / answerTerms.length >= 0.95) return false;
+  return true;
 }
 
-function substantiveTranscript(plan, transcript) {
+function hasLexicalRelevance(question, answer) {
+  const normalizeTokens = (value) => normalizeText(value).split(/\s+/)
+    .filter((term) => term.length > 2 && !QUESTION_STOP_WORDS.has(term))
+    .map((term) => ANSWER_SYNONYMS.get(term) || term);
+  const answerTokens = new Set(normalizeTokens(answer));
+  const questionTokens = new Set(normalizeTokens(question?.text));
+  const questionOverlap = [...questionTokens].filter((term) => answerTokens.has(term)).length;
+  if (questionOverlap >= 2) return true;
+
+  const guide = getAnswerGuide(question);
+  if (!guide) return false;
+  let keywordMatches = 0;
+  for (const keyword of guide.keywords) {
+    const normalizedKeyword = normalizeText(keyword);
+    if (!normalizedKeyword) continue;
+    if (` ${normalizeText(answer)} `.includes(` ${normalizedKeyword} `)) {
+      if (normalizedKeyword.includes(" ")) return true;
+      keywordMatches += 1;
+    }
+  }
+  return keywordMatches >= 2;
+}
+
+function candidateAnswers(plan, transcript) {
   const questions = new Map((plan?.questions || []).map((question) => [question.id, question]));
-  return (transcript || []).filter((turn) => {
-    if (turn.role !== "candidate") return true;
-    const question = questions.get(baseQuestionId(turn.questionId));
-    return question && isSubstantiveAnswer(question, turn.text);
-  });
+  return (transcript || [])
+    .map((turn, index) => ({
+      turn,
+      index,
+      question: turn.role === "candidate" ? questions.get(baseQuestionId(turn.questionId)) : null,
+    }))
+    .filter(({ turn, question }) => (
+      turn.role === "candidate" && question && isUsableAnswer(question, turn.text)
+    ));
+}
+
+const RELEVANCE_SYSTEM_PROMPT =
+  "You are a strict interview-answer relevance checker. Decide only whether each candidate response substantively addresses its paired question. " +
+  "Mark refusals, greetings, random conversation, unrelated personal facts, and keyword name-dropping without answering the question as relevant=false. " +
+  "A technically incorrect attempt can still be relevant if it genuinely addresses the asked concept. Do not score ability or correctness. " +
+  "Return only JSON: {\"assessments\":[{\"questionId\":\"...\",\"relevant\":true,\"reason\":\"...\"}]}. Include every supplied questionId exactly once.";
+
+async function relevantTranscript(plan, transcript) {
+  const candidates = candidateAnswers(plan, transcript);
+  if (!candidates.length) return (transcript || []).filter((turn) => turn.role !== "candidate");
+
+  let judgments = new Map();
+  if (llm.available()) {
+    try {
+      const raw = await llm.chatJson(
+        [
+          { role: "system", content: RELEVANCE_SYSTEM_PROMPT },
+          {
+            role: "user",
+            content: JSON.stringify(candidates.map(({ turn, question }) => ({
+              questionId: String(turn.questionId),
+              question: question.text,
+              topic: question.topic || question.focus || "General",
+              answer: String(turn.text || ""),
+            }))),
+          },
+        ],
+        { temperature: 0, maxTokens: Math.max(400, candidates.length * 100) }
+      );
+      if (Array.isArray(raw?.assessments)) {
+        judgments = new Map(raw.assessments
+          .filter((entry) => typeof entry?.questionId === "string" && typeof entry.relevant === "boolean")
+          .map((entry) => [entry.questionId, entry.relevant]));
+      } else {
+        console.error("Interview answer relevance check returned an invalid response; using conservative keyword matching.");
+      }
+    } catch (error) {
+      console.error("Interview answer relevance check failed; using conservative keyword matching:", error.message);
+    }
+  }
+
+  const acceptedIndices = new Set(candidates
+    .filter(({ turn }) => judgments.has(String(turn.questionId))
+      ? judgments.get(String(turn.questionId))
+      : hasLexicalRelevance(
+        plan.questions.find((question) => question.id === baseQuestionId(turn.questionId)),
+        turn.text
+      ))
+    .map(({ index }) => index));
+  return (transcript || []).filter((turn, index) => (
+    turn.role !== "candidate" || acceptedIndices.has(index)
+  ));
 }
 
 function groupAnswers(plan, transcript) {
   const questions = plan?.questions || [];
   const answers = new Map();
-  for (const turn of substantiveTranscript(plan, transcript)) {
+  for (const turn of transcript || []) {
     if (turn.role !== "candidate" || !turn.text) continue;
     const base = baseQuestionId(turn.questionId);
     if (!answers.has(base)) answers.set(base, []);
@@ -201,6 +306,7 @@ const REPORT_SYSTEM_PROMPT =
   "Summarise what the candidate actually said. Do not recommend hiring or rejection. " +
   "Base every claim on the transcript and quote the candidate where possible. " +
   "A candidate repeating or reading an interviewer question aloud is not an answer; do not treat it as evidence of understanding, reasoning, communication, or relevance. " +
+  "For technical questions, use the supplied reference answers and keywords as evaluation guidance, not rigid exact-match requirements. Give credit for technically correct alternatives and do not infer knowledge from a keyword alone. " +
   "Score each rubric dimension from 1 (weak) to 5 (strong) and justify it. " +
   "Also write a short, supportive, candidate-facing summary (2-3 sentences) of their strongest area and one concrete thing to improve. " +
   "Return ONLY valid JSON matching: " +
@@ -238,7 +344,7 @@ function sanitizeLlmReport(raw, plan, transcript) {
  * deterministic fallback; never throws for LLM failures.
  */
 async function generateReport(interview, plan) {
-  const transcript = substantiveTranscript(plan, interview.transcript || []);
+  const transcript = await relevantTranscript(plan, interview.transcript || []);
   const scored = scoreRubric(plan, transcript);
   const jobRole = String(plan?.jobRole || interview?.jobRole || "").trim();
   let source = "heuristic";
@@ -250,6 +356,12 @@ async function generateReport(interview, plan) {
         .map((turn) => `${turn.role === "bot" ? "INTERVIEWER" : "CANDIDATE"} [${turn.questionId || ""}]: ${turn.text}`)
         .join("\n")
         .slice(0, 12000);
+      const answerGuides = (plan?.questions || [])
+        .map((question) => {
+          const guide = getAnswerGuide(question);
+          return guide ? { ...guide, topic: question.topic || question.focus } : null;
+        })
+        .filter(Boolean);
       const raw = await llm.chatJson(
         [
           { role: "system", content: REPORT_SYSTEM_PROMPT },
@@ -258,6 +370,7 @@ async function generateReport(interview, plan) {
             content:
               `Target job role: ${jobRole || "(not specified)"}\n` +
               `Resume sections (JSON):\n${JSON.stringify(plan?.sections || {}, null, 2)}\n\n` +
+              `Technical reference answers and accepted concept keywords (JSON):\n${JSON.stringify(answerGuides, null, 2)}\n\n` +
               `Interview transcript:\n${condensed || "(empty)"}\n\n` +
               "Write the report JSON.",
           },

@@ -25,6 +25,7 @@ import {
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { InterviewQuestionBreakdown } from "@/components/assessment/interview-question-breakdown";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { LoadingState } from "@/components/portal/primitives";
@@ -158,7 +159,7 @@ export default function InterviewRoom() {
     });
     const [readinessError, setReadinessError] = useState("");
     const [now, setNow] = useState(Date.now());
-    const [speechLang, setSpeechLang] = useState("en-US");
+    const [speechLang, setSpeechLang] = useState("en-IN");
 
     const [transcript, setTranscript] = useState([]);
     const [question, setQuestion] = useState(null);
@@ -973,7 +974,9 @@ export default function InterviewRoom() {
         const botTurns = transcript.filter((t) => t.role === "bot");
         const current = botTurns[botTurns.length - 1] || null;
         setQuestion(current ? { id: current.questionId, text: current.text } : null);
-        setIndex(Math.max(0, (interview?.session?.answeredCount || 0)));
+        const baseQuestionId = String(current?.questionId || "").split("#")[0];
+        const currentIndex = (interview?.plan?.questions || []).findIndex((item) => item.id === baseQuestionId);
+        setIndex(Math.max(0, currentIndex));
         setStep("interview");
         if (consent.recording) startRecording(media);
     };
@@ -1164,7 +1167,11 @@ export default function InterviewRoom() {
 
     const windowEnded = interview && interviewAvailability(interview, now) === "ended";
 
-    const candidateTurns = useMemo(() => transcript.filter((t) => t.role === "candidate").length, [transcript]);
+    const candidateTurns = useMemo(() => (
+        new Set(transcript
+            .filter((turn) => turn.role === "candidate" && turn.questionId)
+            .map((turn) => String(turn.questionId).split("#")[0])).size
+    ), [transcript]);
     const progress = total ? Math.min(100, Math.round((candidateTurns / total) * 100)) : 0;
     const liveCamera = Boolean(stream?.getVideoTracks?.().some((track) => track.readyState === "live"));
     const liveMicrophone = Boolean(stream?.getAudioTracks?.().some((track) => track.readyState === "live"));
@@ -1280,6 +1287,10 @@ export default function InterviewRoom() {
                                 {interview.report.candidateSummary}
                             </p>
                         )}
+                        <InterviewQuestionBreakdown
+                            plan={interview?.plan}
+                            transcript={interview?.transcript || transcript}
+                        />
                         <Button onClick={() => navigate("/student/interviews")}>
                             <ArrowLeft className="h-4 w-4" /> Back to interviews
                         </Button>
@@ -1509,6 +1520,7 @@ export default function InterviewRoom() {
                                         <SelectTrigger><SelectValue /></SelectTrigger>
                                         <SelectContent>
                                             {[
+                                                ["en-IN", "English (India)"],
                                                 ["en-US", "English (US)"],
                                                 ["en-GB", "English (UK)"],
                                                 ["hi-IN", "Hindi"],
@@ -1646,11 +1658,11 @@ export default function InterviewRoom() {
                                 <Textarea
                                     className="min-h-0 flex-1 resize-none"
                                     value={answer}
-                                    placeholder="Use Speak answer to record your response."
+                                    placeholder="Your spoken answer will appear here as text."
                                     disabled
                                 />
                                 <p className="text-xs text-slate-500 dark:text-zinc-500">
-                                    Answers are entered using voice input and saved when you submit.
+                                    Answers are captured through speech-to-text and cannot be edited.
                                 </p>
                                 {speechError && <p role="status" className="text-sm text-amber-700 dark:text-amber-300">{speechError}</p>}
                                 {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}

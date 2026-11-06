@@ -15,20 +15,89 @@
  */
 
 const crypto = require("crypto");
+const fs = require("fs");
+const path = require("path");
 const llm = require("./llm");
-const TOPIC_BANKS = [
-  require("./interview-questions/React"),
-  require("./interview-questions/Node"),
-  require("./interview-questions/HTML"),
-  require("./interview-questions/CSS"),
-  require("./interview-questions/DataAnalytics"),
-  require("./interview-questions/Express"),
-  require("./interview-questions/Git"),
-  require("./interview-questions/GitHub"),
-  require("./interview-questions/OS"),
-  require("./interview-questions/DBMS"),
-  require("./interview-questions/OOPs"),
-];
+const XLSX = require("xlsx");
+
+const QUESTION_BANK_DIR = path.join(__dirname, "interview-questions");
+const TOPIC_METADATA = {
+  CSS: { name: "CSS", aliases: ["css", "css3", "tailwind", "tailwind css", "scss", "sass"] },
+  DBMS: { name: "DBMS", aliases: ["dbms", "database", "databases", "mongodb", "mongo db", "mysql", "postgresql", "postgres"] },
+  DataAnalytics: { name: "Data Analytics", aliases: ["data analytics", "analytics", "data analysis", "power bi", "tableau", "pandas", "statistics", "business intelligence"] },
+  Express: { name: "Express", aliases: ["express", "express.js", "expressjs"] },
+  Git: { name: "Git", aliases: ["git", "version control"] },
+  GitHub: { name: "GitHub", aliases: ["github", "github actions", "pull request"] },
+  HTML: { name: "HTML", aliases: ["html", "html5", "semantic html"] },
+  Java: { name: "Java", aliases: ["java", "core java", "j2se"] },
+  JavaScript: { name: "JavaScript", aliases: ["javascript", "js", "ecmascript", "es6"] },
+  Node: { name: "Node.js", aliases: ["node.js", "nodejs", "node"] },
+  OOPs: { name: "Object-Oriented Programming", aliases: ["oops", "oop", "object-oriented programming", "object oriented programming"] },
+  OS: { name: "Operating Systems", aliases: ["operating systems", "operating system", "os", "linux", "windows"] },
+  React: { name: "React", aliases: ["react", "react.js"] },
+  SQL: { name: "SQL", aliases: ["sql", "structured query language", "postgresql", "postgres", "mysql", "sql server", "oracle"] },
+};
+
+function normalizeColumnName(value) {
+  return String(value || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function loadTopicBanks() {
+  const files = fs.readdirSync(QUESTION_BANK_DIR)
+    .filter((file) => file.toLowerCase().endsWith(".xlsx"))
+    .sort((a, b) => a.localeCompare(b));
+  if (!files.length) throw new Error(`No skill question datasets found in ${QUESTION_BANK_DIR}`);
+
+  return files.map((file) => {
+    const key = path.basename(file, path.extname(file));
+    const metadata = TOPIC_METADATA[key];
+    if (!metadata) throw new Error(`No topic metadata configured for question dataset ${file}`);
+    const workbook = XLSX.readFile(path.join(QUESTION_BANK_DIR, file));
+    const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+    if (!worksheet) throw new Error(`Question dataset ${file} has no worksheet`);
+    const rows = XLSX.utils.sheet_to_json(worksheet, { defval: "" });
+    const columns = rows.length ? new Map(Object.keys(rows[0]).map((header) => [normalizeColumnName(header), header])) : new Map();
+    const requiredColumns = {
+      question: "question",
+      answer: "mostrealisticanswer",
+      keywords: "keywordsforotheranswerstructures",
+    };
+    for (const [label, normalized] of Object.entries(requiredColumns)) {
+      if (!columns.has(normalized)) throw new Error(`Question dataset ${file} is missing the "${label}" column`);
+    }
+
+    const questions = rows.map((row, index) => {
+      const question = String(row[columns.get(requiredColumns.question)] || "").trim();
+      const answer = String(row[columns.get(requiredColumns.answer)] || "").trim();
+      const keywords = String(row[columns.get(requiredColumns.keywords)] || "")
+        .split(/[;\n]/)
+        .map((keyword) => keyword.trim())
+        .filter(Boolean);
+      if (!question || !answer || !keywords.length) {
+        throw new Error(`Question dataset ${file} has an incomplete row at spreadsheet row ${index + 2}`);
+      }
+      return { text: question, answer, keywords };
+    });
+    if (!questions.length) throw new Error(`Question dataset ${file} contains no question rows`);
+    return { ...metadata, questions, answerGuides: questions };
+  });
+}
+
+const TOPIC_BANKS = loadTopicBanks();
+
+function getAnswerGuide(question) {
+  const normalizedText = normalizeForCompare(question?.text);
+  if (!normalizedText) return null;
+  for (const topic of TOPIC_BANKS) {
+    for (const guide of topic.answerGuides) {
+      const normalizedQuestion = normalizeForCompare(guide.text);
+      if (normalizedText === normalizedQuestion || normalizedText.endsWith(` ${normalizedQuestion}`)) {
+        return { question: guide.text, answer: guide.answer, keywords: guide.keywords };
+      }
+    }
+  }
+  return null;
+}
 
 const RUBRIC = [
   { key: "technicalUnderstanding", label: "Technical understanding" },
@@ -50,6 +119,29 @@ const SECTION_ORDER = ["summary", "education", "skills", "experience", "projects
 const MAX_SECTION_CHARS = 2500;
 const MAX_QUESTION_COUNT = 10;
 const TECHNICAL_QUESTION_COUNT = 20;
+
+function seededRandom(seed) {
+  let state = 0;
+  for (const byte of crypto.createHash("sha256").update(String(seed)).digest()) {
+    state = (state * 31 + byte) >>> 0;
+  }
+  if (!state) state = 1;
+  return () => {
+    state ^= state << 13;
+    state ^= state >>> 17;
+    state ^= state << 5;
+    return (state >>> 0) / 0x100000000;
+  };
+}
+
+function shuffled(list, random) {
+  const result = [...list];
+  for (let index = result.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(random() * (index + 1));
+    [result[index], result[swapIndex]] = [result[swapIndex], result[index]];
+  }
+  return result;
+}
 
 function cleanLine(line) {
   return String(line || "").replace(/\s+/g, " ").trim();
@@ -159,6 +251,7 @@ function makeQuestion(question) {
     text: cleanLine(question.text),
     focus: question.focus || "resume",
     basedOn: question.basedOn || "",
+    topic: question.topic || question.focus || "General",
     followUps: (question.followUps || []).map(cleanLine).filter(Boolean).slice(0, 2),
     flags: [],
   };
@@ -258,8 +351,9 @@ function containsTerm(text, term) {
   return new RegExp(`(^|[^a-z0-9])${escapeRegExp(term.toLowerCase())}([^a-z0-9]|$)`, "i").test(text);
 }
 
-function topicMatchesResume(topic, facts, sections) {
+function topicMatchesResume(topic, facts, sections, requestedSkills = []) {
   const resumeText = [
+    ...(requestedSkills || []),
     ...(facts.skills || []),
     facts.summary,
     facts.education,
@@ -270,21 +364,24 @@ function topicMatchesResume(topic, facts, sections) {
   return topic.aliases.some((alias) => containsTerm(resumeText, alias));
 }
 
-function buildTechnicalPlan(facts, sections, role) {
-  const matchedTopics = TOPIC_BANKS.filter((topic) => topicMatchesResume(topic, facts, sections))
+function buildTechnicalPlan(facts, sections, role, requestedSkills = [], random = Math.random) {
+  const selectedSkills = dedupe([...(requestedSkills || []), ...(facts.skills || [])]).slice(0, 10);
+  const matchedTopics = TOPIC_BANKS.filter((topic) => topicMatchesResume(topic, facts, sections, selectedSkills))
     .sort((a, b) => roleBias(b, role) - roleBias(a, role))
-    .slice(0, 4);
+    .slice(0, 20);
   const questions = [makeQuestion({
     text: "Please introduce yourself, highlighting your background and the technical areas you would like to discuss from your resume.",
     focus: "resume",
     basedOn: "Candidate introduction",
+    topic: "Introduction",
   })];
 
-  for (const project of facts.projects) {
+  for (const project of facts.projects.slice(0, 5)) {
     questions.push(makeQuestion({
       text: `Please explain your project "${truncate(project, 140)}": what problem did it solve, what did you personally build, and which technical decisions did you make?`,
       focus: "resume",
       basedOn: `Resume project: ${truncate(project, 100)}`,
+      topic: "Project experience",
       followUps: ["How did you test your contribution, and what would you improve next?"],
     }));
   }
@@ -311,11 +408,23 @@ function buildTechnicalPlan(facts, sections, role) {
     if (questions.length >= 6) break;
     questions.push(makeQuestion({ ...filler, focus: "resume" }));
   }
+  const resumeFallbacks = [
+    "Which technical contribution on your resume best shows how you solve problems, and what was your specific role?",
+    "Describe a technical challenge you faced and the steps you took to resolve it.",
+    "How do you decide which tools or technologies to use for a new task?",
+    "Tell me about a time you learned an unfamiliar technology to complete a task.",
+    "How do you verify that a feature works as expected before sharing it?",
+  ];
   while (questions.length < 6) {
+    const text = resumeFallbacks.find((candidate) => (
+      !questions.some((question) => normalizeForCompare(question.text) === normalizeForCompare(candidate))
+    ));
+    if (!text) break;
     questions.push(makeQuestion({
-      text: "Which technical contribution on your resume best shows how you solve problems, and what was your specific role?",
+      text,
       focus: "resume",
       basedOn: "Resume contribution",
+      topic: "Resume experience",
     }));
   }
 
@@ -323,34 +432,62 @@ function buildTechnicalPlan(facts, sections, role) {
     text: "You have eight identical-looking balls, but one is heavier. Using a balance scale, how can you find the heavier ball in two weighings?",
     focus: "logic",
     basedOn: "Logical reasoning puzzle",
+    topic: "Problem solving",
   }));
 
-  const coreTopics = [...matchedTopics, ...TOPIC_BANKS.filter((topic) => !matchedTopics.includes(topic))];
-  const coreQuestions = coreTopics.flatMap((topic) => topic.questions.map((text) => ({ topic, text })));
-  for (const { topic, text } of coreQuestions.slice(0, 5)) {
-    const listedSkill = (facts.skills || []).find((skill) => topic.aliases.some((alias) => containsTerm(skill.toLowerCase(), alias)));
+  const skillTopics = selectedSkills.map((skill) => ({
+    skill,
+    topic: matchedTopics.find((candidate) => candidate.aliases.some((alias) => containsTerm(skill, alias))),
+  }));
+  const availableTopics = matchedTopics.length
+    ? matchedTopics
+    : TOPIC_BANKS;
+  const shuffledSkills = shuffled(skillTopics, random);
+  const coreSelections = selectedSkills.length
+    ? Array.from({ length: 5 }, (_, index) => shuffledSkills[index % shuffledSkills.length])
+    : shuffled(availableTopics.map((topic) => ({ skill: topic.name, topic })), random).slice(0, 5);
+  for (const { skill, topic } of coreSelections) {
+    const topicEntry = topic
+      ? shuffled(topic.questions, random)[0]
+      : null;
+    const topicQuestion = topicEntry?.text || `Explain a core concept in ${skill} and describe when you would use it.`;
     questions.push(makeQuestion({
-      text: listedSkill ? `${listedSkill}: ${text}` : text,
+      text: topicQuestion && skill.toLowerCase() !== topic?.name.toLowerCase()
+        ? `${skill}: ${topicQuestion}`
+        : topicQuestion,
       focus: "core-concept",
-      basedOn: `Core concept: ${topic.name}`,
+      basedOn: `Core concept: ${skill}`,
+      topic: skill,
     }));
   }
 
-  const scenarioSkill = (index) => facts.skills[index % Math.max(facts.skills.length, 1)] || "technology from your project";
-  const scenarioQuestions = [
+  const coreSkillNames = new Set(coreSelections.map(({ skill }) => skill));
+  const remainingSkills = shuffledSkills.filter(({ skill }) => !coreSkillNames.has(skill));
+  const scenarioSkills = selectedSkills.length
+    ? [...remainingSkills, ...shuffled([...new Map(coreSelections.map((entry) => [entry.skill, entry])).values()], random)]
+      .map(({ skill }) => skill)
+      .slice(0, 5)
+    : shuffled(matchedTopics.map((topic) => topic.name), random);
+  const scenarioTemplates = shuffled([
     (skill) => `A feature built with ${skill} becomes noticeably slow as usage grows. How would you investigate the bottleneck and decide what to optimize first?`,
     (skill) => `A change involving ${skill} works on your machine but fails for users after deployment. How would you diagnose the issue safely?`,
     (skill) => `An API or dependency used by a ${skill} application starts returning intermittent errors. How would you keep the experience reliable while finding the cause?`,
     (skill) => `You discover that a feature using ${skill} exposes or stores user data in an unsafe way. What would you do first, and how would you prevent a recurrence?`,
     (skill) => `A project using ${skill} must ship soon, but a requested feature could make the code difficult to maintain. How would you evaluate options and communicate your recommendation?`,
-  ];
-  scenarioQuestions.forEach((buildQuestion, index) => {
+    (skill) => `A ${skill} change passes locally but behaves differently in production. What evidence would you gather before choosing a fix?`,
+    (skill) => `A teammate proposes a shortcut in a ${skill} feature that may affect reliability. How would you assess and explain the trade-offs?`,
+    (skill) => `How would you test a critical ${skill} feature when its most important edge cases are not obvious?`,
+  ], random);
+  for (let index = 0; index < 5; index += 1) {
+    const skill = scenarioSkills[index % Math.max(scenarioSkills.length, 1)] || "technology from your project";
+    const buildQuestion = scenarioTemplates[index];
     questions.push(makeQuestion({
-      text: buildQuestion(scenarioSkill(index)),
+      text: buildQuestion(skill),
       focus: "technical-scenario",
-      basedOn: `Technical scenario: ${scenarioSkill(index)}`,
+      basedOn: `Technical scenario: ${skill}`,
+      topic: skill,
     }));
-  });
+  }
 
   [
     "A teammate is at risk of missing a deadline on work your project depends on. How would you handle it while keeping the work moving and the communication respectful?",
@@ -360,9 +497,10 @@ function buildTechnicalPlan(facts, sections, role) {
     text,
     focus: "stress-management",
     basedOn: "Stress management and teamwork",
+    topic: "Teamwork",
   })));
 
-  return { questions, topics: matchedTopics.map((topic) => topic.name) };
+  return { questions, topics: dedupe([...selectedSkills, ...matchedTopics.map((topic) => topic.name)]) };
 }
 
 /** Prefer topic banks whose aliases also appear in the job description. */
@@ -582,7 +720,18 @@ async function generateQuestionPlan(interview, resume) {
 
   const type = String(interview.type || "General").trim().toLowerCase();
   if (type === "technical" || type === "tech") {
-    const technical = buildTechnicalPlan(facts, sections, role);
+    const technicalSkills = Array.isArray(interview.technicalSkills)
+      ? interview.technicalSkills
+      : String(interview.technicalSkills || "").split(/[,;\n]/);
+    const technical = buildTechnicalPlan(
+      facts,
+      sections,
+      role,
+      technicalSkills.filter(Boolean),
+      seededRandom(
+        `${interview._id || interview.id || `${interview.jobRole || ""}:${technicalSkills.join(",")}`}:${interview.planVersion || 0}`
+      ),
+    );
     const finalized = finalizePlan(technical.questions, facts, role, TECHNICAL_QUESTION_COUNT);
     return {
       source: "structured-technical",
@@ -758,6 +907,8 @@ module.exports = {
   generateQuestionPlan,
   generateFollowUp,
   decideNextAction,
+  getAnswerGuide,
+  TOPIC_BANKS,
   splitResumeSections,
   buildHeuristicPlan,
   buildTechnicalPlan,

@@ -19,9 +19,14 @@ function randomWeighted(pool) {
   return pool[pool.length - 1].level;
 }
 
-function initialState() {
+function initialState(availableLevels = LEVELS) {
+  const levels = availableLevels.filter((level) => LEVELS.includes(level));
+  const levelPool = levels.length
+    ? levels.map((level) => ({ level, weight: 1 }))
+    : FIRST_DIFFICULTY_POOL;
+  const level = randomWeighted(levelPool);
   return {
-    level: randomWeighted(FIRST_DIFFICULTY_POOL),
+    level,
     levelStreak: 0,
     consecutiveEasyFails: 0,
     askedCount: 0,
@@ -31,7 +36,7 @@ function initialState() {
     easySolved: 0,
     mediumSolved: 0,
     hardSolved: 0,
-    highestLevel: LEVEL_INDEX[randomWeighted(FIRST_DIFFICULTY_POOL)],
+    highestLevel: LEVEL_INDEX[level],
     finished: false,
     result: null,
     failedThreeEasy: false,
@@ -39,11 +44,12 @@ function initialState() {
 }
 
 // Advance the adaptive state after one answered question.
-// Solves move up the ladder (easy -> medium -> medium -> hard -> hard...),
-// failures drop one level. Three consecutive easy failures -> "very weak".
+// Two consecutive correct answers raise one level; an incorrect answer lowers
+// one level. Three consecutive easy failures produce a "very weak" result.
 function advanceState(state, correct, questionDifficulty) {
   const wasCorrect = !!correct;
-  const current = LEVEL_INDEX[state.level];
+  const answeredLevel = LEVEL_INDEX[questionDifficulty] ?? LEVEL_INDEX[state.level];
+  state.answeredCount += 1;
 
   if (questionDifficulty === "easy" && wasCorrect) state.easySolved += 1;
   if (questionDifficulty === "medium" && wasCorrect) state.mediumSolved += 1;
@@ -51,21 +57,20 @@ function advanceState(state, correct, questionDifficulty) {
 
   if (wasCorrect) {
     state.correctCount += 1;
-    if (state.level === "easy") {
-      state.level = "medium";
-    } else if (state.level === "medium") {
-      if (state.levelStreak >= 1) state.level = "hard";
-    } else {
-      state.level = "hard";
+    state.levelStreak += 1;
+    if (state.levelStreak >= 2) {
+      if (LEVEL_INDEX[state.level] < LEVELS.length - 1) {
+        state.level = LEVELS[LEVEL_INDEX[state.level] + 1];
+      }
+      state.levelStreak = 0;
     }
     state.consecutiveEasyFails = 0;
-    state.levelStreak = 0;
   } else {
     state.wrongCount += 1;
-    const next = Math.max(current - 1, 0);
+    const next = Math.max(LEVEL_INDEX[state.level] - 1, 0);
     state.level = LEVELS[next];
     state.levelStreak = 0;
-    if (state.level === "easy") {
+    if (questionDifficulty === "easy") {
       state.consecutiveEasyFails += 1;
       if (state.consecutiveEasyFails >= 3) {
         state.finished = true;
@@ -77,7 +82,7 @@ function advanceState(state, correct, questionDifficulty) {
     }
   }
 
-  state.highestLevel = Math.max(state.highestLevel, LEVEL_INDEX[state.level]);
+  state.highestLevel = Math.max(state.highestLevel, answeredLevel);
   return state;
 }
 
@@ -91,48 +96,57 @@ function classifyResult(state) {
   return ratio >= 0.8 ? "excellent" : ratio >= 0.6 ? "good" : "average";
 }
 
-// Pick the next question for an adaptive attempt.
-async function pickAdaptiveQuestion(state, test, askedIds) {
+function buildAdaptiveQuestionFilter(test, askedIds = []) {
   const type = test.type === "coding" ? "coding" : "aptitude";
-  const filter = { type, difficulty: state.level };
-
-  if (type === "coding") {
-    const { col } = require("./db");
-    const aimlCount = await col("questions").countDocuments({ type: "coding", source: "aiml" });
-    if (aimlCount > 0) {
-      filter.source = "aiml";
-    }
+  const filter = { type };
+  const questionFilter = test.questionFilter || test.adaptive?.questionFilter || {};
+  const topics = Array.isArray(questionFilter.tags) && questionFilter.tags.length
+    ? questionFilter.tags
+    : Array.isArray(test.topics) ? test.topics : [];
+  const formats = Array.isArray(questionFilter.formats) && questionFilter.formats.length
+    ? questionFilter.formats
+    : [type === "coding" ? "programming" : "mcq"];
+  if (topics.length) {
+    filter.tags = { $in: topics.map((topic) => new RegExp(
+      String(topic).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+      "i",
+    )) };
   }
+  if (questionFilter.subject) filter.subject = questionFilter.subject;
+  if (formats.length) filter.format = { $in: formats };
+  if (askedIds.length) filter._id = { $nin: askedIds };
+  return filter;
+}
 
-  if (test.questionFilter) {
-    const { tags, subject, formats } = test.questionFilter;
-    if (tags && tags.length) filter.tags = { $in: tags };
-    if (subject) filter.subject = subject;
-    if (formats && formats.length) filter.format = { $in: formats };
-  }
-  if (askedIds && askedIds.length) filter._id = { $nin: askedIds.map(String) };
-
-  const { col } = require("./db");
-  let pool = await col("questions").find(filter).toArray();
-  if (!pool.length && state.level !== "easy") {
-    // Fall back to an easier level, then any.
-    const fallbackOrder = state.level === "hard" ? ["medium", "easy"] : ["easy"];
-    for (const lvl of fallbackOrder) {
-      pool = await col("questions").find({ ...filter, difficulty: lvl }).toArray();
+// Pick the next question without dropping the selected format or topic filters.
+async function pickAdaptiveQuestion(state, test, askedIds = []) {
+  const { col, id } = require("./db");
+  const baseFilter = buildAdaptiveQuestionFilter(test, askedIds.map(id));
+  let pool = await col("questions").find({ ...baseFilter, difficulty: state.level }).toArray();
+  if (!pool.length) {
+    const fallbackOrder = state.level === "easy"
+      ? ["medium", "hard"]
+      : state.level === "hard" ? ["medium", "easy"] : ["easy", "hard"];
+    for (const level of fallbackOrder) {
+      pool = await col("questions").find({ ...baseFilter, difficulty: level }).toArray();
       if (pool.length) {
-        state.level = lvl;
+        state.level = level;
         break;
       }
     }
-  }
-  if (!pool.length) {
-    const anyFilter = { type };
-    if (filter.format) anyFilter.format = filter.format;
-    pool = await col("questions").find(anyFilter).toArray();
   }
   if (!pool.length) return null;
   const q = pool[Math.floor(Math.random() * pool.length)];
   return q;
 }
 
-module.exports = { LEVELS, LEVEL_INDEX, initialState, advanceState, classifyResult, pickAdaptiveQuestion, randomWeighted };
+module.exports = {
+  LEVELS,
+  LEVEL_INDEX,
+  initialState,
+  advanceState,
+  classifyResult,
+  buildAdaptiveQuestionFilter,
+  pickAdaptiveQuestion,
+  randomWeighted,
+};

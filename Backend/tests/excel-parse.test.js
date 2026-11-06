@@ -6,6 +6,8 @@ const XLSX = require("xlsx");
 const {
   rowsFromBuffer,
   parseAptitudeMcqManual,
+  parseAptitudeFillupManual,
+  parseCodingManual,
   parseAptitudeQuestions,
 } = require("../src/excel-parse");
 
@@ -42,4 +44,33 @@ test("keeps the existing headered aptitude question format", () => {
   assert.equal(questions[0].title, "Question with headers?");
   assert.deepEqual(questions[0].options, ["one", "two", "three", "four"]);
   assert.equal(questions[0].correctOption, 2);
+});
+
+test("imports difficulty and topic metadata for all supported question formats", () => {
+  const aptitudeRows = rowsFromBuffer(workbookBuffer([
+    ["Question", "Option A", "Option B", "Option C", "Option D", "Correct Answer", "Topic", "Difficulty", "Points"],
+    ["Choose the correct answer", "A", "B", "C", "D", "B", "Percentages", "hard", 2],
+  ]));
+  const mcq = parseAptitudeMcqManual(aptitudeRows)[0];
+  assert.equal(mcq.difficulty, "hard");
+  assert.equal(mcq.points, 2);
+  assert.deepEqual(mcq.tags, ["Percentages"]);
+
+  const fillupRows = rowsFromBuffer(workbookBuffer([
+    ["Question", "Correct Answer", "Accepted Answers", "Topic", "Difficulty"],
+    ["What is 25% of 80?", "20", "twenty; 20.0", "Percentages", "medium"],
+  ]));
+  const fillup = parseAptitudeFillupManual(fillupRows)[0];
+  assert.deepEqual(fillup.acceptedAnswers, ["20", "twenty", "20.0"]);
+  assert.equal(fillup.difficulty, "medium");
+
+  const programmingRows = rowsFromBuffer(workbookBuffer([
+    ["Question", "Problem Statement", "Test Case 1", "Topic", "Difficulty", "Points"],
+    ["Sum values", "Add two values", "2 3 => 5", "Arrays", "hard", 20],
+  ]));
+  const programming = parseCodingManual(programmingRows)[0];
+  assert.equal(programming.difficulty, "hard");
+  assert.equal(programming.points, 20);
+  assert.deepEqual(programming.tags, ["Arrays"]);
+  assert.equal(programming.testCases[0].expectedOutput, "5");
 });

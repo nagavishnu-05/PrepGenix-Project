@@ -29,6 +29,42 @@
     },
     "UI/UX Designer": {
       "keywords": ["figma", "ui", "ux", "wireframe", "prototype", "design thinking", "user research", "user experience", "user interface", "photoshop", "illustrator", "sketch", "adobe xd"]
+    },
+    "Java Developer": {
+      "keywords": ["java", "spring", "spring boot", "hibernate", "jpa", "maven", "gradle", "junit", "jvm"]
+    },
+    "Python Developer": {
+      "keywords": ["python", "django", "flask", "fastapi", "pytest", "pandas", "numpy", "scripting"]
+    },
+    "Cloud Engineer": {
+      "keywords": ["aws", "azure", "gcp", "cloud", "terraform", "cloudformation", "azure functions", "lambda", "cloud run"]
+    },
+    "Cybersecurity Analyst": {
+      "keywords": ["cybersecurity", "security analyst", "penetration testing", "owasp", "vulnerability assessment", "siem", "soc", "incident response", "burp suite", "nmap"]
+    },
+    "Database Engineer": {
+      "keywords": ["sql", "database", "postgresql", "mysql", "sql server", "oracle", "mongodb", "database design", "query optimization"]
+    },
+    "QA Automation Engineer": {
+      "keywords": ["automation testing", "selenium", "cypress", "playwright", "appium", "pytest", "junit", "test automation", "quality assurance"]
+    },
+    "Embedded Systems Engineer": {
+      "keywords": ["embedded", "microcontroller", "arduino", "raspberry pi", "firmware", "rtos", "c programming", "c++", "iot"]
+    },
+    "Game Developer": {
+      "keywords": ["game development", "unity", "unreal engine", "gameplay", "c#", "c++", "godot", "game design"]
+    },
+    "Blockchain Developer": {
+      "keywords": ["blockchain", "solidity", "ethereum", "web3", "smart contract", "smart contracts", "hardhat", "cryptography"]
+    },
+    "Business Intelligence Analyst": {
+      "keywords": ["business intelligence", "power bi", "tableau", "looker", "data visualization", "dashboard", "dax", "reporting"]
+    },
+    "Technical Support Engineer": {
+      "keywords": ["technical support", "troubleshooting", "help desk", "customer support", "it support", "service desk", "ticketing"]
+    },
+    "Systems Administrator": {
+      "keywords": ["system administration", "systems administrator", "linux administration", "windows server", "active directory", "shell scripting", "network administration"]
     }
   },
   "skills": [
@@ -45,7 +81,12 @@
     "wordpress", "shopify", "d3.js", "recharts", "socket.io", "webrtc", "redux thunk", "react query", "tailwind",
     "docker compose", "ci/cd", "devops", "mlops", "llm", "genai", "generative ai", "langchain", "vector database",
     "agile", "scrum", "kanban", "unit testing", "integration testing", "api testing", "rabbitmq", "grpc", "elasticsearch",
-    "sql server", "oracle", "mariadb", "sqlite", "firebase", "heroku", "netlify", "vercel", "nginx", "apache"
+    "sql server", "oracle", "mariadb", "sqlite", "firebase", "heroku", "netlify", "vercel", "nginx", "apache",
+    "spring", "hibernate", "jpa", "maven", "gradle", "jvm", "playwright", "appium", "penetration testing",
+    "owasp", "siem", "incident response", "burp suite", "nmap", "terraform", "cloudformation", "azure functions",
+    "lambda", "cloud run", "unity", "unreal engine", "godot", "solidity", "ethereum", "web3", "hardhat",
+    "arduino", "raspberry pi", "firmware", "rtos", "microcontroller", "active directory", "windows server",
+    "network administration", "dax", "business intelligence", "help desk", "service desk", "troubleshooting"
   ],
   "strengthKeywords": {
     "full stack": ["react", "node", "express", "mongodb", "mysql", "sql", "rest api", "full stack", "full-stack", "javascript", "typescript", "graphql", "spring boot", "django"],

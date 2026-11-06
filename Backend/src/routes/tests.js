@@ -7,7 +7,7 @@ const multer = require("multer");
 const { col, toId, id } = require("../db");
 const { authenticate } = require("../middleware/auth");
 const storage = require("../lib/storage");
-const { initialState, advanceState, classifyResult, pickAdaptiveQuestion } = require("../adaptive");
+const { initialState, advanceState, classifyResult, buildAdaptiveQuestionFilter, pickAdaptiveQuestion } = require("../adaptive");
 const { gradeSubmission } = require("../judge");
 const { pushAptitude, pushCoding } = require("../perf");
 const { isStudentAssignedToTest, assignedRegistrationNumbers } = require("../lib/assignment-scope");
@@ -25,6 +25,7 @@ const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
 const DIFFICULTIES = ["easy", "medium", "hard"];
+const TEST_FORMATS = ["aptitude_mcq", "aptitude_fillup", "coding_mcq", "coding_programming"];
 
 const PROCTOR_DEFAULT = {
   enabled: true,
@@ -330,6 +331,9 @@ router.post("/import-questions", authenticate, upload.single("file"), async (req
     const testType = req.body.testType; // "aptitude" or "coding"
     const manualType = req.body.manualType; // "mcq" or "fillup" or "programming"
     const questionLimit = Number(req.body.questionLimit) || 0;
+    const fixedDifficulty = ["easy", "medium", "hard"].includes(req.body.difficulty)
+      ? req.body.difficulty
+      : null;
 
     const rows = rowsFromBuffer(req.file.buffer, { headerlessAptitude: manualType === "mcq" });
     let parsed = [];
@@ -354,6 +358,9 @@ router.post("/import-questions", authenticate, upload.single("file"), async (req
     // Slice to limit
     if (questionLimit > 0 && parsed.length > questionLimit) {
       parsed = parsed.slice(0, questionLimit);
+    }
+    if (fixedDifficulty) {
+      parsed = parsed.map((question) => ({ ...question, difficulty: fixedDifficulty }));
     }
 
     const now = new Date();
@@ -405,6 +412,13 @@ router.post("/", authenticate, async (req, res) => {
       if (matchingStudents !== assignedStudents.length) return res.status(404).json({ error: "One or more selected students were not found" });
     }
     const mode = body.mode === "adaptive" ? "adaptive" : "fixed";
+    if (body.testFormat && !TEST_FORMATS.includes(body.testFormat)) {
+      return res.status(400).json({ error: "Unsupported test question format" });
+    }
+    const adaptiveQuestionCount = Number(body.adaptive?.totalQuestions ?? 10);
+    if (mode === "adaptive" && (!Number.isInteger(adaptiveQuestionCount) || adaptiveQuestionCount < 1 || adaptiveQuestionCount > 100)) {
+      return res.status(400).json({ error: "Adaptive question count must be between 1 and 100" });
+    }
     const test = {
       title: String(body.title).trim(),
       description: body.description || "",
@@ -414,8 +428,13 @@ router.post("/", authenticate, async (req, res) => {
       startsAt: body.startsAt ? new Date(body.startsAt) : null,
       endsAt: body.endsAt ? new Date(body.endsAt) : null,
       type: body.type === "coding" ? "coding" : "aptitude",
+      testFormat: TEST_FORMATS.includes(body.testFormat) ? body.testFormat : null,
       mode,
-      adaptive: body.adaptive || { totalQuestions: 10, questionFilter: null },
+      adaptive: {
+        ...(body.adaptive || {}),
+        totalQuestions: Number.isInteger(adaptiveQuestionCount) ? adaptiveQuestionCount : 10,
+        questionFilter: body.adaptive?.questionFilter || null,
+      },
       fixedQuestionIds: Array.isArray(body.fixedQuestionIds) ? body.fixedQuestionIds.map(String) : [],
       autoPick: body.autoPick || null,
       assignmentMode,
@@ -452,6 +471,10 @@ router.put("/:id", authenticate, async (req, res) => {
     if (body.title !== undefined) set.title = body.title;
     if (body.description !== undefined) set.description = body.description;
     if (body.type !== undefined) set.type = body.type === "coding" ? "coding" : "aptitude";
+    if (body.testFormat !== undefined) {
+      if (!TEST_FORMATS.includes(body.testFormat)) return res.status(400).json({ error: "Unsupported test question format" });
+      set.testFormat = body.testFormat;
+    }
     if (body.mode !== undefined) set.mode = body.mode === "adaptive" ? "adaptive" : "fixed";
     if (body.topics !== undefined) {
       if (!Array.isArray(body.topics)) return res.status(400).json({ error: "topics must be an array" });
@@ -474,7 +497,17 @@ router.put("/:id", authenticate, async (req, res) => {
     if (nextStart && nextEnd && new Date(nextStart) >= new Date(nextEnd)) {
       return res.status(400).json({ error: "Test end time must be after its start time" });
     }
-    if (body.adaptive !== undefined) set.adaptive = body.adaptive;
+    if (body.adaptive !== undefined) {
+      const totalQuestions = Number(body.adaptive?.totalQuestions);
+      if (!Number.isInteger(totalQuestions) || totalQuestions < 1 || totalQuestions > 100) {
+        return res.status(400).json({ error: "Adaptive question count must be between 1 and 100" });
+      }
+      set.adaptive = {
+        ...body.adaptive,
+        totalQuestions,
+        questionFilter: body.adaptive?.questionFilter || null,
+      };
+    }
     if (body.fixedQuestionIds !== undefined) set.fixedQuestionIds = body.fixedQuestionIds.map(String);
     if (body.autoPick !== undefined) set.autoPick = body.autoPick;
     if (body.durationMin !== undefined) set.durationMin = Number(body.durationMin);
@@ -794,8 +827,20 @@ router.post("/:id/start", authenticate, async (req, res) => {
       const totalScore = (await col("questions").find({ _id: { $in: ids.map(id) } }).toArray()).reduce((s, q) => s + (q.points || 1), 0);
       attemptDoc.totalScore = totalScore;
     } else {
-      attemptDoc.adaptive = initialState();
-      attemptDoc.totalQuestions = Number(test.adaptive?.totalQuestions) || 10;
+      const questionFilter = buildAdaptiveQuestionFilter(test);
+      const availableLevelsRaw = await col("questions").distinct("difficulty", questionFilter);
+      const availableLevels = DIFFICULTIES.filter((difficulty) => availableLevelsRaw.includes(difficulty));
+      const availableQuestionCount = availableLevels.length
+        ? await col("questions").countDocuments({ ...questionFilter, difficulty: { $in: availableLevels } })
+        : 0;
+      const requiredQuestionCount = Number(test.adaptive?.totalQuestions) || 10;
+      if (availableQuestionCount < requiredQuestionCount) {
+        return res.status(400).json({
+          error: `This adaptive test needs ${requiredQuestionCount} unique questions for its selected topics and format, but only ${availableQuestionCount} are available.`,
+        });
+      }
+      attemptDoc.adaptive = initialState(availableLevels);
+      attemptDoc.totalQuestions = requiredQuestionCount;
       attemptDoc.totalScore = attemptDoc.totalQuestions * 10;
     }
 
@@ -1054,7 +1099,8 @@ router.post("/attempts/:attemptId/answer", authenticate, async (req, res) => {
     let judgeResult = null;
     let answerValue = answer;
 
-    if (q.type === "coding") {
+    const isProgrammingQuestion = q.type === "coding" && q.format === "programming";
+    if (isProgrammingQuestion) {
       if (!code) return res.status(400).json({ error: "Code is required" });
       const lang = language || q.language || "javascript";
       const testCases = (q.testCases || []).map((tc, i) => ({ ...tc, orderIndex: tc.orderIndex ?? i }));
@@ -1068,12 +1114,15 @@ router.post("/attempts/:attemptId/answer", authenticate, async (req, res) => {
       correct = given === q.correctOption || (typeof given === "string" && given.trim().toLowerCase() === String(q.options[q.correctOption] || "").trim().toLowerCase());
     } else {
       const normalize = (s) => String(s || "").toLowerCase().replace(/\s+/g, " ").trim();
-      correct = normalize(answer) === normalize(q.answer);
+      const acceptedAnswers = Array.isArray(q.acceptedAnswers) && q.acceptedAnswers.length
+        ? q.acceptedAnswers
+        : [q.answer];
+      correct = acceptedAnswers.some((accepted) => normalize(answer) === normalize(accepted));
     }
 
     let pointsEarned = 0;
     if (correct) pointsEarned = q.points || (q.type === "coding" ? 10 : 1);
-    else if (q.type === "coding" && total > 0) pointsEarned = Math.round((q.points || 10) * (passed / total));
+    else if (isProgrammingQuestion && total > 0) pointsEarned = Math.round((q.points || 10) * (passed / total));
 
     const answerDoc = {
       questionId: qid,
@@ -1131,7 +1180,7 @@ router.post("/attempts/:attemptId/answer", authenticate, async (req, res) => {
     res.json({
       finished,
       result,
-      ...(q.type === "coding"
+      ...(isProgrammingQuestion
         ? {
             passed,
             total,
@@ -1196,6 +1245,7 @@ router.get("/attempts/:attemptId/result", authenticate, async (req, res) => {
       const reportQuestion = {
         title: question.title,
         description: question.description,
+        explanation: question.explanation,
         type: question.type,
         format: question.format,
         options: question.options,

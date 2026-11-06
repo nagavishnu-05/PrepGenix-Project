@@ -48,13 +48,17 @@ def extract_text(path):
 def normalize(text):
     return re.sub(r"\s+", " ", text or "").lower()
 
+def contains_phrase(text, phrase):
+    normalized_phrase = r"\s+".join(re.escape(part) for part in phrase.split())
+    pattern = rf"(?<![a-z0-9]){normalized_phrase}(?![a-z0-9])"
+    return re.search(pattern, text, flags=re.IGNORECASE) is not None
+
 
 def find_skills(text, rules):
     norm = normalize(text)
     found = []
     for skill in rules["skills"]:
-        key = skill.lower()
-        if key in norm:
+        if contains_phrase(norm, skill):
             found.append(skill)
     return sorted(set(found), key=lambda s: norm.find(s.lower()))
 
@@ -66,7 +70,7 @@ def categorize(text, rules, skills):
         score = 0
         hits = []
         for kw in cfg["keywords"]:
-            if kw.lower() in norm:
+            if contains_phrase(norm, kw):
                 score += 1
                 hits.append(kw)
         if score > 0:

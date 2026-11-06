@@ -205,10 +205,15 @@ function parseAptitudeQuestions(rows) {
       subject: r.subject || r.category || "quantitative",
       title: String(title).trim(),
       description: cellValue(r.description || r.questiontext || r.question || title),
+      explanation: cellValue(r.explanation),
       codeSnippet: restoreCodeFormatting(cellValuePreserveIndent(r.codesnippet || r.snippet || r.code)),
       options,
       correctOption,
       answer: answer != null ? String(answer).trim() : null,
+      ...(format === "fillup" ? {
+        acceptedAnswers: [...new Set([String(answer || "").trim(), ...String(r.acceptedanswers || "").split(/[;|]/)]
+          .map((value) => value.trim()).filter(Boolean))],
+      } : {}),
       difficulty: ["easy", "medium", "hard"].includes(diff) ? diff : "easy",
       points: Number(r.points || r.marks || 1) || 1,
       tags: String(r.tags || r.topic || "")
@@ -294,6 +299,7 @@ function parseJsonQuestions(filePath) {
         format: "programming",
         title: String(q.title || q.name || `Question ${i + 1}`).trim(),
         description: q.description || q.statement || "",
+        explanation: q.explanation || "",
         codeSnippet: q.codeSnippet || q.starterCode || "",
         language: (q.language || "javascript").toLowerCase(),
         difficulty: ["easy", "medium", "hard"].includes(q.difficulty) ? q.difficulty : "easy",
@@ -314,10 +320,12 @@ function parseJsonQuestions(filePath) {
       subject: q.subject || q.category || "quantitative",
       title: String(q.title || q.question || q.name || `Question ${i + 1}`).trim(),
       description: q.description || q.questionText || q.question || "",
+      explanation: q.explanation || "",
       codeSnippet: q.codeSnippet || "",
       options: q.options || [],
       correctOption: typeof q.correctOption === "number" ? q.correctOption : null,
       answer: q.answer || null,
+      ...(Array.isArray(q.acceptedAnswers) ? { acceptedAnswers: q.acceptedAnswers.map(String).filter(Boolean) } : {}),
       difficulty: ["easy", "medium", "hard"].includes(q.difficulty) ? q.difficulty : "easy",
       points: Number(q.points || q.marks || 1) || 1,
       tags: q.tags || [],
@@ -444,19 +452,23 @@ function parseAptitudeMcqManual(rows) {
     }
     if (correctOption == null && options.length) correctOption = 0;
 
+    const difficulty = String(r.difficulty || "").toLowerCase();
     questions.push({
       type: "aptitude",
       format: "mcq",
       subject: r.subject || r.category || "quantitative",
       title: title,
       description: title,
-      codeSnippet: "",
+      explanation: cellValuePreserveIndent(r.explanation || ""),
+      codeSnippet: restoreCodeFormatting(cellValuePreserveIndent(r.codesnippet || r.snippet || "")),
       options,
       correctOption,
       answer: null,
-      difficulty: "easy",
-      points: 1,
-      tags: r.tags ? String(r.tags).split(",").map(t => t.trim()) : ["mcq"],
+      language: (r.language || "javascript").toLowerCase(),
+      difficulty: ["easy", "medium", "hard"].includes(difficulty) ? difficulty : "easy",
+      points: Number(r.points || r.marks || 1) || 1,
+      tags: String([r.topic || r.category || "", r.tags || ""].filter(Boolean).join(","))
+        .split(/[,;]/).map((tag) => tag.trim()).filter(Boolean).concat(r.topic || r.category ? [] : ["mcq"]),
       source: "excel-manual",
       rowIndex: i,
     });
@@ -471,6 +483,9 @@ function parseAptitudeFillupManual(rows) {
     if (!title) return;
 
     const answer = String(r.corrans || r.correctanswer || r.correctoption || r.answer || "").trim();
+    const acceptedAnswers = [...new Set([answer, ...String(r.acceptedanswers || "").split(/[;|]/)]
+      .map((value) => value.trim()).filter(Boolean))];
+    const difficulty = String(r.difficulty || "").toLowerCase();
 
     questions.push({
       type: "aptitude",
@@ -478,13 +493,16 @@ function parseAptitudeFillupManual(rows) {
       subject: r.subject || r.category || "verbal",
       title: title,
       description: title,
+      explanation: cellValuePreserveIndent(r.explanation || ""),
       codeSnippet: "",
       options: [],
       correctOption: null,
-      answer: answer,
-      difficulty: "easy",
-      points: 1,
-      tags: r.tags ? String(r.tags).split(",").map(t => t.trim()) : ["fillup"],
+      answer,
+      acceptedAnswers,
+      difficulty: ["easy", "medium", "hard"].includes(difficulty) ? difficulty : "easy",
+      points: Number(r.points || r.marks || 1) || 1,
+      tags: String([r.topic || r.category || "", r.tags || ""].filter(Boolean).join(","))
+        .split(/[,;]/).map((tag) => tag.trim()).filter(Boolean).concat(r.topic || r.category ? [] : ["fillup"]),
       source: "excel-manual",
       rowIndex: i,
     });
@@ -498,7 +516,8 @@ function parseCodingManual(rows) {
     const title = restoreCodeFormatting(cellValuePreserveIndent(r.ques || r.question || r.q || r.title || ""));
     if (!title) return;
 
-    const description = restoreCodeFormatting(cellValuePreserveIndent(r.description || ""));
+    const description = restoreCodeFormatting(cellValuePreserveIndent(r.description || r.problemstatement || ""));
+    const codeSnippet = restoreCodeFormatting(cellValuePreserveIndent(r.startercode || r.codesnippet || ""));
     const inputFormat = cellValuePreserveIndent(r.inputformat || "");
     const outputFormat = cellValuePreserveIndent(r.outputformat || "");
     
@@ -539,14 +558,18 @@ function parseCodingManual(rows) {
       }
     }
 
-    const tagsVal = String(r.tags || "").trim();
+    const tagsVal = [r.topic || r.category || "", r.tags || ""].filter(Boolean).join(",");
     const tags = tagsVal ? tagsVal.split(/[,;]/).map(t => t.trim()).filter(Boolean) : ["coding"];
+    const difficulty = String(r.difficulty || "").toLowerCase();
 
     questions.push({
       type: "coding",
       format: "programming",
       title: title,
       description: description,
+      explanation: cellValuePreserveIndent(r.explanation || ""),
+      codeSnippet,
+      language: (r.language || "javascript").toLowerCase(),
       inputFormat: inputFormat,
       outputFormat: outputFormat,
       constraints: constraints,
@@ -557,8 +580,8 @@ function parseCodingManual(rows) {
       })),
       testCases: testCases,
       tags: tags,
-      difficulty: "medium", // default
-      points: 10, // default
+      difficulty: ["easy", "medium", "hard"].includes(difficulty) ? difficulty : "medium",
+      points: Number(r.points || r.marks || 10) || 10,
       starterCode: {}, // will use our fallbacks in store
       source: "excel-manual",
       rowIndex: i,

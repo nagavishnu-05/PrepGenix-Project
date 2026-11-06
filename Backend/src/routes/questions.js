@@ -7,6 +7,7 @@ const multer = require("multer");
 const { col, toId, id } = require("../db");
 const { authenticate } = require("../middleware/auth");
 const { rowsFromBuffer, rowsFromFile, parseAptitudeQuestions, parseCodingQuestions, parseJsonQuestions, normalizeHeader } = require("../excel-parse");
+const { normalizeRequest, generateQuestions } = require("../lib/aiml-question-generator");
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
@@ -45,10 +46,47 @@ router.get("/aiml-files", authenticate, async (_req, res) => {
   try {
     if (!staffOnly(_req, res)) return;
     if (!fs.existsSync(AIML_DATA)) return res.json([]);
-    const files = fs.readdirSync(AIML_DATA).filter((f) => /\.(xlsx|xls|csv|json)$/i.test(f));
+    const files = fs.readdirSync(AIML_DATA)
+      .filter((f) => f.toLowerCase() !== "skills.json" && /\.(xlsx|xls|csv|json)$/i.test(f));
     res.json(files);
   } catch {
     res.status(500).json({ error: "Failed to list AIML files" });
+  }
+});
+
+// POST /api/questions/aiml-generate (staff) { testFormat, topics, count, difficulty, action }
+router.post("/aiml-generate", authenticate, async (req, res) => {
+  if (!staffOnly(req, res)) return;
+  let request;
+  try {
+    request = normalizeRequest(req.body);
+  } catch (error) {
+    return res.status(400).json({ error: error.message });
+  }
+
+  try {
+    const questions = await generateQuestions(request);
+    if (request.action === "download") {
+      return res.json({ questions, savedCount: 0 });
+    }
+
+    const now = new Date();
+    const withMeta = questions.map((question) => ({
+      ...question,
+      createdBy: req.user.userId,
+      createdAt: now,
+      updatedAt: now,
+    }));
+    const result = await col("questions").insertMany(withMeta);
+    return res.status(201).json({
+      questions,
+      savedCount: withMeta.length,
+      questionIds: Object.values(result.insertedIds).map((questionId) => questionId.toString()),
+    });
+  } catch (error) {
+    const unavailable = /AI question generation is unavailable/.test(error.message);
+    console.error("AIML question generation failed:", error.message);
+    return res.status(unavailable ? 503 : 502).json({ error: error.message || "AI question generation failed" });
   }
 });
 
@@ -58,6 +96,9 @@ router.post("/aiml-import", authenticate, async (req, res) => {
     if (!staffOnly(req, res)) return;
     const { file } = req.body;
     if (!file) return res.status(400).json({ error: "File name required" });
+    if (String(file).toLowerCase() === "skills.json") {
+      return res.status(400).json({ error: "skills.json contains role-recognition taxonomy, not assessment questions." });
+    }
     const filePath = path.join(AIML_DATA, file);
     if (!fs.existsSync(filePath)) return res.status(404).json({ error: "File not found in AIML/data" });
     let parsed = [];

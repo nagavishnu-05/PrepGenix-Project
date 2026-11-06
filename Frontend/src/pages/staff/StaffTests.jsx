@@ -183,6 +183,11 @@ export default function StaffTests() {
 
     const openEdit = (test) => {
         setEditingTest(test);
+        const testFormat = test.testFormat || (
+            test.type === "coding"
+                ? (test.adaptive?.questionFilter?.formats?.[0] === "mcq" ? "coding_mcq" : "coding_programming")
+                : (test.adaptive?.questionFilter?.formats?.[0] === "fillup" ? "aptitude_fillup" : "aptitude_mcq")
+        );
         setF({
             ...emptyForm(),
             title: test.title || "",
@@ -190,7 +195,8 @@ export default function StaffTests() {
             topicsText: (test.topics || []).join(", "),
             startsAt: toDatetimeLocal(test.startsAt),
             endsAt: toDatetimeLocal(test.endsAt),
-            testTypeSelection: test.type === "coding" ? "coding_mcq" : "aptitude_mcq",
+            testTypeSelection: testFormat,
+            manualType: testFormat.endsWith("_fillup") ? "fillup" : testFormat === "coding_programming" ? "programming" : "mcq",
             mode: test.mode || "fixed",
             durationMin: test.durationMin || 30,
             passingScore: test.passingScore ?? 50,
@@ -205,6 +211,7 @@ export default function StaffTests() {
             proctoringReviewOnly: test.proctoring?.reviewOnly !== false,
             proctoringInterval: test.proctoring?.snapshotIntervalSec || 20,
             adaptiveCount: test.adaptive?.totalQuestions || 10,
+            fixedDifficulty: "excel",
         });
         setSelectedFile(null);
         setCreateOpen(true);
@@ -383,8 +390,10 @@ export default function StaffTests() {
             return;
         }
         
-        const testType = f.testTypeSelection === "aptitude_mcq" ? "aptitude" : "coding";
-        const manualType = f.testTypeSelection === "coding_programming" ? "programming" : "mcq";
+        const testType = f.testTypeSelection.startsWith("aptitude_") ? "aptitude" : "coding";
+        const manualType = f.testTypeSelection.endsWith("_fillup")
+            ? "fillup"
+            : f.testTypeSelection === "coding_programming" ? "programming" : "mcq";
         setBusy(true);
         try {
             let fixedQuestionIds = [];
@@ -400,7 +409,8 @@ export default function StaffTests() {
                     const importRes = await api.tests.importQuestions(selectedFile, {
                         testType,
                         manualType,
-                        questionLimit: Number(f.questionLimit) || 0
+                        questionLimit: Number(f.questionLimit) || 0,
+                        difficulty: f.fixedDifficulty,
                     });
                     fixedQuestionIds = importRes.questionIds;
                 }
@@ -413,6 +423,7 @@ export default function StaffTests() {
                 startsAt: startsAt.toISOString(),
                 endsAt: endsAt.toISOString(),
                 type: testType,
+                testFormat: f.testTypeSelection,
                 mode: f.mode,
                 durationMin: Number(f.durationMin) || 30,
                 passingScore: Number(f.passingScore) || 50,
@@ -424,7 +435,11 @@ export default function StaffTests() {
                     reviewOnly: f.proctoringReviewOnly,
                     snapshotIntervalSec: Number(f.proctoringInterval) || 20,
                 },
-                adaptive: f.mode === "adaptive" ? { totalQuestions: Number(f.adaptiveCount) || 10, questionFilter: null } : undefined,
+                adaptive: f.mode === "adaptive" ? {
+                    totalQuestions: Number(f.adaptiveCount) || 10,
+                    questionFilter: { tags: topics, formats: [manualType] },
+                } : undefined,
+                fixedDifficulty: f.fixedDifficulty,
                 fixedQuestionIds,
                 allowedLanguages: testType === "coding" ? ["c", "cpp", "java", "python"] : undefined,
                 assignedToAll: false,
@@ -675,9 +690,14 @@ export default function StaffTests() {
                                 <InlineSelect
                                     ariaLabel="Test type"
                                     value={f.testTypeSelection}
-                                    onValueChange={(v) => set({ testTypeSelection: v, mode: "fixed", manualType: v === "coding_programming" ? "programming" : "mcq" })}
+                                    onValueChange={(v) => set({
+                                        testTypeSelection: v,
+                                        mode: "fixed",
+                                        manualType: v === "aptitude_fillup" ? "fillup" : v === "coding_programming" ? "programming" : "mcq",
+                                    })}
                                     options={[
                                         { value: "aptitude_mcq", label: "Aptitude MCQ" },
+                                        { value: "aptitude_fillup", label: "Aptitude Fill-up" },
                                         { value: "coding_mcq", label: "Coding MCQ" },
                                         { value: "coding_programming", label: "Coding Programming" },
                                     ]}
@@ -690,9 +710,8 @@ export default function StaffTests() {
                                     ariaLabel="Test mode"
                                     value={f.mode}
                                     onValueChange={(v) => set({ mode: v })}
-                                    disabled={f.testTypeSelection === "coding_mcq"}
                                     options={[
-                                        { value: "fixed", label: "Manual (Upload Excel)" },
+                                        { value: "fixed", label: "Fixed difficulty (Upload Excel)" },
                                         { value: "adaptive", label: "Adaptive" },
                                     ]}
                                 />
@@ -743,20 +762,20 @@ export default function StaffTests() {
                             <div className="space-y-4 rounded-lg border border-slate-200 dark:border-zinc-800 bg-slate-50 dark:bg-zinc-950/40 p-4">
                                 <p className="text-sm font-medium text-slate-800 dark:text-zinc-200">Manual Setup (Excel Upload)</p>
                                 
-                                {f.testTypeSelection === "aptitude_mcq" && (
-                                    <div className="space-y-1.5">
-                                        <Label className="text-xs text-slate-500 dark:text-zinc-400">Question Format</Label>
-                                        <InlineSelect
-                                            ariaLabel="Question format"
-                                            value={f.manualType}
-                                            onValueChange={(v) => set({ manualType: v })}
-                                            options={[
-                                                { value: "mcq", label: "MCQ" },
-                                                { value: "fillup", label: "Fill up" },
-                                            ]}
-                                        />
-                                    </div>
-                                )}
+                                <div className="space-y-1.5">
+                                    <Label className="text-xs text-slate-500 dark:text-zinc-400">Difficulty for uploaded questions</Label>
+                                    <InlineSelect
+                                        ariaLabel="Difficulty for uploaded questions"
+                                        value={f.fixedDifficulty}
+                                        onValueChange={(value) => set({ fixedDifficulty: value })}
+                                        options={[
+                                            { value: "excel", label: "Use each Excel row's difficulty" },
+                                            { value: "easy", label: "Set all to Easy" },
+                                            { value: "medium", label: "Set all to Medium" },
+                                            { value: "hard", label: "Set all to Hard" },
+                                        ]}
+                                    />
+                                </div>
 
                                 <div className="space-y-1.5">
                                     <Label className="text-xs text-slate-500 dark:text-zinc-400">Questions Excel File (.xlsx, .xls, .csv)</Label>
@@ -764,11 +783,11 @@ export default function StaffTests() {
                                     <p className="text-[11px] text-slate-500 dark:text-zinc-500 leading-normal">
                                         <strong>Required columns:</strong><br />
                                         {f.testTypeSelection === "coding_programming" ? (
-                                            <code>Ques | Description | Input Format | Output Format | Constraints | Test Case 1 | Test Case 2 | Test Case 3 | Test Case 4 | Test Case 5 | Edge Case 1 | Edge Case 2 | Tags</code>
-                                        ) : f.manualType === "fillup" && f.testTypeSelection === "aptitude_mcq" ? (
-                                            <code>Ques | Corr Ans</code>
+                                            <code>Question | Problem Statement | Input Format | Output Format | Constraints | Test Case 1 | Edge Case 1 | Topic | Difficulty | Points</code>
+                                        ) : f.manualType === "fillup" ? (
+                                            <code>Question | Correct Answer | Accepted Answers | Topic | Difficulty | Points</code>
                                         ) : (
-                                            <code>Ques | Opt A | Opt B | Opt C | Opt D | Corr Ans</code>
+                                            <code>Question | Option A | Option B | Option C | Option D | Correct Answer | Topic | Difficulty | Points</code>
                                         )}
                                     </p>
                                 </div>
@@ -783,19 +802,12 @@ export default function StaffTests() {
                             <div className="space-y-4 rounded-lg border border-slate-200 dark:border-zinc-800 bg-slate-50 dark:bg-zinc-950/40 p-4">
                                 <p className="text-sm font-medium text-slate-800 dark:text-zinc-200">Adaptive Setup</p>
                                 
-                                {f.testTypeSelection === "coding_test" ? (
-                                    <p className="text-xs text-amber-600 dark:text-amber-400">
-                                        💡 Questions will be automatically synced and loaded from the <code>AIML</code> folder.
-                                    </p>
-                                ) : (
-                                    <p className="text-xs text-slate-500 dark:text-zinc-400">
-                                        Question difficulty adapts dynamically based on candidate performance.
-                                    </p>
-                                )}
-
                                 <div className="space-y-1.5">
-                                    <Label className="text-xs text-slate-500 dark:text-zinc-400">Adaptive question count</Label>
-                                    <Input type="number" value={f.adaptiveCount} onChange={(e) => set({ adaptiveCount: e.target.value })} />
+                                    <Label className="text-xs text-slate-500 dark:text-zinc-400">Number of questions</Label>
+                                    <Input type="number" min={1} max={100} value={f.adaptiveCount} onChange={(e) => set({ adaptiveCount: e.target.value })} />
+                                    <p className="text-[11px] leading-4 text-slate-500 dark:text-zinc-500">
+                                        Only matching questions are used. The first question starts at a random available level; two correct answers in a row raise the level and one incorrect answer lowers it.
+                                    </p>
                                 </div>
                             </div>
                         )}
@@ -1324,5 +1336,6 @@ function emptyForm() {
         proctoringReviewOnly: true,
         proctoringInterval: 20,
         adaptiveCount: 10,
+        fixedDifficulty: "excel",
     };
 }

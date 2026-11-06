@@ -328,7 +328,7 @@ const codeBuffersRef = useRef({});
         setRunResult(null);
         setRunError("");
         setCodingView("problem");
-        if (qr.question?.type === "coding") {
+        if (qr.question?.type === "coding" && qr.question?.format === "programming") {
             const lang = LANGUAGE_KEY[String(qr.question.language || "python").toLowerCase()] || "python";
             codeBuffersRef.current = {};
             setLanguage(lang);
@@ -430,7 +430,7 @@ const codeBuffersRef = useRef({});
         setError("");
         try {
             const body = { questionId: question.id, timeTakenMs: Date.now() - startAtRef.current };
-            if (question.type === "coding") {
+            if (question.type === "coding" && question.format === "programming") {
                 body.code = code;
                 body.language = language;
             } else {
@@ -488,7 +488,7 @@ const codeBuffersRef = useRef({});
         return `${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
     };
 
-    const isCoding = question?.type === "coding";
+    const isCoding = question?.type === "coding" && question?.format === "programming";
 
     const startCameraDrag = (event) => {
         if (event.button !== 0 || !cameraPipRef.current) return;
@@ -586,7 +586,7 @@ const codeBuffersRef = useRef({});
         <>
             {renderBadges()}
             <p className="min-w-0 whitespace-pre-wrap break-words text-sm leading-relaxed text-slate-700 [overflow-wrap:anywhere] dark:text-zinc-300">{question.description}</p>
-            {question.format === "code_snippet" && <CodeBlock code={question.codeSnippet} />}
+            {question.codeSnippet && <CodeBlock code={question.codeSnippet} />}
             {isCoding && (
                 <div className="mt-3 space-y-3">
                     {question.constraints?.length > 0 && (

@@ -11,6 +11,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { PageHeader, EmptyState, LoadingState } from "@/components/portal/primitives";
 import { StatusBadge } from "@/components/portal/status-badge";
+import { InterviewQuestionBreakdown } from "@/components/assessment/interview-question-breakdown";
 import { Checkbox } from "@/components/ui/checkbox";
 import { api } from "@/lib/api";
 import { getProctoringApiBase } from "@/lib/proctoring-config";
@@ -24,7 +25,7 @@ function toDatetimeLocal(value) {
     return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
 }
 
-function ReportBody({ report }) {
+function ReportBody({ report, plan, transcript }) {
     if (!report) return null;
     const rubric = report.rubric || {};
     return (
@@ -80,6 +81,7 @@ function ReportBody({ report }) {
                     </div>
                 </div>
             )}
+            <InterviewQuestionBreakdown plan={plan} transcript={transcript} />
             {report.disclaimer && (
                 <p className="flex items-start gap-2 rounded-lg border border-slate-200 p-3 text-xs text-slate-500 dark:border-zinc-800 dark:text-zinc-500">
                     <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" /> {report.disclaimer}
@@ -114,7 +116,7 @@ export default function PlacementInterviews() {
     const [deletingInterviewId, setDeletingInterviewId] = useState(null);
     const [busy, setBusy] = useState(false);
     const [exporting, setExporting] = useState(false);
-    const [sched, setSched] = useState({ interviewName: "", groupId: "", regNos: [], existingRegNos: [], type: "Technical", startsAt: "", endsAt: "", interviewer: "", jobRole: "", jobDescription: "", emailReminderEnabled: true });
+    const [sched, setSched] = useState({ interviewName: "", groupId: "", regNos: [], existingRegNos: [], type: "Technical", startsAt: "", endsAt: "", interviewer: "", jobRole: "", jobDescription: "", technicalSkills: "", emailReminderEnabled: true });
     const [studentFilters, setStudentFilters] = useState({ batch: "all", section: "all", search: "" });
     const [result, setResult] = useState({ rating: 3, notes: "", strengths: "", weaknesses: "", status: "completed" });
 
@@ -224,6 +226,7 @@ export default function PlacementInterviews() {
             interviewer: group?.interviewer || "",
             jobRole: group?.members?.[0]?.jobRole || "",
             jobDescription: group?.members?.[0]?.jobDescription || "",
+            technicalSkills: (group?.members?.[0]?.technicalSkills || []).join(", "),
             emailReminderEnabled: group
                 ? group.members.some((member) => member.emailReminderEnabled === true)
                 : true,
@@ -304,7 +307,7 @@ export default function PlacementInterviews() {
                 endsAt: endsAt.toISOString(),
             });
             setSchedOpen(false);
-            setSched({ interviewName: "", groupId: "", regNos: [], existingRegNos: [], type: "Technical", startsAt: "", endsAt: "", interviewer: "", jobRole: "", jobDescription: "", emailReminderEnabled: true });
+            setSched({ interviewName: "", groupId: "", regNos: [], existingRegNos: [], type: "Technical", startsAt: "", endsAt: "", interviewer: "", jobRole: "", jobDescription: "", technicalSkills: "", emailReminderEnabled: true });
             load();
         } catch (e) {
             alert(e.message);
@@ -662,8 +665,20 @@ export default function PlacementInterviews() {
                                 />
                             </div>
                             </div>
+                            <div className="space-y-1.5">
+                                <Label className="text-xs font-medium text-slate-600 dark:text-zinc-300">Technical skills to assess <span className="font-normal text-slate-500 dark:text-zinc-400">(comma-separated)</span></Label>
+                                <Input
+                                    className="bg-white dark:bg-zinc-900"
+                                    value={sched.technicalSkills}
+                                    onChange={(event) => setSched((current) => ({ ...current, technicalSkills: event.target.value }))}
+                                    placeholder="HTML, CSS, JavaScript, React, Node.js, Express, Java, SQL"
+                                    maxLength={1000}
+                                />
+                                <p className="mt-1 text-xs text-slate-500 dark:text-zinc-400">Enter up to 10 skills. Questions will include core concepts and practical scenarios for these topics.</p>
+                                <p className="text-xs text-slate-500 dark:text-zinc-400">Technical questions will prioritize these skills, then use relevant resume skills.</p>
+                            </div>
                             <p className="rounded-lg border border-violet-100 bg-violet-50 px-3 py-2 text-xs leading-relaxed text-violet-800 dark:border-violet-500/20 dark:bg-violet-500/10 dark:text-violet-300">
-                                AI generates personalized questions from each selected student's resume and the role when the candidate starts. No manual question preparation is needed.
+                                A varied question plan is generated from each selected student's resume, role, and technical skills when the candidate starts.
                             </p>
                         </div>
                         <div className="min-w-0 space-y-3 md:col-span-7">
@@ -1041,7 +1056,7 @@ export default function PlacementInterviews() {
                         <DialogDescription>{reportTarget?.studentName} — {reportTarget?.type} interview.</DialogDescription>
                     </DialogHeader>
                     {reportTarget?.report ? (
-                        <ReportBody report={reportTarget.report} />
+                        <ReportBody report={reportTarget.report} plan={reportTarget.plan} transcript={reportTarget.transcript} />
                     ) : (
                         <p className="text-sm text-slate-500 dark:text-zinc-500">The report is not available yet.</p>
                     )}

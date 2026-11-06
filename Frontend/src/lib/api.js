@@ -85,6 +85,7 @@ export const api = {
         importExcel: (file, kind) => request("/questions/import", { method: "POST", body: formData(file, { kind }) }),
         aimlFiles: () => request("/questions/aiml-files"),
         aimlImport: (file) => request("/questions/aiml-import", { method: "POST", body: { file } }),
+        aimlGenerate: (data) => request("/questions/aiml-generate", { method: "POST", body: data }),
     },
         tests: {
             list: () => request("/tests", { cache: "no-store" }),
